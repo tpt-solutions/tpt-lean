@@ -1,0 +1,1347 @@
+tpt-lean Design Specification
+Version: 0.2-draft
+Project: tpt-lean
+Primary language: Rust
+Purpose: Fast, embeddable, AI-friendly tooling around Lean 4
+Project license: MIT
+Dependency policy: No Apache-2.0-only dependencies
+Core rule: Lean remains the trusted proof checker. tpt-lean accelerates the workflow around Lean.
+1. Summary
+tpt-lean is a Rust-native tooling suite for Lean 4.
+It does not try to replace Lean’s kernel, Mathlib, or theorem-proving foundations. Instead, it makes Lean easier and faster to use by improving:
+project setup
+build orchestration
+caching
+search
+editor tooling
+profiling
+formatting
+documentation generation
+AI/agent access through MCP
+cross-language access through FFI and APIs
+The central idea:
+Lean checks the mathematics. tpt-lean makes the surrounding experience fast, scriptable, embeddable, and pleasant.
+2. Goals
+2.1 Primary goals
+Make Lean easier to start using
+simpler project initialization
+dependency setup helpers
+health checks
+better error explanations
+searchable Mathlib index
+Make Lean faster in daily use
+parallel orchestration
+aggressive caching
+persistent local daemon
+fast symbol search
+incremental indexing
+profiling tools
+Make Lean usable by AI agents
+MCP server
+structured JSON output
+goal/state inspection
+context bundling
+machine-readable diagnostics
+safe tool execution boundaries
+Make Lean embeddable in other platforms
+C ABI FFI crate
+local HTTP/JSON-RPC API
+optional WASM build for browser/Node use
+generated client SDKs
+Stay legally and operationally simple
+MIT project license
+no Apache-2.0-only dependencies
+minimal dependency tree
+modular crates
+solo-maintainer-friendly scope
+3. Non-goals
+tpt-lean should not initially attempt to:
+rewrite the Lean kernel
+replace Lean’s type checker
+reimplement Mathlib
+create a new theorem prover
+fully parse and understand .olean internals on day one
+bypass Lean verification
+become a cloud service by default
+become a fork of Lean
+Lean remains the authoritative source of truth for elaboration, type checking, and proof validity.
+4. Licensing and dependency policy
+4.1 Project license
+tpt-lean itself should be licensed under: MIT or Apache 2.0
+
+Forbidden by default:
+Apache-2.0-only
+GPL-only
+AGPL-only
+LGPL-only
+proprietary
+unknown/custom unclear licenses
+
+Important distinction:
+A crate licensed as MIT OR Apache-2.0 can be acceptable because it can be used under MIT.
+A crate licensed only as Apache-2.0 is rejected.
+4.3 Enforcement
+Use cargo-deny in CI.
+Example policy:
+
+[licenses]
+confidence-threshold = 0.95
+allow = [
+  "MIT",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Zlib",
+  "Unlicense",
+  "CC0-1.0",
+]
+
+Also use:
+
+cargo deny check licenses
+cargo deny check bans
+cargo audit
+
+Every release should include a dependency license report.
+5. High-level architecture
+
+                ┌──────────────────────────────┐
+                │ Humans / Editors / CI / AI    │
+                └──────────────┬───────────────┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          │                    │                    │
+          ▼                    ▼                    ▼
+ ┌────────────────┐   ┌────────────────┐   ┌────────────────┐
+ │ CLI            │   │ MCP Server     │   │ HTTP/JSON-RPC  │
+ │ tpt-lean       │   │ AI tool access │   │ API            │
+ └───────┬────────┘   └───────┬────────┘   └───────┬────────┘
+         │                    │                    │
+         └────────────────────┼────────────────────┘
+                              ▼
+                    ┌──────────────────┐
+                    │ tpt-lean-core    │
+                    │ shared services  │
+                    └────────┬─────────┘
+                             │
+       ┌─────────────────────┼─────────────────────┐
+       ▼                     ▼                     ▼
+┌──────────────┐     ┌──────────────┐      ┌──────────────┐
+│ Index/Search │     │ Build/Cache  │      │ Format/Profile│
+└──────┬───────┘     └──────┬───────┘      └──────┬───────┘
+       │                    │                     │
+       └────────────────────┼─────────────────────┘
+                            ▼
+                  ┌──────────────────┐
+                  │ Lean Adapter     │
+                  │ lean/lake/LSP    │
+                  └────────┬─────────┘
+                           ▼
+                  ┌──────────────────┐
+                  │ Official Lean 4  │
+                  │ toolchain        │
+                  └──────────────────┘
+
+Separate access layers:
+
+Native apps      -> tpt-lean-ffi
+AI agents        -> tpt-lean-mcp
+Scripts/services -> tpt-lean-server
+Humans           -> tpt-lean CLI
+Editors          -> tpt-lean-lsp
+Browser/Node     -> tpt-lean-wasm, optional
+
+6. Repository layout
+Suggested Cargo workspace:
+
+tpt-lean/
+  Cargo.toml
+  README.md
+  LICENSE
+  deny.toml
+
+  crates/
+    tpt-lean-core/
+      # Shared types, config, errors, project model, paths
+
+    tpt-lean-syntax/
+      # Lossless Lean concrete syntax tree parser/tokenizer
+
+    tpt-lean-adapter/
+      # Controlled interface to lean, lake, Lean LSP, sidecar tools
+
+    tpt-lean-index/
+      # Symbol index, docstring index, dependency graph
+
+    tpt-lean-search/
+      # Mathlib/project search engine
+
+    tpt-lean-build/
+      # Build orchestration, cache, job graph, parallel execution
+
+    tpt-lean-fmt/
+      # Formatter
+
+    tpt-lean-profile/
+      # Timing, profiling, flamegraphs, bottleneck reports
+
+    tpt-lean-lsp/
+      # Rust LSP proxy/cache layer around Lean language server
+
+    tpt-lean-docgen/
+      # Static documentation generator
+
+    tpt-lean-server/
+      # Local HTTP/JSON-RPC API
+
+    tpt-lean-mcp/
+      # MCP server for AI/agent use
+
+    tpt-lean-ffi/
+      # Stable C ABI wrapper
+
+    tpt-lean-wasm/
+      # Optional WASM bindings for supported subset
+
+    tpt-lean-cli/
+      # Main command-line executable
+
+7. Core components
+7.1 tpt-lean-core
+Shared foundation crate.
+Responsibilities
+configuration loading
+project discovery
+toolchain detection
+path normalization
+error types
+JSON schema types
+file identity and hashing
+cache keys
+process execution policies
+logging/tracing integration
+Example config
+
+# tpt-lean.toml
+
+[project]
+name = "my-lean-project"
+lean_version = "stable"
+root = "."
+
+[build]
+parallelism = "auto"
+cache = true
+watch = false
+
+[index]
+mathlib = true
+docstrings = true
+dependency_graph = true
+
+[server]
+transport = "uds"
+allow_remote = false
+
+[security]
+workspace_only = true
+allow_write = false
+allow_build = true
+command_timeout_seconds = 120
+
+7.2 tpt-lean-adapter
+This is the compatibility layer with official Lean tooling.
+Why this matters
+Lean’s internal formats and elaboration APIs can change. tpt-lean should avoid relying on unstable internals too early.
+The adapter should support multiple capability levels:
+
+Level 1: CLI integration
+  Invoke lean/lake and parse output.
+
+Level 2: LSP integration
+  Query official Lean language server for goals, diagnostics, symbols.
+
+Level 3: Lean sidecar
+  A small Lean program emits structured JSON using Lean APIs.
+
+Level 4: Native artifact reader
+  Optional future .olean/.ilean reader, only if stable enough.
+
+Initial implementation
+Start with:
+lean --version
+lake --version
+lake env printenv
+controlled lake build
+controlled lean invocation
+Lean LSP JSON-RPC client
+optional Lean sidecar for structured symbols/goals
+Important rule
+The adapter should never silently run arbitrary shell commands from AI/API input.
+Commands must be constructed from safe, typed options.
+7.3 tpt-lean-syntax
+A fast, lossless syntax layer for Lean files.
+Purpose
+This is not a full Lean elaborator.
+It should support:
+tokenization
+concrete syntax tree parsing
+comment preservation
+indentation tracking
+declaration boundary detection
+tactic block detection
+import extraction
+lightweight symbol extraction
+formatting
+source spans
+Useful for
+formatter
+lightweight search
+import analysis
+syntax-aware context packing
+editor navigation before full elaboration is available
+Design
+Use a lossless CST model similar in spirit to modern compiler tooling:
+
+pub struct SyntaxNode {
+    pub kind: SyntaxKind,
+    pub range: TextRange,
+    pub children: Vec<SyntaxElement>,
+}
+
+pub enum SyntaxElement {
+    Node(SyntaxNode),
+    Token(Token),
+}
+
+Full semantic information should come from Lean, not this crate.
+7.4 tpt-lean-index
+Persistent local index for projects, dependencies, and Mathlib.
+Stores
+theorem names
+definition names
+namespaces
+imports
+docstrings
+source locations
+declaration types, when available from Lean
+dependency graph edges
+tactic/declaration timing data
+cached diagnostics
+cached goals, where safe
+Storage
+Use SQLite.
+Suggested tables:
+
+projects
+files
+symbols
+docstrings
+imports
+dependencies
+diagnostics
+build_runs
+profile_runs
+cache_entries
+
+Enable SQLite FTS5 for search.
+Indexing strategy
+fast file scan
+syntax-level indexing
+Lean/LSP semantic enrichment
+background refresh
+incremental invalidation by file hash/import graph
+Important rule
+The index is an acceleration layer, not the source of mathematical truth.
+7.5 tpt-lean-search
+Fast search over Lean projects and Mathlib.
+CLI examples
+
+tpt-lean search "continuous compact maximum"
+tpt-lean search "Nat.add_comm"
+tpt-lean search --type "List α -> Nat"
+tpt-lean search --namespace "MeasureTheory"
+tpt-lean search --near "compact" "continuous"
+
+Search modes
+Name search
+tpt-lean search add_comm
+
+Docstring search
+tpt-lean search "finite sum over product"
+
+Type-shaped search
+tpt-lean search --type "a + b = b + a"
+
+Goal-based search
+tpt-lean search --goal-at src/Main.lean:42:7
+
+Context search for AI
+tpt-lean context-pack src/Main.lean:42:7 --json
+
+Ranking factors
+exact name match
+namespace proximity
+type similarity
+docstring relevance
+imported modules first
+recently used symbols
+theorem/definition kind
+dependency distance from current file
+Output formats
+human-readable table
+JSON
+NDJSON
+MCP tool result
+API response
+
+7.6 tpt-lean-build
+Rust build orchestration and caching layer.
+Initial approach
+Do not fully replace Lake immediately.
+Instead:
+understand the project
+call Lake safely
+parallelize where possible
+cache results
+provide better logs and diagnostics
+later add deeper build graph support
+Features
+tpt-lean build
+tpt-lean build --watch
+tpt-lean build --json
+tpt-lean build --explain-slow
+tpt-lean check
+tpt-lean clean
+tpt-lean cache status
+tpt-lean cache prune
+
+Cache key should include
+Lean toolchain version
+package versions
+lakefile hash
+dependency lock hash
+source file hash
+imported module hashes
+compiler flags
+environment variables affecting Lean
+platform/target info
+Example:
+cache_key =
+  hash(
+    lean_version,
+    lakefile_hash,
+    dependency_lock_hash,
+    source_hash,
+    import_hashes,
+    lean_flags,
+    target_triple
+  )
+
+Cache layers
+local memory cache
+local disk cache
+optional shared team cache
+optional CI cache
+
+Build event stream
+Every build emits structured events:
+{
+  "event": "file_started",
+  "run_id": "build_123",
+  "file": "Mathlib/Topology/Basic.lean",
+  "timestamp_ms": 123456789
+}
+
+Useful for:
+CLI progress bars
+MCP streaming
+API clients
+dashboards
+profiling
+7.7 tpt-lean-fmt
+Fast Lean formatter.
+Important design choice
+Formatting should be syntax-preserving and conservative.
+Lean has significant indentation and tactic syntax, so the formatter should avoid aggressive rewrites early on.
+MVP formatting
+normalize trailing whitespace
+normalize final newline
+normalize indentation
+align simple tactic blocks
+format imports
+standardize spacing around common tokens
+preserve comments exactly
+Commands
+tpt-lean fmt
+tpt-lean fmt --check
+tpt-lean fmt src/Main.lean
+tpt-lean fmt --diff
+
+Safety
+The formatter should refuse to write output if the syntax tree is invalid or uncertain.
+Optional verification mode:
+tpt-lean fmt --verify
+
+This runs Lean after formatting to ensure the file still checks.
+7.8 tpt-lean-profile
+Profiling and speed diagnostics.
+Purpose
+Answer:
+Why is this Lean file/proof slow?
+Commands
+tpt-lean profile src/Main.lean
+tpt-lean profile src/Main.lean --flamegraph
+tpt-lean profile --slowest 20
+tpt-lean profile --compare before.json after.json
+Features
+per-file timing
+per-declaration timing
+tactic timing where available
+memory usage tracking
+build-step timing
+cache hit/miss reports
+slow import detection
+dependency bottleneck graph
+flamegraph output
+JSON reports
+Example report
+
+Slowest declarations:
+
+1. theorem big_compactness_result
+   File: src/Topology.lean:120
+   Time: 18.4s
+   Main cost: simp/search automation
+
+2. instance largeTypeclassSearch
+   File: src/Algebra.lean:44
+   Time: 7.1s
+   Main cost: typeclass resolution
+
+Suggested actions:
+- add explicit lemma arguments
+- reduce simp set
+- split theorem into smaller lemmas
+- cache intermediate results
+
+7.9 tpt-lean-lsp
+Rust editor integration layer.
+Initial approach
+Do not replace Lean’s semantic language server immediately.
+Instead build a Rust LSP proxy that adds:
+faster document sync
+cached symbols
+instant project search
+cached diagnostics
+better progress reporting
+editor-independent configuration
+request cancellation
+lightweight syntax features before Lean finishes elaborating
+Architecture
+Editor
+  ↓
+tpt-lean-lsp
+  ↓
+Official Lean LSP
+
+Features
+go-to-definition
+hover
+document symbols
+workspace symbols
+diagnostics
+goal display
+proof state panel support
+import suggestions
+lemma search code actions
+formatting code actions
+explain-error code actions
+Long-term
+If the proxy proves useful, more functionality can move into Rust, but full elaboration should remain Lean-backed.
+7.10 tpt-lean-docgen
+Fast documentation generator.
+Initial input sources
+Prefer stable or semi-stable sources first:
+indexed source files
+Lean sidecar JSON
+LSP symbol data
+existing generated metadata
+Avoid depending immediately on undocumented binary internals.
+Output
+static HTML
+local search index
+dark mode
+source links
+theorem/definition pages
+namespace tree
+dependency graph
+JSON export
+Commands
+tpt-lean docgen
+tpt-lean docgen --open
+tpt-lean docgen --json
+tpt-lean docgen --include-deps
+
+8. Utilities that make Lean easier
+These can be part of the CLI even before deeper integrations exist.
+8.1 tpt-lean doctor
+Checks whether the local Lean environment is healthy.
+tpt-lean doctor
+
+Checks:
+Lean installed
+Lake installed
+compatible toolchain
+project config present
+dependency cache present
+Mathlib availability
+write permissions
+SQLite index health
+server socket health
+common environment problems
+Example output:
+Lean:        OK  lean 4.x
+Lake:        OK
+Project:     OK  found lakefile.lean
+Mathlib:     OK  indexed
+Cache:       WARN old entries found
+LSP:         OK
+Suggestion:  run `tpt-lean cache prune`
+
+8.2 tpt-lean init
+Creates a beginner-friendly Lean project.
+tpt-lean init my-project
+tpt-lean init my-project --mathlib
+
+Generates:
+lakefile.lean
+lean-toolchain
+Main.lean
+tpt-lean.toml
+.gitignore
+README.md
+
+Optional templates:
+tpt-lean init --template theorem
+tpt-lean init --template mathlib
+tpt-lean init --template teaching
+tpt-lean init --template library
+
+8.3 tpt-lean explain
+Turns Lean errors into structured explanations.
+tpt-lean explain src/Main.lean:42:7
+tpt-lean explain --last-error
+
+Output:
+original diagnostic
+relevant source snippet
+goal state if available
+local hypotheses
+likely cause
+relevant lemmas
+suggested next steps
+For AI/API use, output JSON:
+{
+  "error": {
+    "message": "type mismatch",
+    "file": "src/Main.lean",
+    "line": 42,
+    "column": 7
+  },
+  "context": {
+    "goal": "...",
+    "hypotheses": ["..."],
+    "nearby_definitions": ["..."]
+  },
+  "suggestions": [
+    {
+      "kind": "lemma",
+      "name": "Nat.add_comm",
+      "reason": "matches commutativity shape"
+    }
+  ]
+}
+
+8.4 tpt-lean goals
+Displays proof goals at a position.
+tpt-lean goals src/Main.lean:42:7
+Useful for:
+humans
+editor integrations
+AI agents
+debugging failed proofs
+This should use Lean/LSP as the source of truth.
+8.5 tpt-lean imports
+Import analysis and cleanup.
+
+tpt-lean imports
+tpt-lean imports --unused
+tpt-lean imports --suggest "continuous compact"
+tpt-lean imports --minimize src/Main.lean
+
+Features:
+find unused imports
+suggest imports for symbols
+show import dependency cost
+detect heavy imports
+estimate compile-time impact
+8.6 tpt-lean context-pack
+One of the most important AI-friendly utilities.
+tpt-lean context-pack src/Main.lean:42:7
+
+Returns a compact, relevant bundle:
+current file snippet
+current goal
+local hypotheses
+diagnostics
+imported symbols
+nearby definitions
+relevant lemmas
+recent build errors
+project constraints
+This prevents AI agents from blindly reading huge files or irrelevant Mathlib chunks.
+8.7 tpt-lean bisect
+Find what caused a proof or build to break.
+tpt-lean bisect --good old-version --bad current
+
+Could bisect:
+project commits
+dependency versions
+Mathlib updates
+compiler flags
+import changes
+8.8 tpt-lean ci
+CI-friendly command.
+tpt-lean ci --json --sarif
+
+Outputs:
+build status
+diagnostics
+timing report
+cache statistics
+SARIF for code scanning tools
+machine-readable failure summaries
+9. FFI crate: tpt-lean-ffi
+Yes, there should absolutely be an FFI crate.
+The FFI crate makes tpt-lean usable from:
+C
+C++
+Go
+Python
+TypeScript/Node native addons
+C#
+Swift
+Kotlin/Native
+any platform that can call a C ABI
+9.1 Design rules
+The FFI boundary should expose:
+opaque handles
+plain C structs
+explicit lengths
+explicit ownership
+stable error codes
+no Rust panic unwinding
+no Rust types crossing the boundary
+
+Do not expose:
+String
+Vec
+Result
+Box
+Arc
+HashMap
+Tokio runtime types
+Rust lifetimes
+
+9.2 Example C API
+typedef struct TptlContext TptlContext;
+typedef struct TptlIndex TptlIndex;
+typedef struct TptlSearchResults TptlSearchResults;
+
+typedef enum TptlStatus {
+  TPTL_OK = 0,
+  TPTL_ERR_INVALID_ARGUMENT = 1,
+  TPTL_ERR_IO = 2,
+  TPTL_ERR_LEAN_NOT_FOUND = 3,
+  TPTL_ERR_INDEX = 4,
+  TPTL_ERR_INTERNAL = 5
+} TptlStatus;
+
+uint32_t tptl_abi_version(void);
+
+TptlStatus tptl_context_new(TptlContext** out_ctx);
+void tptl_context_free(TptlContext* ctx);
+
+TptlStatus tptl_index_open(
+  TptlContext* ctx,
+  const char* project_path,
+  TptlIndex** out_index
+);
+
+void tptl_index_free(TptlIndex* index);
+
+TptlStatus tptl_search_query(
+  TptlIndex* index,
+  const char* query,
+  uint32_t limit,
+  TptlSearchResults** out_results
+);
+
+void tptl_search_results_free(TptlSearchResults* results);
+
+const char* tptl_search_results_to_json(
+  TptlSearchResults* results
+);
+
+TptlStatus tptl_format_text(
+  const char* input,
+  char** out_formatted
+);
+
+void tptl_string_free(char* value);
+
+const char* tptl_last_error(TptlContext* ctx);
+
+9.3 FFI capabilities
+MVP exports:
+version info
+context creation
+project discovery
+index open/close
+search query
+syntax parse
+format text
+diagnostic parsing
+cache query
+Later exports:
+build orchestration
+profiling
+goal inspection
+async callbacks
+event streams
+9.4 Header generation
+Use a C header as the public ABI contract.
+Options:
+hand-written header initially
+generated header later if useful
+
+Do not make header generation a blocker for the first release.
+9.5 Thread safety
+Document each handle type:
+TptlContext       thread-safe
+TptlIndex         thread-safe for reads
+TptlBuildSession  not thread-safe unless documented
+TptlSearchResults immutable after creation
+9.6 FFI versioning
+Separate ABI version from crate version.
+uint32_t tptl_abi_version(void);
+
+Breaking ABI changes require a major ABI bump.
+10. API server: tpt-lean-server
+The API server makes tpt-lean available to tools that do not want to use FFI.
+10.1 Default transport
+Local-first:
+Unix domain socket on Linux/macOS
+named pipe or localhost TCP on Windows
+
+Optional:
+localhost HTTP
+
+Remote access should be disabled by default.
+10.2 API style
+Use JSON-RPC 2.0 for the core API.
+Endpoint:
+POST /v1/rpc
+
+Example:
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "method": "search.query",
+  "params": {
+    "query": "continuous compact maximum",
+    "limit": 10
+  }
+}
+
+Response:
+{
+  "jsonrpc": "2.0",
+  "id": "1",
+  "result": {
+    "items": [
+      {
+        "name": "IsCompact.exists_isMaxOn",
+        "kind": "theorem",
+        "score": 0.94,
+        "summary": "A continuous function on a compact set attains its maximum."
+      }
+    ]
+  }
+}
+
+10.3 Core methods
+project.info
+project.doctor
+
+search.query
+search.symbol
+search.goal
+
+index.status
+index.refresh
+
+format.text
+format.file
+
+build.run
+build.cancel
+build.status
+
+check.file
+check.project
+
+goals.at
+diagnostics.get
+diagnostics.explain
+
+profile.run
+profile.get
+
+imports.suggest
+imports.unused
+
+context.pack
+
+10.4 Streaming
+Use Server-Sent Events or streaming JSON-RPC notifications for:
+build logs
+indexing progress
+profiling progress
+diagnostics updates
+Endpoint:
+GET /v1/events
+
+11. MCP server: tpt-lean-mcp
+The MCP server makes tpt-lean easy for AI tools to use.
+11.1 Transport
+Support:
+stdio
+local HTTP/SSE
+Stdio should be the first implementation because it is simple and widely supported by AI tooling.
+11.2 MCP tools
+Recommended tools:
+tpt_lean_search
+tpt_lean_check_file
+tpt_lean_build_project
+tpt_lean_format_text
+tpt_lean_format_file
+tpt_lean_goals_at
+tpt_lean_explain_diagnostic
+tpt_lean_context_pack
+tpt_lean_profile_file
+tpt_lean_imports_suggest
+tpt_lean_index_status
+
+11.3 Example MCP tool: search
+Tool:
+tpt_lean_search
+
+Input:
+{
+  "query": "Nat addition commutative",
+  "limit": 5
+}
+
+Output:
+{
+  "results": [
+    {
+      "name": "Nat.add_comm",
+      "kind": "theorem",
+      "type": "∀ (n m : Nat), n + m = m + n",
+      "source": "Init/Data/Nat/Basic.lean",
+      "score": 0.98
+    }
+  ]
+}
+
+11.4 Example MCP tool: context pack
+Tool:
+tpt_lean_context_pack
+
+Input:
+{
+  "file": "src/Main.lean",
+  "line": 42,
+  "column": 7,
+  "max_tokens": 6000
+}
+
+Output:
+{
+  "file": "src/Main.lean",
+  "position": {
+    "line": 42,
+    "column": 7
+  },
+  "goal": "⊢ a + b = b + a",
+  "hypotheses": [
+    "a : Nat",
+    "b : Nat"
+  ],
+  "diagnostics": [],
+  "relevant_symbols": [
+    {
+      "name": "Nat.add_comm",
+      "type": "∀ (n m : Nat), n + m = m + n"
+    }
+  ],
+  "source_excerpt": "theorem example (a b : Nat) : a + b = b + a := by\n  ..."
+}
+
+11.5 MCP resources
+Resources should expose read-only state:
+
+tpt-lean://project/info
+tpt-lean://project/diagnostics
+tpt-lean://index/status
+tpt-lean://file/{path}/symbols
+tpt-lean://file/{path}/ast
+tpt-lean://file/{path}/goals
+tpt-lean://build/{run_id}/log
+tpt-lean://profile/{run_id}
+
+11.6 MCP prompts
+Useful built-in prompt templates:
+
+
+explain_lean_error
+find_lemma_for_goal
+reduce_proof_timeout
+suggest_imports
+summarize_proof_state
+
+These should be optional. The tools are more important than prompt templates.
+12. Security model
+Because AI agents and APIs can trigger tools, security boundaries matter.
+12.1 Default stance
+local-only
+workspace-only
+read-heavy
+explicit write permissions
+explicit build permissions
+no arbitrary shell execution
+
+12.2 Permission classes
+Read:
+  search
+  inspect symbols
+  read diagnostics
+  context pack
+
+Write:
+  format file
+  apply import suggestion
+  edit files
+
+Build:
+  run Lean/Lake
+  create artifacts
+  update cache
+
+Profile:
+  run controlled Lean checks with timing
+
+Network:
+  optional dependency fetch
+  optional remote cache
+
+12.3 Path safety
+Every API/MCP request involving paths must be checked against allowed workspace roots.
+Reject:
+../../etc/passwd
+absolute paths outside workspace
+symlink escapes
+unexpected device files
+
+12.4 Command safety
+Do not accept this:
+{
+  "command": "rm -rf /"
+}
+
+Accept typed requests instead:
+{
+  "project": ".",
+  "target": "Main",
+  "timeout_seconds": 120
+}
+
+The server constructs safe commands internally.
+12.5 Resource limits
+Every Lean process should have:
+timeout
+memory limit where supported
+cancellation token
+output size limit
+environment sanitization
+13. Performance targets
+These are initial targets, not guarantees.
+Warm search
+p50: < 10 ms
+p95: < 50 ms
+
+Context pack
+p50: < 100 ms
+p95: < 500 ms
+excluding fresh Lean elaboration.
+Formatting
+5,000-line file: < 100 ms
+
+for syntax-only formatting.
+Cache-hit build overhead
+< 200 ms overhead before Lean work
+
+Index refresh
+incremental file update: < 1 s for syntax index
+semantic refresh depends on Lean
+
+14. Data storage
+14.1 Project-local directory
+.tpt-lean/
+  config.toml
+  index.sqlite
+  logs/
+  profiles/
+  runs/
+  tmp/
+
+
+14.2 Global cache
+Linux:
+$XDG_CACHE_HOME/tpt-lean/
+macOS:
+~/Library/Caches/tpt-lean/
+Windows:
+%LOCALAPPDATA%/tpt-lean/cache/
+
+14.3 Cache contents
+compiled artifact metadata
+Lean version fingerprints
+indexed dependency metadata
+profile reports
+downloaded prebuilt indexes, optional
+
+15. CLI design
+Main executable:
+tpt-lean
+
+Optional short alias:
+tlean
+
+Commands
+tpt-lean init
+tpt-lean doctor
+tpt-lean build
+tpt-lean check
+tpt-lean fmt
+tpt-lean search
+tpt-lean goals
+tpt-lean explain
+tpt-lean imports
+tpt-lean profile
+tpt-lean docgen
+tpt-lean index
+tpt-lean cache
+tpt-lean server
+tpt-lean mcp
+
+Examples
+tpt-lean init demo --mathlib
+tpt-lean doctor
+tpt-lean index refresh
+tpt-lean search "monotone function fixed point"
+tpt-lean goals src/Main.lean:20:5
+tpt-lean context-pack src/Main.lean:20:5 --json
+tpt-lean build --watch
+tpt-lean profile src/Main.lean --flamegraph
+tpt-lean server start
+tpt-lean mcp stdio
+
+16. Optional WASM support: tpt-lean-wasm
+WASM is useful, but should not be in the critical path initially.
+Good WASM candidates
+syntax tokenizer
+formatter
+local text utilities
+search over a prebuilt compact index
+AST/CST viewer
+documentation search
+Bad WASM candidates initially
+spawning Lean
+running Lake
+full build orchestration
+native filesystem indexing
+native process profiling
+WASM should expose a restricted browser-safe subset.
+17. Testing strategy
+17.1 Unit tests
+For:
+syntax parser
+formatter
+cache keys
+path safety
+config loading
+JSON schemas
+FFI ownership rules
+17.2 Golden tests
+For Lean source snippets:
+input.lean
+expectedformatted.lean
+expected_symbols.json
+expected_diagnostics.json
+
+17.3 Integration tests
+Run against multiple Lean versions:
+current stable
+previous stable
+nightly, optional
+
+17.4 FFI tests
+Use:
+C test harness
+Python ctypes test
+Go cgo test
+Check:
+memory frees
+invalid arguments
+error handling
+ABI version
+concurrent reads
+17.5 MCP/API tests
+Use schema-based tests:
+request schema validation
+response schema validation
+permission enforcement
+streaming cancellation
+timeout behavior
+
+18. Implementation phases
+Phase 0 — Repository foundation
+Deliver:
+Cargo workspace
+MIT license
+dependency policy
+cargo-deny
+CI
+basic CLI shell
+config model
+JSON schema conventions
+Crates:
+tpt-lean-core
+tpt-lean-cli
+
+Phase 1 — Immediate useful tools
+Deliver:
+tpt-lean doctor
+tpt-lean fmt --check
+tpt-lean fmt
+tpt-lean index scan
+tpt-lean search
+
+Crates:
+tpt-lean-syntax
+tpt-lean-index
+tpt-lean-search
+tpt-lean-fmt
+
+This gives value before deep Lean integration.
+Phase 2 — Lean semantic adapter
+Deliver:
+tpt-lean goals
+tpt-lean explain
+tpt-lean check
+tpt-lean context-pack
+
+Crates:
+tpt-lean-adapter
+
+Use official Lean/Lake/LSP first.
+Phase 3 — FFI and API foundation
+Deliver:
+C ABI
+search through FFI
+formatter through FFI
+local JSON-RPC API
+API schemas
+Crates:
+tpt-lean-ffi
+tpt-lean-server
+
+Phase 4 — MCP server
+Deliver:
+tpt-lean mcp stdio
+
+MCP tools:
+tpt_lean_search
+tpt_lean_context_pack
+tpt_lean_goals_at
+tpt_lean_check_file
+tpt_lean_format_text
+tpt_lean_explain_diagnostic
+
+Crate:
+tpt-lean-mcp
+
+Phase 5 — Build/cache acceleration
+Deliver:
+tpt-lean build
+tpt-lean build --watch
+tpt-lean cache status
+tpt-lean cache prune
+
+Crate:
+tpt-lean-build
+
+Phase 6 — Profiling, LSP proxy, docgen
+Deliver:
+tpt-lean profile
+tpt-lean lsp
+tpt-lean docgen
+
+Crates:
+tpt-lean-profile
+tpt-lean-lsp
+tpt-lean-docgen
+
+The most important rule:
+Do not compete with Lean’s kernel.
+Make Lean easier to drive.
+
+The second most important rule:
+Every advanced feature should have a simple JSON output mode.
+
+That one decision makes the project useful to:
+humans
+editors
+CI systems
+scripts
+dashboards
+native apps
+AI agents
+21. Final proposed identity
+tpt-lean should be positioned as:
+A fast Rust-powered toolbox, API, MCP server, and FFI layer for Lean 4.
+Not:
+A replacement theorem prover.
+The strongest version of the project is a practical acceleration layer that people install because it makes Lean feel easier immediately.
+
+
+
+
+
+
+
+

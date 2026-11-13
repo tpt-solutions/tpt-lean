@@ -1,0 +1,24 @@
+# Rust
+/target/
+**/*.rs.bk
+Cargo.lock.bak
+
+# tpt-lean local data
+.tpt-lean/
+
+# Lean / Lake
+.lake/
+build/
+lake-packages/
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Env / secrets
+.env
+.env.*
