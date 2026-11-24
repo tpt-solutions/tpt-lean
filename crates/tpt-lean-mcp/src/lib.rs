@@ -1,245 +1,284 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! MCP (Model Context Protocol) server over stdio, hand-written on JSON-RPC 2.0 and serde_json.
+//! MCP (Model Context Protocol) server, hand-written on JSON-RPC 2.0 and serde_json.
 //!
-//! Read-only by default. Tools:
-//! - `tpt_lean_search`: search the local index
-//! - `tpt_lean_format_text`: format text in memory (never writes files)
-//! - `tpt_lean_index_status`: index health and size
-//! - `tpt_lean_check_file`: run `lean` on a workspace file (requires `security.allow_build`)
+//! Transports: newline-delimited stdio ([`serve_stdio`]) and a loopback-only HTTP transport
+//! with server-sent events ([`serve_http`]). Protocol revision: [`PROTOCOL_VERSION`].
 //!
-//! Every path argument is resolved through `WorkspaceRoot`, so it must stay inside the project.
+//! Read-only by default. Tools declare a permission class (see [`Permission`]); the server
+//! refuses a call whose class the project config does not grant. Every path argument goes
+//! through `WorkspaceRoot`, so it must stay inside the project.
+
+mod http;
+mod lean;
+mod permission;
+mod prompts;
+mod resources;
+mod tools;
+
+pub use http::serve_http;
+pub use permission::Permission;
+pub use tools::tool_descriptors;
 
 use serde_json::{json, Value};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use tpt_lean_adapter::{self as adapter, Command as LeanCommand};
-use tpt_lean_core::config;
-use tpt_lean_core::dirs::ProjectDirs;
+use std::sync::{Mutex, MutexGuard};
+use tpt_lean_core::config::{self, Config};
 use tpt_lean_core::paths::WorkspaceRoot;
 use tpt_lean_core::policy::CancelToken;
 use tpt_lean_core::Result;
-use tpt_lean_index::Index;
-use tpt_lean_search::SearchOptions;
 
 /// Protocol revision this server implements.
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 
-const PARSE_ERROR: i64 = -32700;
-const INVALID_REQUEST: i64 = -32600;
-const METHOD_NOT_FOUND: i64 = -32601;
-const INVALID_PARAMS: i64 = -32602;
+pub(crate) const PARSE_ERROR: i64 = -32700;
+pub(crate) const INVALID_REQUEST: i64 = -32600;
+pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
+pub(crate) const INVALID_PARAMS: i64 = -32602;
+pub(crate) const RESOURCE_NOT_FOUND: i64 = -32002;
+pub(crate) const INTERNAL_ERROR: i64 = -32603;
+
+/// A JSON-RPC error: code and message.
+pub(crate) type RpcError = (i64, String);
+
+/// Request bookkeeping for `notifications/cancelled`.
+#[derive(Default)]
+struct Requests {
+    /// Request ids received and not yet answered.
+    pending: HashSet<String>,
+    /// Pending ids the client has cancelled. Their results are dropped.
+    cancelled: HashSet<String>,
+    /// Cancellation tokens of requests currently running.
+    inflight: HashMap<String, CancelToken>,
+}
 
 /// A server bound to one project root.
 pub struct Server {
     root: PathBuf,
     workspace: WorkspaceRoot,
-    allow_build: bool,
-    timeout_seconds: u64,
+    config: Config,
+    /// Latest diagnostics per workspace-relative file, from check and build runs.
+    diagnostics: Mutex<BTreeMap<String, Vec<Value>>>,
+    requests: Mutex<Requests>,
 }
 
 impl Server {
+    /// Load the project config under `root` and bind the server to it.
     pub fn new(root: &Path) -> Result<Self> {
         let workspace = WorkspaceRoot::new(root)?;
-        let (cfg, _) = config::load_config(workspace.path(), &[])?;
+        let (config, _) = config::load_config(workspace.path(), &[])?;
         Ok(Self {
             root: workspace.path().to_path_buf(),
-            allow_build: cfg.security.allow_build,
-            timeout_seconds: cfg.security.command_timeout_seconds,
             workspace,
+            config,
+            diagnostics: Mutex::new(BTreeMap::new()),
+            requests: Mutex::new(Requests::default()),
         })
     }
 
-    /// Handle one JSON-RPC message. Returns `None` for notifications.
+    /// The effective project configuration.
+    pub fn config(&self) -> &Config {
+        &self.config
+    }
+
+    /// The canonical project root.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub(crate) fn workspace(&self) -> &WorkspaceRoot {
+        &self.workspace
+    }
+
+    /// Handle one JSON-RPC message. Returns `None` for notifications and for requests whose
+    /// client cancelled them before the reply was due.
     pub fn handle(&self, msg: &Value) -> Option<Value> {
-        let id = msg.get("id").cloned();
-        let Some(method) = msg.get("method").and_then(Value::as_str) else {
-            return id.map(|id| error_response(id, INVALID_REQUEST, "missing method"));
+        if msg.is_array() {
+            return Some(error_response(
+                Value::Null,
+                INVALID_REQUEST,
+                "batch requests are not supported",
+            ));
+        }
+        let Some(obj) = msg.as_object() else {
+            return Some(error_response(
+                Value::Null,
+                INVALID_REQUEST,
+                "message must be a JSON object",
+            ));
         };
-        let params = msg.get("params").cloned().unwrap_or(Value::Null);
-        let result = match method {
-            "initialize" => Ok(json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {} },
-                "serverInfo": { "name": "tpt-lean", "version": env!("CARGO_PKG_VERSION") }
-            })),
-            "ping" => Ok(json!({})),
-            "tools/list" => Ok(json!({ "tools": tool_descriptors() })),
-            "tools/call" if params.get("name").and_then(Value::as_str).is_none() => {
-                Err((INVALID_PARAMS, "tools/call needs a tool name".to_string()))
+        let id = obj.get("id").cloned();
+        let Some(method) = obj.get("method").and_then(Value::as_str) else {
+            // A response to a request we never sent (we make no server-to-client requests).
+            if obj.contains_key("result") || obj.contains_key("error") {
+                return None;
             }
-            "tools/call" => Ok(self.call_tool(&params)),
-            m if m.starts_with("notifications/") => return None,
-            _ => Err((METHOD_NOT_FOUND, format!("unknown method {method}"))),
+            return Some(error_response(
+                id.unwrap_or(Value::Null),
+                INVALID_REQUEST,
+                "missing method",
+            ));
         };
-        let id = id?;
+        let params = obj.get("params").cloned().unwrap_or(Value::Null);
+        let Some(id) = id else {
+            self.notification(method, &params);
+            return None;
+        };
+
+        let key = id.to_string();
+        let token = CancelToken::new();
+        if !self.begin_request(&key, &token) {
+            return None;
+        }
+        let result = self.dispatch(method, &params, &token);
+        if self.finish_request(&key) {
+            return None;
+        }
         Some(match result {
             Ok(v) => json!({ "jsonrpc": "2.0", "id": id, "result": v }),
             Err((code, message)) => error_response(id, code, &message),
         })
     }
 
-    fn call_tool(&self, params: &Value) -> Value {
-        let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    fn notification(&self, method: &str, params: &Value) {
+        if method == "notifications/cancelled" {
+            if let Some(id) = params.get("requestId") {
+                self.cancel_request(&id.to_string());
+            }
+        }
+    }
+
+    /// Record that a request with this key (the JSON text of its id) has been received.
+    /// Transports call this before they hand a request to [`Server::handle`], so a cancel
+    /// that arrives while the request is queued is still honored.
+    pub(crate) fn note_received(&self, id_key: &str) {
+        self.lock_requests().pending.insert(id_key.to_string());
+    }
+
+    /// Mark a pending request as cancelled and stop it if it is running.
+    pub(crate) fn cancel_request(&self, id_key: &str) {
+        let mut reqs = self.lock_requests();
+        if reqs.pending.contains(id_key) {
+            reqs.cancelled.insert(id_key.to_string());
+            if let Some(token) = reqs.inflight.get(id_key) {
+                token.cancel();
+            }
+        }
+    }
+
+    /// Returns false when the request was cancelled before it started; its bookkeeping is
+    /// cleared so the id can be used again.
+    fn begin_request(&self, id_key: &str, token: &CancelToken) -> bool {
+        let mut reqs = self.lock_requests();
+        reqs.pending.insert(id_key.to_string());
+        if reqs.cancelled.remove(id_key) {
+            reqs.pending.remove(id_key);
+            return false;
+        }
+        reqs.inflight.insert(id_key.to_string(), token.clone());
+        true
+    }
+
+    /// Forget a finished request. Returns true when it was cancelled, so its reply is dropped.
+    fn finish_request(&self, id_key: &str) -> bool {
+        let mut reqs = self.lock_requests();
+        reqs.inflight.remove(id_key);
+        reqs.pending.remove(id_key);
+        reqs.cancelled.remove(id_key)
+    }
+
+    fn lock_requests(&self) -> MutexGuard<'_, Requests> {
+        self.requests.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn dispatch(
+        &self,
+        method: &str,
+        params: &Value,
+        cancel: &CancelToken,
+    ) -> std::result::Result<Value, RpcError> {
+        match method {
+            "initialize" => Ok(json!({
+                "protocolVersion": PROTOCOL_VERSION,
+                "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
+                "serverInfo": { "name": "tpt-lean", "version": env!("CARGO_PKG_VERSION") }
+            })),
+            "ping" => Ok(json!({})),
+            "tools/list" => Ok(json!({ "tools": tool_descriptors() })),
+            "tools/call" => {
+                let name = str_param(params, "name")
+                    .ok_or((INVALID_PARAMS, "tools/call needs a tool name".to_string()))?;
+                if tools::find(&name).is_none() {
+                    return Err((INVALID_PARAMS, format!("unknown tool {name}")));
+                }
+                Ok(self.call_tool(&name, params, cancel))
+            }
+            "resources/list" => Ok(resources::list()),
+            "resources/templates/list" => Ok(resources::templates()),
+            "resources/read" => {
+                let uri = str_param(params, "uri")
+                    .ok_or((INVALID_PARAMS, "resources/read needs a uri".to_string()))?;
+                resources::read(self, &uri)
+            }
+            "prompts/list" => Ok(prompts::list()),
+            "prompts/get" => prompts::get(params),
+            _ => Err((METHOD_NOT_FOUND, format!("unknown method {method}"))),
+        }
+    }
+
+    /// Run a tool after its permission check. Failures are tool errors (`isError: true`),
+    /// not protocol errors, so the client can show them to the model.
+    fn call_tool(&self, name: &str, params: &Value, cancel: &CancelToken) -> Value {
         let args = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
-        let outcome = match name {
-            "tpt_lean_search" => self.tool_search(&args),
-            "tpt_lean_format_text" => self.tool_format_text(&args),
-            "tpt_lean_index_status" => self.tool_index_status(),
-            "tpt_lean_check_file" => self.tool_check_file(&args),
-            other => Err(format!("unknown tool {other}")),
+        let Some(spec) = tools::find(name) else {
+            return tool_error(format!("unknown tool {name}"));
         };
+        let outcome = permission::check(&self.config.security, spec.class)
+            .and_then(|()| self.run_tool(name, &args, cancel));
         match outcome {
-            Ok(v) => json!({ "content": [{ "type": "text", "text": v.to_string() }], "isError": false }),
-            Err(msg) => json!({ "content": [{ "type": "text", "text": msg }], "isError": true }),
+            Ok(v) => json!({
+                "content": [{ "type": "text", "text": v.to_string() }],
+                "structuredContent": v,
+                "isError": false
+            }),
+            Err(msg) => tool_error(msg),
         }
     }
 
-    fn index(&self) -> std::result::Result<Index, String> {
-        let dirs = ProjectDirs::new(&self.root);
-        if !dirs.index_db().exists() {
-            return Err("no index yet; run `tpt-lean index scan` first".into());
-        }
-        Index::open(&dirs.index_db()).map_err(|e| e.to_string())
-    }
-
-    fn tool_search(&self, args: &Value) -> std::result::Result<Value, String> {
-        let query = arg_str(args, "query")?;
-        let limit = args
-            .get("limit")
-            .and_then(Value::as_u64)
-            .unwrap_or(10)
-            .clamp(1, 200) as usize;
-        let opts = SearchOptions {
-            limit,
-            namespace: args.get("namespace").and_then(Value::as_str).map(str::to_string),
-            ..Default::default()
-        };
-        let index = self.index()?;
-        let hits = tpt_lean_search::search(&index, &query, &opts).map_err(|e| e.to_string())?;
-        let results: Vec<Value> = hits
-            .into_iter()
-            .map(|h| {
-                json!({
-                    "name": h.name,
-                    "kind": h.kind,
-                    "package": h.package,
-                    "source": h.file,
-                    "line": h.line,
-                    "score": (h.score * 1000.0).round() / 1000.0,
-                    "docstring": h.docstring,
-                })
-            })
-            .collect();
-        Ok(json!({ "results": results }))
-    }
-
-    fn tool_format_text(&self, args: &Value) -> std::result::Result<Value, String> {
-        let text = arg_str(args, "text")?;
-        match tpt_lean_fmt::format_text(&text) {
-            Ok(out) => Ok(json!({ "formatted": out.output, "changed": out.changed })),
-            Err(e) => Err(e.to_string()),
+    /// Store the latest diagnostics for one file (an empty list clears it).
+    pub(crate) fn store_diagnostics(&self, file: &str, diagnostics: Vec<Value>) {
+        let mut map = self.diagnostics.lock().unwrap_or_else(|e| e.into_inner());
+        if diagnostics.is_empty() {
+            map.remove(file);
+        } else {
+            map.insert(file.to_string(), diagnostics);
         }
     }
 
-    fn tool_index_status(&self) -> std::result::Result<Value, String> {
-        let status = self.index()?.status().map_err(|e| e.to_string())?;
-        Ok(json!({
-            "schema_version": status.schema_version,
-            "files": status.files,
-            "symbols": status.symbols,
-            "imports": status.imports,
-            "packages": status.packages,
-            "integrity_ok": status.integrity_ok,
-        }))
-    }
-
-    fn tool_check_file(&self, args: &Value) -> std::result::Result<Value, String> {
-        if !self.allow_build {
-            return Err("building is disabled by security.allow_build".into());
-        }
-        let file = arg_str(args, "file")?;
-        let path = self.workspace.resolve(&file).map_err(|e| e.to_string())?;
-        let timeout = args
-            .get("timeout_seconds")
-            .and_then(Value::as_u64)
-            .unwrap_or(self.timeout_seconds)
-            .min(self.timeout_seconds.max(1));
-        let tc = adapter::discover_toolchain();
-        let policy = adapter::lean_policy(timeout);
-        let result = adapter::execute(
-            &tc,
-            &LeanCommand::LeanCheck { file: path },
-            Some(&self.root),
-            &policy,
-            &CancelToken::new(),
-        )
-        .map_err(|e| e.to_string())?;
-        let diagnostics = serde_json::to_value(&result.diagnostics).map_err(|e| e.to_string())?;
-        Ok(json!({
-            "success": result.output.success(),
-            "timed_out": result.output.timed_out,
-            "diagnostics": diagnostics,
-        }))
+    /// Cached diagnostics per file, in path order.
+    pub(crate) fn cached_diagnostics(&self) -> BTreeMap<String, Vec<Value>> {
+        self.diagnostics.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
-fn arg_str(args: &Value, key: &str) -> std::result::Result<String, String> {
-    args.get(key)
-        .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| format!("missing string argument `{key}`"))
+fn tool_error(message: String) -> Value {
+    json!({ "content": [{ "type": "text", "text": message }], "isError": true })
 }
 
-fn error_response(id: Value, code: i64, message: &str) -> Value {
+fn str_param(params: &Value, key: &str) -> Option<String> {
+    params.get(key).and_then(Value::as_str).map(str::to_string)
+}
+
+pub(crate) fn error_response(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-/// Tool metadata returned by `tools/list`.
-pub fn tool_descriptors() -> Value {
-    json!([
-        {
-            "name": "tpt_lean_search",
-            "description": "Search the local Lean index by name, prefix, or docstring text.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string" },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": 200 },
-                    "namespace": { "type": "string" }
-                },
-                "required": ["query"]
-            }
-        },
-        {
-            "name": "tpt_lean_format_text",
-            "description": "Format Lean source text in memory. Never writes files.",
-            "inputSchema": {
-                "type": "object",
-                "properties": { "text": { "type": "string" } },
-                "required": ["text"]
-            }
-        },
-        {
-            "name": "tpt_lean_index_status",
-            "description": "Report index schema version, sizes, packages, and integrity.",
-            "inputSchema": { "type": "object", "properties": {} }
-        },
-        {
-            "name": "tpt_lean_check_file",
-            "description": "Run `lean` on a file inside the workspace and return diagnostics. Requires build permission.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {
-                    "file": { "type": "string" },
-                    "timeout_seconds": { "type": "integer", "minimum": 1 }
-                },
-                "required": ["file"]
-            }
-        }
-    ])
-}
-
 /// Serve JSON-RPC over newline-delimited stdio until EOF.
+///
+/// Requests are answered in order on the calling thread. The loop is synchronous, so a
+/// cancellation can only refer to a request that has already been answered; it is accepted
+/// and has no effect. In-flight cancellation applies to the HTTP transport.
 pub fn serve_stdio<R: BufRead, W: Write>(server: &Server, input: R, mut output: W) -> std::io::Result<()> {
     for line in input.lines() {
         let line = line?;
@@ -247,7 +286,12 @@ pub fn serve_stdio<R: BufRead, W: Write>(server: &Server, input: R, mut output: 
             continue;
         }
         let reply = match serde_json::from_str::<Value>(&line) {
-            Ok(msg) => server.handle(&msg),
+            Ok(msg) => {
+                if let Some(id) = msg.get("id").filter(|_| msg.get("method").is_some()) {
+                    server.note_received(&id.to_string());
+                }
+                server.handle(&msg)
+            }
             Err(e) => Some(error_response(Value::Null, PARSE_ERROR, &e.to_string())),
         };
         if let Some(reply) = reply {
@@ -269,13 +313,15 @@ mod tests {
     }
 
     #[test]
-    fn initialize_reports_tools_capability() {
+    fn initialize_reports_capabilities() {
         let s = server();
         let r = s
             .handle(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}))
             .unwrap();
         assert_eq!(r["result"]["protocolVersion"], PROTOCOL_VERSION);
         assert!(r["result"]["capabilities"]["tools"].is_object());
+        assert!(r["result"]["capabilities"]["resources"].is_object());
+        assert!(r["result"]["capabilities"]["prompts"].is_object());
     }
 
     #[test]
@@ -297,6 +343,24 @@ mod tests {
     }
 
     #[test]
+    fn ping_answers_empty_result() {
+        let s = server();
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":8,"method":"ping"}))
+            .unwrap();
+        assert_eq!(r["result"], json!({}));
+    }
+
+    #[test]
+    fn unknown_tool_is_protocol_error() {
+        let s = server();
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"nope"}}))
+            .unwrap();
+        assert_eq!(r["error"]["code"], INVALID_PARAMS);
+    }
+
+    #[test]
     fn tools_list_names_all_tools() {
         let s = server();
         let r = s
@@ -314,7 +378,14 @@ mod tests {
                 "tpt_lean_search",
                 "tpt_lean_format_text",
                 "tpt_lean_index_status",
-                "tpt_lean_check_file"
+                "tpt_lean_check_file",
+                "tpt_lean_format_file",
+                "tpt_lean_goals_at",
+                "tpt_lean_explain_diagnostic",
+                "tpt_lean_context_pack",
+                "tpt_lean_build_project",
+                "tpt_lean_profile_file",
+                "tpt_lean_imports_suggest",
             ]
         );
     }
@@ -326,6 +397,7 @@ mod tests {
         let body: Value = serde_json::from_str(r["result"]["content"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(body["formatted"], "def x := 1\n");
         assert_eq!(r["result"]["isError"], false);
+        assert_eq!(r["result"]["structuredContent"]["changed"], true);
     }
 
     #[test]
@@ -351,5 +423,39 @@ mod tests {
         let s = server();
         let r = s.handle(&json!({"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"tpt_lean_check_file","arguments":{"file":"../../etc/passwd"}}})).unwrap();
         assert_eq!(r["result"]["isError"], true);
+    }
+
+    #[test]
+    fn cancelled_pending_request_gets_no_reply() {
+        let s = server();
+        s.note_received("9");
+        s.handle(&json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":9}}));
+        assert!(s
+            .handle(&json!({"jsonrpc":"2.0","id":9,"method":"ping"}))
+            .is_none());
+        // Once answered, the id is free again: a later request with the same id is served.
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":9,"method":"ping"}))
+            .unwrap();
+        assert_eq!(r["id"], 9);
+    }
+
+    #[test]
+    fn cancel_for_unknown_id_is_ignored() {
+        let s = server();
+        s.handle(&json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":77}}));
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":77,"method":"ping"}))
+            .unwrap();
+        assert_eq!(r["id"], 77);
+    }
+
+    #[test]
+    fn batch_requests_are_rejected() {
+        let s = server();
+        let r = s
+            .handle(&json!([{"jsonrpc":"2.0","id":1,"method":"ping"}]))
+            .unwrap();
+        assert_eq!(r["error"]["code"], INVALID_REQUEST);
     }
 }
