@@ -287,7 +287,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [x] Per-file timing
 - [x] Per-declaration timing
 - [x] Tactic timing where available
-- [ ] Memory usage tracking
+- [x] Memory usage tracking (peak resident size of the Lean process tree, sampled every 100 ms; not per declaration)
 - [ ] Build-step timing, cache hit/miss reports
 - [x] Slow import detection (`profile --imports`: one approximate lean run per direct import, minus an empty-file baseline)
 - [ ] Dependency bottleneck graph (partial: direct imports with load costs via profile --graph; no transitive attribution)

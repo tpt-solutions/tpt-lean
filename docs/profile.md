@@ -52,7 +52,7 @@ Observed Lean 4.36.0 output:
 
 ## Not implemented
 
-Memory tracking, transitive dependency bottleneck graphs, and
+Per-declaration memory, transitive dependency bottleneck graphs, and
 build-step and cache hit/miss reports. Each is listed in the report's `notes` field.
 
 ## Reports

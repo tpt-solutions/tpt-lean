@@ -15,6 +15,9 @@ pub struct ProcessPolicy {
     pub output_limit_bytes: usize,
     /// Memory limit in bytes where the platform supports it (`None` = unlimited or unsupported).
     pub memory_limit_bytes: Option<u64>,
+    /// Sample the process tree's resident memory and report its peak, even without a limit.
+    /// Sampling is periodic, so a short spike between samples can be missed.
+    pub track_memory: bool,
     /// Environment variables allowed through. Everything else is removed.
     pub env_allowlist: Vec<String>,
     /// Variables set explicitly by the caller, applied after the allowlist. Use only for
@@ -28,6 +31,7 @@ impl Default for ProcessPolicy {
             timeout: Duration::from_secs(120),
             output_limit_bytes: 8 * 1024 * 1024,
             memory_limit_bytes: None,
+            track_memory: false,
             env_allowlist: default_env_allowlist(),
             extra_env: Vec::new(),
         }

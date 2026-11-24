@@ -25,7 +25,7 @@ const TRACE_THRESHOLD_MS: u32 = 2;
 const PROFILER_THRESHOLD_MS: u32 = 1;
 
 const NOT_MEASURED: &[&str] = &[
-    "memory usage: not measured (Lean does not report it per declaration, and no portable limit is implemented)",
+    "memory: only the peak resident size of the whole Lean process tree is sampled; per-declaration memory is not measured",
     "dependency bottleneck graph: direct imports only (`--graph`); transitive costs are not attributed",
     "imports: load cost is timed only when requested (`--imports`), one approximate run per import",
     "build-step timing and cache hit/miss reports: not implemented",
@@ -107,6 +107,7 @@ pub fn profile_file_traced(
             .map(|(k, v)| (k, round_ms(v)))
             .collect(),
         tactics: analysis.tactics,
+        peak_memory_bytes: out.peak_memory_bytes,
         import_timings: Vec::new(),
         suggestions: Vec::new(),
         notes: NOT_MEASURED.iter().map(|s| (*s).to_string()).collect(),
@@ -178,6 +179,7 @@ fn project_policy(
     let mut policy = ProcessPolicy {
         timeout: Duration::from_secs(timeout_secs),
         output_limit_bytes: OUTPUT_LIMIT_BYTES,
+        track_memory: true,
         ..ProcessPolicy::default()
     };
     if let Some(lean_path) = lean_path_for(toolchain, project_root, &policy, &CancelToken::new()) {

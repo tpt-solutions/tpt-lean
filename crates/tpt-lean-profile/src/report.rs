@@ -26,6 +26,10 @@ pub struct ProfileReport {
     /// Totals from the `cumulative profiling times` block, keyed by Lean's label.
     pub categories: BTreeMap<String, f64>,
     pub tactics: Vec<TacticTiming>,
+    /// Peak resident memory of the Lean process tree during the run, in bytes. Sampled, so a
+    /// short spike can be missed. `None` when it was not measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory_bytes: Option<u64>,
     /// Per-import load costs. Empty unless the import timing was requested.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub import_timings: Vec<ImportTiming>,
@@ -224,6 +228,13 @@ pub fn render_report(report: &ProfileReport, n: usize) -> String {
         for t in report.tactics.iter().take(n) {
             let _ = writeln!(out, "  {} x{}: {}", t.name, t.count, format_ms(t.total_ms));
         }
+    }
+    if let Some(bytes) = report.peak_memory_bytes {
+        let _ = writeln!(
+            out,
+            "Peak memory (Lean process tree, sampled): {:.1} MiB",
+            bytes as f64 / (1024.0 * 1024.0)
+        );
     }
     if !report.import_timings.is_empty() {
         let _ = writeln!(out, "\nImports (slowest to load, approximate):");
@@ -439,6 +450,7 @@ mod tests {
             declarations: decls,
             categories: BTreeMap::from([("elaboration".to_string(), 9.5)]),
             tactics: vec![],
+            peak_memory_bytes: None,
             import_timings: vec![],
             suggestions: vec![],
             notes: vec![],

@@ -33,6 +33,8 @@ pub struct ProcessOutput {
     pub cancelled: bool,
     pub output_truncated: bool,
     pub memory_exceeded: bool,
+    /// Peak resident memory of the process tree, when `ProcessPolicy::track_memory` was set.
+    pub peak_memory_bytes: Option<u64>,
     pub duration: Duration,
 }
 
@@ -100,8 +102,10 @@ pub fn run(
     let mut timed_out = false;
     let mut cancelled = false;
     let mut memory_exceeded = false;
-    let mut watchdog = policy.memory_limit_bytes.map(|limit| (limit, System::new()));
+    let mut watchdog = (policy.memory_limit_bytes.is_some() || policy.track_memory)
+        .then(|| (policy.memory_limit_bytes, System::new()));
     let mut last_sample: Option<Instant> = None;
+    let mut peak_memory: u64 = 0;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break Some(status);
@@ -115,7 +119,9 @@ pub fn run(
         } else if let Some((limit, sys)) = watchdog.as_mut() {
             if last_sample.is_none_or(|t| t.elapsed() >= MEMORY_SAMPLE_INTERVAL) {
                 last_sample = Some(Instant::now());
-                if tree_memory(sys, child.id()) > *limit {
+                let used = tree_memory(sys, child.id());
+                peak_memory = peak_memory.max(used);
+                if limit.is_some_and(|l| used > l) {
                     memory_exceeded = true;
                 }
             }
@@ -143,6 +149,7 @@ pub fn run(
         cancelled,
         output_truncated: out_trunc || err_trunc,
         memory_exceeded,
+        peak_memory_bytes: policy.track_memory.then_some(peak_memory),
         duration: started.elapsed(),
     })
 }
@@ -464,6 +471,21 @@ mod tests {
         };
         let out = run(&prog, &args, None, &policy, &CancelToken::new()).unwrap();
         assert!(out.success(), "{out:?}");
+        assert!(!out.memory_exceeded);
+        assert_eq!(out.peak_memory_bytes, None, "tracking is off by default");
+    }
+
+    #[test]
+    fn tracked_run_reports_a_peak() {
+        let (prog, args) = sleep_program();
+        let policy = ProcessPolicy {
+            timeout: Duration::from_secs(2),
+            track_memory: true,
+            ..ProcessPolicy::default()
+        };
+        let out = run(&prog, &args, None, &policy, &CancelToken::new()).unwrap();
+        let peak = out.peak_memory_bytes.expect("tracking was requested");
+        assert!(peak > 0, "{out:?}");
         assert!(!out.memory_exceeded);
     }
 
