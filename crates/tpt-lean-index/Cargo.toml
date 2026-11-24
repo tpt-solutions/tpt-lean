@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-index"
-description = "tpt-lean: index component"
+description = "SQLite (WAL and FTS5) symbol index for Lean projects and their local dependencies"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lean4", "sqlite", "fts5", "symbol-index"]
+categories = ["database", "development-tools"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

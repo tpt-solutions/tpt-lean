@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-server"
-description = "Local JSON-RPC 2.0 API server for tpt-lean (TCP on localhost)"
+description = "Local JSON-RPC 2.0 API server for tpt-lean over localhost TCP, with permission classes"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["json-rpc", "lean", "lean4", "api", "localhost"]
+categories = ["development-tools", "network-programming"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

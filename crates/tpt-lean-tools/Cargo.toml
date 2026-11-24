@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-tools"
-description = "tpt-lean: CI, bisect, SARIF, import analysis and doctor extensions"
+description = "CI runner with SARIF output, import analysis, git bisect and doctor extensions for Lean projects"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lake", "ci", "sarif", "imports"]
+categories = ["development-tools", "command-line-utilities"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

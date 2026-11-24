@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-adapter"
-description = "tpt-lean: adapter component"
+description = "Typed, shell-free invocations of the official lean and lake tools, with an LSP client"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lake", "lsp", "toolchain", "subprocess"]
+categories = ["development-tools", "command-line-utilities"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

@@ -25,6 +25,7 @@ edition = "2021"
 rust-version = "1.82"
 license = "MIT OR Apache-2.0"
 authors = ["TPT Solutions"]
+repository = "https://github.com/tpt-solutions/tpt-lean"
 
 [workspace.dependencies]
 tpt-lean-core = { path = "crates/tpt-lean-core", version = "0.1.0" }

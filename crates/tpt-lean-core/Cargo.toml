@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-core"
-description = "Shared types, configuration, errors, project model and paths for tpt-lean"
+description = "Shared configuration, errors, project model, paths, hashing and process policy for tpt-lean"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lean4", "config", "toolchain", "project-model"]
+categories = ["development-tools"]
+repository.workspace = true
 
 [dependencies]
 serde.workspace = true

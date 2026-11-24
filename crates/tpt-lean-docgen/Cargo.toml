@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-docgen"
-description = "tpt-lean: docgen"
+description = "Static HTML documentation generator for Lean 4 projects, built from syntax facts"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lean4", "documentation", "html", "docgen"]
+categories = ["development-tools", "web-programming"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

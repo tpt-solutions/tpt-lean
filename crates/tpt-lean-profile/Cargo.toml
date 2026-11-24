@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-profile"
-description = "tpt-lean: profile"
+description = "Per-file and per-declaration timing reports for Lean 4, from Lean's own trace output"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lean4", "profiling", "performance", "trace"]
+categories = ["development-tools::profiling"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

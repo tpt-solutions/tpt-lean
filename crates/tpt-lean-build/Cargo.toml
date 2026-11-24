@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-build"
-description = "tpt-lean: build orchestration, build event stream, and build cache"
+description = "Lake build orchestration with a structured event stream, cache keys and watch mode"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lake", "build", "build-cache", "watch"]
+categories = ["development-tools::build-utils", "development-tools"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

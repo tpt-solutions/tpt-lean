@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-wasm"
-description = "tpt-lean: restricted, browser-safe WebAssembly bindings"
+description = "Restricted, browser-safe WebAssembly bindings for tpt-lean: tokenizer, formatter and search"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["wasm", "webassembly", "lean", "lean4", "browser"]
+categories = ["wasm", "development-tools"]
+repository.workspace = true
 publish = false
 
 [lib]

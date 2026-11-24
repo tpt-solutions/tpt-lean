@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-syntax"
-description = "tpt-lean: syntax component"
+description = "Lossless, lightweight syntax layer for Lean 4: tokens, shallow CST, imports, declarations and symbols"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lean4", "parser", "lexer", "syntax-tree"]
+categories = ["parser-implementations", "development-tools"]
+repository.workspace = true
 
 [dependencies]
 

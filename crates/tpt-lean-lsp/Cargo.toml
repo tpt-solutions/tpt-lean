@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-lsp"
-description = "tpt-lean: lsp"
+description = "Language Server Protocol proxy for Lean 4 with cached symbols and index-backed workspace search"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lsp", "lean", "lean4", "language-server", "proxy"]
+categories = ["development-tools"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

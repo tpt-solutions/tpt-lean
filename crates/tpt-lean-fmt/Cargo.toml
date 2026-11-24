@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-fmt"
-description = "tpt-lean: fmt component"
+description = "Conservative, idempotent, syntax-preserving formatter for Lean 4"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lean4", "formatter", "code-style", "fmt"]
+categories = ["development-tools", "text-processing"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-syntax.workspace = true

@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-search"
-description = "tpt-lean: search component"
+description = "Name, namespace and docstring search over the tpt-lean index with deterministic ranking"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["lean", "lean4", "search", "ranking", "symbols"]
+categories = ["development-tools"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

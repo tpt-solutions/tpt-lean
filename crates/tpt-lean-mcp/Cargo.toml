@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-mcp"
-description = "MCP (Model Context Protocol) stdio server for tpt-lean"
+description = "Model Context Protocol server for tpt-lean over stdio and loopback HTTP, built on JSON-RPC 2.0"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["mcp", "lean", "json-rpc", "ai", "tools"]
+categories = ["development-tools", "api-bindings"]
+repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true

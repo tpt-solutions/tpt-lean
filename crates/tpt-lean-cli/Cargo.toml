@@ -1,11 +1,15 @@
 [package]
 name = "tpt-lean-cli"
-description = "Command-line interface for tpt-lean (binaries: tpt-lean, tlean)"
+description = "Command-line interface for tpt-lean, shipping the tpt-lean and tlean binaries"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
+readme = "README.md"
+keywords = ["cli", "lean", "lean4", "lake", "tooling"]
+categories = ["command-line-utilities", "development-tools"]
+repository.workspace = true
 autobins = false
 
 [[bin]]
