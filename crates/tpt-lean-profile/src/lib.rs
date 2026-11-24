@@ -1,0 +1,18 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! Profiling of Lean files: per-file wall time, per-declaration timing from Lean's own
+//! `trace.profiler` output, tactic totals, slowest-declaration ranking, JSON reports, and
+//! comparison of two reports.
+//!
+//! Not implemented: memory tracking, flamegraphs, slow-import detection, dependency graphs,
+//! build-step and cache reports. Each is listed in [`ProfileReport::notes`].
+
+mod analysis;
+mod report;
+mod run;
+mod trace;
+
+pub use report::{
+    compare, format_ms, from_json, read_report, render_report, slowest, suggest, to_json, DeclTiming,
+    ProfileReport, TacticTiming, FORMAT_VERSION,
+};
+pub use run::profile_file;

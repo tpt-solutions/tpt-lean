@@ -1,0 +1,20 @@
+cumulative profiling times:
+	attribute application 0.147ms
+	compilation (IR) 0.114ms
+	compilation (LCNF base) 1.02ms
+	compilation (LCNF impure) 0.462ms
+	compilation (LCNF mono) 0.569ms
+	congr simp thm 0.102ms
+	elaboration 9.64ms
+	fix level params 0.0287ms
+	instantiate metavars 0.073ms
+	interpretation 0.0174ms
+	let-to-have transformation 0.0343ms
+	linting 1.57ms
+	parsing 0.65ms
+	process pre-definitions 0.469ms
+	share common exprs 0.127ms
+	simp 0.742ms
+	tactic execution 3.23ms
+	type checking 6.29ms
+	typeclass inference 4.77ms

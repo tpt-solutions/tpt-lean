@@ -1,0 +1,273 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! Build orchestration for Lake projects: calls `lake build` through the adapter (no shell),
+//! turns its progress output into a structured event stream, computes cache keys, and records
+//! successful builds in a disk cache.
+//!
+//! Lake remains the authority on what to rebuild. The cache reports hits and misses and lets
+//! watch mode skip rebuilds whose inputs are unchanged; it never serves outputs on its own.
+//!
+//! Not implemented: live streaming of Lake output (the adapter captures output until Lake exits,
+//! so file events are replayed afterwards), parallel orchestration beyond Lake's own job pool,
+//! shared team and CI caches, and deep build graphs.
+
+pub mod cache;
+pub mod events;
+pub mod key;
+pub mod progress;
+pub mod project;
+pub mod watch;
+
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
+
+use tpt_lean_adapter::{discover_toolchain, execute, lean_policy, Command, Diagnostic};
+use tpt_lean_core::policy::CancelToken;
+use tpt_lean_core::Result;
+
+pub use cache::{
+    prune_older_than, records_dir, status, BuildRecord, CacheStatus, DiskCache, MemoryCache, PruneReport,
+};
+pub use events::{explain_slow, BuildEvent, BuildOutcome, CacheLayer, SlowFile};
+pub use key::{cache_key_for, key_from_parts, probe_tools, Tools};
+pub use project::{fingerprint, scan_project, Fingerprint, ProjectScan};
+pub use watch::watch;
+
+static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+pub(crate) fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn new_run_id() -> String {
+    let n = RUN_COUNTER.fetch_add(1, Ordering::SeqCst);
+    format!("build_{}_{n}", now_ms())
+}
+
+/// Run `lake build [target]` in `project_root` and report it as a stream of [`BuildEvent`]s.
+///
+/// Events are delivered to `sink` in order: `build_started`, `cache_hit` or `cache_miss`, one or
+/// more `file_started` / `file_finished` / `file_failed` groups, `diagnostic`s, and finally
+/// `build_finished`. Lake's output is captured by the adapter, so the file events are replayed
+/// after Lake exits. A successful build is recorded in the disk cache.
+///
+/// `timeout_secs` bounds the Lake process; on timeout the outcome has `timed_out: true`.
+pub fn build(
+    project_root: &Path,
+    target: Option<&str>,
+    timeout_secs: u64,
+    sink: &mut dyn FnMut(&BuildEvent),
+) -> Result<BuildOutcome> {
+    let run_id = new_run_id();
+    let t0 = now_ms();
+
+    let tc = discover_toolchain();
+    let key_start = Instant::now();
+    let scan = scan_project(project_root)?;
+    let tools = probe_tools(&tc)?;
+    let key = key::key_from_parts(&scan, &tools, target);
+    let digest = key.digest();
+    let key_ms = key_start.elapsed().as_millis() as u64;
+
+    let root_str = project_root.display().to_string();
+    let disk = DiskCache::default_location();
+    let hit = match &disk {
+        Some(c) => c.lookup(&digest, &root_str).ok().flatten().is_some(),
+        None => false,
+    };
+
+    sink(&BuildEvent::BuildStarted {
+        run_id: run_id.clone(),
+        timestamp_ms: t0,
+        target: target.map(str::to_string),
+    });
+    if hit {
+        sink(&BuildEvent::CacheHit {
+            run_id: run_id.clone(),
+            timestamp_ms: t0,
+            digest: digest.clone(),
+            layer: CacheLayer::Disk,
+        });
+    } else {
+        sink(&BuildEvent::CacheMiss {
+            run_id: run_id.clone(),
+            timestamp_ms: t0,
+            digest: digest.clone(),
+        });
+    }
+
+    let lake = Command::LakeBuild {
+        target: target.map(str::to_string),
+    };
+    let policy = lean_policy(timeout_secs);
+    let result = execute(&tc, &lake, Some(project_root), &policy, &CancelToken::new());
+    let t1 = now_ms();
+    let res = match result {
+        Ok(r) => r,
+        Err(e) => {
+            sink(&finished_event(&run_id, t1, false, 0, 0));
+            return Err(e);
+        }
+    };
+
+    // Lake prints progress on stdout; parse stderr too in case a Lake version differs.
+    let mut lines = progress::parse_output(&res.output.stdout);
+    lines.extend(progress::parse_output(&res.output.stderr));
+
+    let mut built = 0usize;
+    let mut failed = 0usize;
+    for p in &lines {
+        match p {
+            progress::Progress::Started { module } => {
+                sink(&BuildEvent::FileStarted {
+                    run_id: run_id.clone(),
+                    file: display_file(&scan, module),
+                    timestamp_ms: t1,
+                });
+            }
+            progress::Progress::Finished { module, duration_ms } => {
+                built += 1;
+                let file = display_file(&scan, module);
+                emit_started_from_duration(sink, &run_id, &file, t0, t1, *duration_ms);
+                sink(&BuildEvent::FileFinished {
+                    run_id: run_id.clone(),
+                    file,
+                    timestamp_ms: t1,
+                    duration_ms: *duration_ms,
+                });
+            }
+            progress::Progress::Failed { module, duration_ms } => {
+                failed += 1;
+                let file = display_file(&scan, module);
+                emit_started_from_duration(sink, &run_id, &file, t0, t1, *duration_ms);
+                sink(&BuildEvent::FileFailed {
+                    run_id: run_id.clone(),
+                    file,
+                    timestamp_ms: t1,
+                    duration_ms: *duration_ms,
+                });
+            }
+            progress::Progress::Artifact { .. } | progress::Progress::Summary { .. } => {}
+        }
+    }
+
+    for d in &res.diagnostics {
+        sink(&diagnostic_event(&run_id, t1, d));
+    }
+
+    let success = res.output.success();
+    // Lake may write files the key covers (for example `lake-manifest.json` on the first build),
+    // so the state left behind can have a different key. Both states are recorded on success.
+    let post_digest = match scan_project(project_root) {
+        Ok(post) => key::key_from_parts(&post, &tools, target).digest(),
+        Err(_) => digest.clone(),
+    };
+    if success {
+        if let Some(cache) = &disk {
+            let mut digests = vec![digest.clone()];
+            if post_digest != digest {
+                digests.push(post_digest.clone());
+            }
+            for d in digests {
+                let record = BuildRecord {
+                    digest: d,
+                    project_root: root_str.clone(),
+                    finished_at_ms: t1,
+                    duration_ms: t1.saturating_sub(t0),
+                    files_built: built,
+                };
+                if let Err(e) = cache.store(&record) {
+                    sink(&BuildEvent::Diagnostic {
+                        run_id: run_id.clone(),
+                        timestamp_ms: t1,
+                        severity: "warning".into(),
+                        file: String::new(),
+                        line: 0,
+                        column: 0,
+                        message: format!("could not record build in cache: {}", e.message()),
+                    });
+                }
+            }
+        }
+    }
+
+    let duration_ms = t1.saturating_sub(t0);
+    sink(&BuildEvent::BuildFinished {
+        run_id: run_id.clone(),
+        timestamp_ms: t1,
+        success,
+        duration_ms,
+        files_built: built,
+        files_failed: failed,
+    });
+
+    Ok(BuildOutcome {
+        run_id,
+        success,
+        timed_out: res.output.timed_out,
+        exit_code: res.output.exit_code,
+        digest,
+        post_digest,
+        cache_hit: hit,
+        files_built: built,
+        files_failed: failed,
+        duration_ms,
+        key_ms,
+    })
+}
+
+/// Lake reports a module's duration when it finishes. Emit `file_started` at the derived start
+/// time (finish minus duration, never before the build started).
+fn emit_started_from_duration(
+    sink: &mut dyn FnMut(&BuildEvent),
+    run_id: &str,
+    file: &str,
+    t0: u64,
+    t1: u64,
+    duration_ms: Option<u64>,
+) {
+    if let Some(d) = duration_ms {
+        sink(&BuildEvent::FileStarted {
+            run_id: run_id.to_string(),
+            file: file.to_string(),
+            timestamp_ms: t1.saturating_sub(d).max(t0),
+        });
+    }
+}
+
+fn display_file(scan: &ProjectScan, module: &str) -> String {
+    match scan.file_for_module(module) {
+        Some(f) => f.rel_path.clone(),
+        None => module.to_string(),
+    }
+}
+
+fn finished_event(run_id: &str, ts: u64, success: bool, built: usize, failed: usize) -> BuildEvent {
+    BuildEvent::BuildFinished {
+        run_id: run_id.to_string(),
+        timestamp_ms: ts,
+        success,
+        duration_ms: 0,
+        files_built: built,
+        files_failed: failed,
+    }
+}
+
+fn diagnostic_event(run_id: &str, ts: u64, d: &Diagnostic) -> BuildEvent {
+    let severity = serde_json::to_value(d.severity)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| "error".into());
+    BuildEvent::Diagnostic {
+        run_id: run_id.to_string(),
+        timestamp_ms: ts,
+        severity,
+        file: d.file.clone(),
+        line: d.line,
+        column: d.column,
+        message: d.message.clone(),
+    }
+}

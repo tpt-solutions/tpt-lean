@@ -1,0 +1,19 @@
+[Elab.command] [0.002849] ✅️ class Shape (α : Type) where
+      area : α → Nat
+elaboration took 2.74ms
+elaboration took 1.17ms
+[Elab.command] [0.003526] ✅️ theorem sumlemma (xs : List Nat) : (xs ++ []).length = xs.length := by simp
+  [Elab.definition.header] [0.003374] ✅️ sumlemma
+elaboration took 2.09ms
+[Elab.async] [0.003062] ✅️ elaborating proof of heavy
+  [Elab.definition.value] [0.002851] ✅️ heavy
+    [Elab.step] [0.002729] ✅️ omega
+      [Elab.step] [0.002717] ✅️ omega
+        [Elab.step] [0.002690] ✅️ omega
+tactic execution of Lean.Parser.Tactic.omega took 2.34ms
+[Elab.async] [0.005276] ✅️ _private.Lean.AddDecl.0.Lean.addDeclCore
+  [Kernel] [0.005240] ✅️ typechecking declarations [heavy._proof_1_1]
+type checking took 5.25ms
+[Elab.command] [0.003583] ✅️ example : 2 + 2 = 4 := by decide
+  [Elab.definition.header] [0.002499] ✅️ _example
+elaboration took 1.33ms
