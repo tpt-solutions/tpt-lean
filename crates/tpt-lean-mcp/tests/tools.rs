@@ -174,6 +174,20 @@ fn build_tools_are_denied_without_allow_build() {
 }
 
 #[test]
+fn profile_tool_is_denied_without_allow_profile() {
+    let mut files = owned(&[("A.lean", "def a := 1\n")]);
+    with_config(&mut files, "allow_profile = false");
+    let dir = project_owned("deny-profile", files);
+    let server = Server::new(&dir).unwrap();
+    let r = call(&server, "tpt_lean_profile_file", json!({"file": "A.lean"}));
+    assert_eq!(r["isError"], true);
+    assert!(text_of(&r).contains("security.allow_profile"), "{}", text_of(&r));
+    // Build tools are still allowed: the switches are independent.
+    let r = call(&server, "tpt_lean_check_file", json!({"file": "A.lean"}));
+    assert_ne!(r["isError"], true, "{}", text_of(&r));
+}
+
+#[test]
 fn read_tools_work_with_build_and_write_denied() {
     let mut files = owned(&[("A.lean", "def a := 1\n")]);
     with_config(&mut files, "allow_build = false\nallow_write = false");

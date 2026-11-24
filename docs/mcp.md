@@ -40,7 +40,7 @@ missing permission. Denied calls do not touch the filesystem or start a process.
 | read    | always                                  | `tpt_lean_search`, `tpt_lean_format_text`, `tpt_lean_index_status`, `tpt_lean_imports_suggest` |
 | write   | `security.allow_write = true`           | `tpt_lean_format_file` |
 | build   | `security.allow_build = true` (default) | `tpt_lean_check_file`, `tpt_lean_build_project`, `tpt_lean_goals_at`, `tpt_lean_explain_diagnostic`, `tpt_lean_context_pack` |
-| profile | `security.allow_build = true`           | `tpt_lean_profile_file` (not available yet) |
+| profile | `security.allow_build` and `security.allow_profile` (both default to true) | `tpt_lean_profile_file` |
 
 Settings live in `.tpt-lean/config.toml`:
 
@@ -48,10 +48,11 @@ Settings live in `.tpt-lean/config.toml`:
 [security]
 allow_write = true
 allow_build = true
+allow_profile = true
 command_timeout_seconds = 120
 ```
 
-`TPT_LEAN_SECURITY_ALLOW_WRITE` and `TPT_LEAN_SECURITY_ALLOW_BUILD` override them.
+`TPT_LEAN_SECURITY_ALLOW_WRITE`, `TPT_LEAN_SECURITY_ALLOW_BUILD`, and `TPT_LEAN_SECURITY_ALLOW_PROFILE` override them.
 Every path argument must resolve inside the project root, and tools that read or write
 source only accept `.lean` files.
 

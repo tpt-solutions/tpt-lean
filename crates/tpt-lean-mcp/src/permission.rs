@@ -15,8 +15,8 @@ pub enum Permission {
     Write,
     /// Runs Lean or Lake (`security.allow_build`).
     Build,
-    /// Runs controlled Lean checks with timing. There is no separate profile key yet, so it
-    /// is gated by `security.allow_build`.
+    /// Runs Lean on instrumented copies of files. Needs `security.allow_build` and
+    /// `security.allow_profile`.
     Profile,
 }
 
@@ -33,24 +33,38 @@ impl Permission {
 
 /// `Ok` when the config grants `class`; otherwise a message that names the missing permission.
 pub fn check(security: &SecurityConfig, class: Permission) -> Result<(), String> {
+    if class == Permission::Profile {
+        return check_profile(security);
+    }
     let (granted, key) = match class {
         Permission::Read => (true, ""),
         Permission::Write => (security.allow_write, "security.allow_write"),
         Permission::Build => (security.allow_build, "security.allow_build"),
-        Permission::Profile => (security.allow_build, "security.allow_build"),
+        Permission::Profile => unreachable!("handled above"),
     };
     if granted {
         Ok(())
-    } else if class == Permission::Profile {
-        Err(format!(
-            "permission denied: this tool needs the profile permission, which is granted by {key} = true in .tpt-lean/config.toml (there is no separate profile setting yet)"
-        ))
     } else {
         Err(format!(
             "permission denied: this tool needs the {} permission; set {key} = true in .tpt-lean/config.toml",
             class.as_str()
         ))
     }
+}
+
+/// Profiling needs both switches: `allow_build` (it runs Lean) and `allow_profile`.
+fn check_profile(security: &SecurityConfig) -> Result<(), String> {
+    if !security.allow_build {
+        return Err(
+            "permission denied: this tool needs the profile permission, which is granted by security.allow_build = true in .tpt-lean/config.toml".into(),
+        );
+    }
+    if !security.allow_profile {
+        return Err(
+            "permission denied: this tool needs the profile permission; set security.allow_profile = true in .tpt-lean/config.toml".into(),
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -88,5 +102,15 @@ mod tests {
             .contains("build permission"));
         let err = check(&sec, Permission::Profile).unwrap_err();
         assert!(err.contains("security.allow_build"));
+    }
+
+    #[test]
+    fn profile_needs_allow_profile_as_well() {
+        let mut sec = SecurityConfig::default();
+        assert!(check(&sec, Permission::Profile).is_ok());
+        sec.allow_profile = false;
+        let err = check(&sec, Permission::Profile).unwrap_err();
+        assert!(err.contains("security.allow_profile"), "{err}");
+        assert!(check(&sec, Permission::Build).is_ok());
     }
 }

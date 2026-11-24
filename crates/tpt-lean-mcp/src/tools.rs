@@ -206,7 +206,7 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "tpt_lean_profile_file",
-            description: "Profile a .lean file: wall time, per-declaration timings from Lean's trace, tactic totals and suggestions. Runs Lean. Requires build permission (security.allow_build).",
+            description: "Profile a .lean file: wall time, per-declaration timings from Lean's trace, tactic totals and suggestions. Runs Lean. Requires security.allow_build and security.allow_profile.",
             class: Permission::Profile,
             input: object(json!({ "file": file_prop() }), &["file"]),
             output: object(json!({}), &[]),

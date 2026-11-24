@@ -88,6 +88,7 @@ fn project_info(server: &Server) -> Result<Value, RpcError> {
             "workspace_only": config.security.workspace_only,
             "allow_write": config.security.allow_write,
             "allow_build": config.security.allow_build,
+            "allow_profile": config.security.allow_profile,
             "command_timeout_seconds": config.security.command_timeout_seconds,
         },
     }))

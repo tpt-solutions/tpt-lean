@@ -84,7 +84,7 @@ Lean (needs `lean` and `lake` on PATH or in `~/.elan/bin`):
 - `lsp`: Lean language-server proxy over stdin/stdout (document symbols, workspace symbols from the index, hover goals, cached diagnostics)
 
 Servers:
-- `mcp stdio`: MCP over stdin/stdout. Tools are classed read, write, build, or profile, and denied tools return an error naming the missing permission. `tpt_lean_profile_file` is not available yet.
+- `mcp stdio`: MCP over stdin/stdout. Tools are classed read, write, build, or profile, and denied tools return an error naming the missing permission. `tpt_lean_profile_file` needs `security.allow_build` and `security.allow_profile`.
 - `mcp http [--port N]`: MCP over local HTTP on 127.0.0.1 (default 7474)
 - `server start [--port N]`: JSON-RPC API on 127.0.0.1 (7373 by default; remote only with `server.allow_remote`). Writes `.tpt-lean/server.json`.
 - `server status`, `server stop`: read and stop the server recorded in `.tpt-lean/server.json`

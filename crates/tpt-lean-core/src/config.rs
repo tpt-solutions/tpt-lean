@@ -131,6 +131,8 @@ pub struct SecurityConfig {
     pub workspace_only: bool,
     pub allow_write: bool,
     pub allow_build: bool,
+    /// Profiling runs Lean on instrumented copies of files. It also needs `allow_build`.
+    pub allow_profile: bool,
     pub command_timeout_seconds: u64,
 }
 
@@ -140,6 +142,7 @@ impl Default for SecurityConfig {
             workspace_only: true,
             allow_write: false,
             allow_build: true,
+            allow_profile: true,
             command_timeout_seconds: 120,
         }
     }
@@ -157,6 +160,7 @@ const ENV_KEYS: &[(&str, &str)] = &[
     ("TPT_LEAN_INDEX_DEPENDENCY_GRAPH", "index.dependency_graph"),
     ("TPT_LEAN_SECURITY_ALLOW_WRITE", "security.allow_write"),
     ("TPT_LEAN_SECURITY_ALLOW_BUILD", "security.allow_build"),
+    ("TPT_LEAN_SECURITY_ALLOW_PROFILE", "security.allow_profile"),
     (
         "TPT_LEAN_SECURITY_COMMAND_TIMEOUT_SECONDS",
         "security.command_timeout_seconds",

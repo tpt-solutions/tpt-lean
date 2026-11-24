@@ -243,7 +243,7 @@ Crate: `tpt-lean-mcp` (hand-written over serde_json)
 - [x] Tool `tpt_lean_explain_diagnostic`
 - [x] Tool `tpt_lean_format_file` (write permission)
 - [x] Tool `tpt_lean_build_project` (build permission)
-- [ ] Tool `tpt_lean_profile_file` (profile permission)
+- [x] Tool `tpt_lean_profile_file` (profile permission: needs allow_build and allow_profile)
 - [x] Tool `tpt_lean_imports_suggest`
 - [x] Tool `tpt_lean_index_status`
 - [x] Tool input/output JSON schemas
