@@ -43,14 +43,25 @@ cargo test --workspace
 ## Layout
 
 ```
-crates/tpt-lean-core     configuration, errors, paths, hashing, process policy, JSON envelope
-crates/tpt-lean-syntax   lossless lexer, shallow CST, symbols, imports, tactic blocks
-crates/tpt-lean-index    SQLite index (WAL, FTS5)
-crates/tpt-lean-search   ranking over the index
-crates/tpt-lean-fmt      conservative formatter
-crates/tpt-lean-adapter  typed invocations of lean/lake with timeout and output limits
-crates/tpt-lean-cli      the tpt-lean and tlean binaries
+crates/tpt-lean-core       configuration, errors, paths, hashing, process policy, JSON envelope
+crates/tpt-lean-syntax     lossless lexer, shallow CST, symbols, imports, tactic blocks
+crates/tpt-lean-index      SQLite index (WAL, FTS5)
+crates/tpt-lean-search     ranking over the index
+crates/tpt-lean-fmt        conservative formatter
+crates/tpt-lean-adapter    typed invocations of lean/lake, LSP client
+crates/tpt-lean-build      Lake build orchestration, event stream, build cache
+crates/tpt-lean-profile    timing reports from Lean's trace output
+crates/tpt-lean-docgen     static HTML documentation generator
+crates/tpt-lean-tools      import analysis, bisect, CI and SARIF, doctor checks
+crates/tpt-lean-lsp        Lean language-server proxy
+crates/tpt-lean-mcp        Model Context Protocol server
+crates/tpt-lean-server     local JSON-RPC API server
+crates/tpt-lean-ffi        stable C ABI (cdylib and staticlib)
+crates/tpt-lean-wasm       browser-safe WebAssembly bindings (not published)
+crates/tpt-lean-cli        the tpt-lean and tlean binaries
 ```
+
+Each crate has its own README and CHANGELOG.
 
 ## Licensing
 
