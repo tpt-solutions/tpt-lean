@@ -25,6 +25,11 @@ tpt-lean-fmt.workspace = true
 tpt-lean-adapter.workspace = true
 tpt-lean-mcp.workspace = true
 tpt-lean-server.workspace = true
+tpt-lean-docgen.workspace = true
+tpt-lean-profile.workspace = true
+tpt-lean-build.workspace = true
+tpt-lean-lsp.workspace = true
+tpt-lean-tools.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

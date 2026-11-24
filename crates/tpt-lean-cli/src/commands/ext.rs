@@ -1,0 +1,531 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! CLI wiring for the commands implemented in the Phase 2–8 crates: build, cache, profile,
+//! docgen, lsp, ci, bisect, import analysis, doctor extensions, and server lifecycle.
+
+use super::{load_config, project_root, OK};
+use crate::args::Args;
+use crate::{Ctx, Mode};
+use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tpt_lean_adapter::{self as adapter, Toolchain};
+use tpt_lean_core::policy::CancelToken;
+use tpt_lean_core::{Error, ErrorCode, Result};
+
+/// Lean-dependent commands need a toolchain; report a clear error when it is missing.
+fn toolchain_or_error() -> Result<Toolchain> {
+    let tc = adapter::discover_toolchain();
+    if tc.lean.is_none() || tc.lake.is_none() {
+        return Err(Error::new(
+            ErrorCode::LeanNotFound,
+            "lean and lake are required (install with elan)",
+        ));
+    }
+    Ok(tc)
+}
+
+fn timeout_arg(args: &Args, default: u64) -> Result<u64> {
+    match args.value("--timeout")? {
+        Some(t) => t
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds")),
+        None => Ok(default),
+    }
+}
+
+// ---------------------------------------------------------------- build
+
+/// `tpt-lean build [target] [--json] [--watch] [--explain-slow] [--timeout S]`.
+pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &[
+            "--project",
+            "--timeout",
+            "--json",
+            "--watch",
+            "--explain-slow",
+            "--poll-ms",
+        ],
+        &["--project", "--timeout", "--poll-ms"],
+    )?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    if !cfg.security.allow_build {
+        return Err(Error::new(
+            ErrorCode::InvalidArgument,
+            "building is disabled by security.allow_build",
+        ));
+    }
+    let target = args
+        .positionals(&["--project", "--timeout", "--poll-ms"])
+        .into_iter()
+        .next();
+    let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
+    toolchain_or_error()?;
+    let json_events = ctx.mode != Mode::Human || args.flag("--json");
+    let mut events: Vec<tpt_lean_build::BuildEvent> = Vec::new();
+    let mut sink = |e: &tpt_lean_build::BuildEvent| {
+        if json_events {
+            if let Ok(line) = serde_json::to_string(e) {
+                println!("{line}");
+            }
+        }
+        events.push(e.clone());
+    };
+
+    if args.flag("--watch") {
+        let poll_ms: u64 = match args.value("--poll-ms")? {
+            Some(p) => p
+                .parse()
+                .map_err(|_| Error::invalid("--poll-ms must be a number"))?,
+            None => 1000,
+        };
+        ctx.note("watching for changes (Ctrl+C to stop)");
+        tpt_lean_build::watch(
+            &root,
+            target.as_deref(),
+            timeout,
+            poll_ms,
+            &CancelToken::new(),
+            &mut sink,
+        )?;
+        return Ok(OK);
+    }
+
+    let outcome = tpt_lean_build::build(&root, target.as_deref(), timeout, &mut sink)?;
+    let slow = if args.flag("--explain-slow") {
+        tpt_lean_build::explain_slow(&events, 10)
+    } else {
+        Vec::new()
+    };
+    if !json_events {
+        let human = format!(
+            "build {}: {} file(s) built, {} failed, {} ms",
+            if outcome.success { "succeeded" } else { "failed" },
+            outcome.files_built,
+            outcome.files_failed,
+            outcome.duration_ms
+        );
+        let data = json!({
+            "success": outcome.success,
+            "timed_out": outcome.timed_out,
+            "cache_hit": outcome.cache_hit,
+            "files_built": outcome.files_built,
+            "files_failed": outcome.files_failed,
+            "duration_ms": outcome.duration_ms,
+            "digest": outcome.digest,
+        });
+        ctx.emit("build", &human, &data)?;
+        for s in &slow {
+            println!("slow: {s:?}");
+        }
+    } else if args.flag("--explain-slow") {
+        ctx.emit("build.explain_slow", "", &slow)?;
+    }
+    Ok(OK)
+}
+
+// ---------------------------------------------------------------- cache
+
+fn cache_dir_or_error() -> Result<PathBuf> {
+    tpt_lean_core::dirs::global_cache_dir()
+        .ok_or_else(|| Error::new(ErrorCode::Io, "no global cache directory could be determined"))
+}
+
+/// `tpt-lean cache status`.
+pub fn cache_status(ctx: &Ctx, _args: &Args) -> Result<i32> {
+    let dir = cache_dir_or_error()?;
+    let status = tpt_lean_build::status(&dir);
+    let human = if status.exists {
+        format!(
+            "global cache: {} ({} files, {} bytes)",
+            status.directory, status.files, status.bytes
+        )
+    } else {
+        format!("global cache: {} (not created yet)", status.directory)
+    };
+    ctx.emit(
+        "cache.status",
+        &human,
+        &json!({
+            "location": status.directory,
+            "exists": status.exists,
+            "files": status.files,
+            "bytes": status.bytes,
+        }),
+    )?;
+    Ok(OK)
+}
+
+/// `tpt-lean cache prune [--days N] [--dry-run]`.
+pub fn cache_prune(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&["--days", "--dry-run"], &["--days"])?;
+    let days: u64 = match args.value("--days")? {
+        Some(d) => d.parse().map_err(|_| Error::invalid("--days must be a number"))?,
+        None => 30,
+    };
+    let dir = cache_dir_or_error()?;
+    let report =
+        tpt_lean_build::prune_older_than(&dir, Duration::from_secs(days * 86_400), args.flag("--dry-run"))?;
+    let verb = if report.dry_run { "would remove" } else { "removed" };
+    let human = format!(
+        "{verb} {} file(s), {} bytes older than {days} day(s)",
+        report.removed_files, report.freed_bytes
+    );
+    ctx.emit(
+        "cache.prune",
+        &human,
+        &json!({
+            "directory": report.directory,
+            "dry_run": report.dry_run,
+            "removed_files": report.removed_files,
+            "freed_bytes": report.freed_bytes,
+        }),
+    )?;
+    Ok(OK)
+}
+
+// ---------------------------------------------------------------- explain
+
+/// `tpt-lean explain --last-error`: show the diagnostics saved by the last run.
+pub fn explain_last(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&["--last-error", "--project"], &["--project"])?;
+    let root = project_root(args)?;
+    match adapter::load_last_diagnostics(&root)? {
+        None => Err(Error::new(
+            ErrorCode::IndexError,
+            "no saved diagnostics yet; run `tpt-lean check` first",
+        )),
+        Some(last) => {
+            let human: Vec<String> = last
+                .diagnostics
+                .iter()
+                .map(|d| {
+                    format!(
+                        "{}:{}:{}: {:?}: {}",
+                        d.file, d.line, d.column, d.severity, d.message
+                    )
+                })
+                .collect();
+            let text = if human.is_empty() {
+                "no diagnostics in the last run".to_string()
+            } else {
+                human.join("\n")
+            };
+            ctx.emit("explain.last_error", &text, &last)?;
+            Ok(OK)
+        }
+    }
+}
+
+/// Lemma candidates for a goal, from the project index (used by `explain`).
+pub fn lemma_candidates(root: &Path, goal: &str, limit: usize) -> Vec<serde_json::Value> {
+    let dirs = tpt_lean_core::dirs::ProjectDirs::new(root);
+    let Ok(index) = tpt_lean_index::Index::open(&dirs.index_db()) else {
+        return Vec::new();
+    };
+    adapter::suggest_lemmas(&index, goal, limit)
+        .unwrap_or_default()
+        .into_iter()
+        .map(
+            |h| json!({ "name": h.name, "kind": h.kind, "source": h.file, "line": h.line, "score": h.score }),
+        )
+        .collect()
+}
+
+// ---------------------------------------------------------------- profile
+
+/// `tpt-lean profile FILE [--slowest N] [--json]` and `tpt-lean profile --compare A B`.
+pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &[
+            "--project",
+            "--timeout",
+            "--slowest",
+            "--json",
+            "--compare",
+            "--flamegraph",
+        ],
+        &["--project", "--timeout", "--slowest"],
+    )?;
+    if args.flag("--flamegraph") {
+        return Err(Error::not_implemented("`profile --flamegraph`"));
+    }
+    if args.flag("--compare") {
+        let paths = args.positionals(&["--project", "--timeout", "--slowest"]);
+        let [a, b] = paths.as_slice() else {
+            return Err(Error::invalid("usage: tpt-lean profile --compare A.json B.json"));
+        };
+        let ra = tpt_lean_profile::read_report(Path::new(a))?;
+        let rb = tpt_lean_profile::read_report(Path::new(b))?;
+        let text = tpt_lean_profile::compare(&ra, &rb);
+        ctx.emit("profile.compare", &text, &json!({ "text": text }))?;
+        return Ok(OK);
+    }
+    let file = args
+        .positionals(&["--project", "--timeout", "--slowest"])
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("usage: tpt-lean profile FILE [--slowest N] [--json]"))?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let ws = tpt_lean_core::paths::WorkspaceRoot::new(&root)?;
+    let path = ws.resolve(&file)?;
+    let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
+    toolchain_or_error()?;
+    let report = tpt_lean_profile::profile_file(&root, &path, timeout)?;
+    let n: usize = match args.value("--slowest")? {
+        Some(v) => v
+            .parse()
+            .map_err(|_| Error::invalid("--slowest must be a number"))?,
+        None => 10,
+    };
+    if args.flag("--json") || ctx.mode != Mode::Human {
+        let body = tpt_lean_profile::to_json(&report)?;
+        println!("{body}");
+    } else {
+        print!("{}", tpt_lean_profile::render_report(&report, n));
+    }
+    Ok(OK)
+}
+
+// ---------------------------------------------------------------- docgen
+
+fn open_path(path: &Path) -> Result<()> {
+    // Typed invocation of the platform opener: no shell string is built.
+    let (program, arg): (&str, PathBuf) = if cfg!(windows) {
+        ("explorer", path.to_path_buf())
+    } else if cfg!(target_os = "macos") {
+        ("open", path.to_path_buf())
+    } else {
+        ("xdg-open", path.to_path_buf())
+    };
+    std::process::Command::new(program)
+        .arg(arg)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| Error::from(e).with_path(path))
+}
+
+/// `tpt-lean docgen [--out DIR] [--open] [--json] [--include-deps]`.
+pub fn docgen_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--project", "--out", "--open", "--json", "--include-deps"],
+        &["--project", "--out"],
+    )?;
+    let root = project_root(args)?;
+    let include_deps = args.flag("--include-deps");
+    if args.flag("--json") {
+        let body = tpt_lean_docgen::export_json(&root, include_deps)?;
+        println!("{body}");
+        return Ok(OK);
+    }
+    let out = match args.value("--out")? {
+        Some(p) => PathBuf::from(p),
+        None => root.join(".tpt-lean").join("docs"),
+    };
+    let summary = tpt_lean_docgen::generate(&root, &out, include_deps)?;
+    let human = format!(
+        "documented {} module(s), {} declaration(s) in {}",
+        summary.modules,
+        summary.declarations,
+        summary.out_dir.display()
+    );
+    ctx.emit("docgen", &human, &summary)?;
+    if args.flag("--open") {
+        open_path(&summary.out_dir.join("index.html"))?;
+    }
+    Ok(OK)
+}
+
+// ---------------------------------------------------------------- lsp
+
+/// `tpt-lean lsp`: run the LSP proxy over stdin/stdout.
+pub fn lsp_cmd(_ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&["--project"], &["--project"])?;
+    let root = project_root(args)?;
+    tpt_lean_lsp::run_stdio(&root)?;
+    Ok(OK)
+}
+
+// ---------------------------------------------------------------- ci
+
+/// `tpt-lean ci [--json] [--sarif] [--timeout S]`.
+pub fn ci_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--project", "--timeout", "--json", "--sarif"],
+        &["--project", "--timeout"],
+    )?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
+    let tc = toolchain_or_error()?;
+    let opts = tpt_lean_tools::ci::CiOptions {
+        timeout_seconds: timeout,
+    };
+    let report = tpt_lean_tools::ci::run_ci(&root, &tc, &opts)?;
+    if args.flag("--sarif") {
+        println!("{}", tpt_lean_tools::ci::to_sarif(&report));
+        return Ok(if report.ok { OK } else { 1 });
+    }
+    if args.flag("--json") || ctx.mode != Mode::Human {
+        println!(
+            "{}",
+            serde_json::to_string(&report).map_err(|e| Error::new(ErrorCode::Internal, e.to_string()))?
+        );
+    } else {
+        println!(
+            "ci: {} in {} ms, {} diagnostic(s)",
+            if report.ok { "ok" } else { "failed" },
+            report.total_ms,
+            report.diagnostics.len()
+        );
+    }
+    Ok(if report.ok { OK } else { 1 })
+}
+
+// ---------------------------------------------------------------- bisect
+
+/// `tpt-lean bisect --good REV --bad REV [--timeout S]`: find the first failing commit with a
+/// `lake build` check in a temporary worktree per probe.
+pub fn bisect_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--project", "--good", "--bad", "--timeout"],
+        &["--project", "--good", "--bad", "--timeout"],
+    )?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let good = args
+        .value("--good")?
+        .ok_or_else(|| Error::invalid("--good REV is required"))?;
+    let bad = args
+        .value("--bad")?
+        .ok_or_else(|| Error::invalid("--bad REV is required"))?;
+    let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
+    let tc = toolchain_or_error()?;
+    let check = tpt_lean_tools::bisect::lake_build_check(tc, ".", timeout)?;
+    let report = tpt_lean_tools::bisect::bisect_commits(&root, &good, &bad, check)?;
+    let human = match &report.first_bad {
+        Some(c) => format!(
+            "first failing commit: {c} ({} commit(s) between)",
+            report.commits_between
+        ),
+        None => format!("no failing commit between {good} and {bad}"),
+    };
+    ctx.emit("bisect", &human, &report)?;
+    Ok(OK)
+}
+
+// ---------------------------------------------------------------- imports
+
+/// Import analysis flags: `--unused`, `--suggest QUERY`, `--minimize FILE`, `--cost`.
+/// Returns `None` when no analysis flag is present (plain listing applies).
+pub fn imports_analysis(ctx: &Ctx, args: &Args) -> Option<Result<i32>> {
+    let analysis = args.flag("--unused")
+        || args.flag("--cost")
+        || args.value("--suggest").ok().flatten().is_some()
+        || args.flag("--minimize");
+    if !analysis {
+        return None;
+    }
+    Some(imports_analysis_run(ctx, args))
+}
+
+fn imports_analysis_run(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &[
+            "--project",
+            "--unused",
+            "--suggest",
+            "--minimize",
+            "--cost",
+            "--limit",
+        ],
+        &["--project", "--suggest", "--minimize", "--limit"],
+    )?;
+    let root = project_root(args)?;
+    if let Some(query) = args.value("--suggest")? {
+        let limit: usize = match args.value("--limit")? {
+            Some(v) => v
+                .parse()
+                .map_err(|_| Error::invalid("--limit must be a number"))?,
+            None => 10,
+        };
+        let items = tpt_lean_tools::imports::suggest_imports(&root, &query, limit)?;
+        let human: Vec<String> = items
+            .iter()
+            .map(|s| format!("import {}  ({} match(es) in {})", s.module, s.matches, s.file))
+            .collect();
+        ctx.emit_items("imports.suggest", &human, &items)?;
+        return Ok(OK);
+    }
+    if args.flag("--cost") {
+        let costs = tpt_lean_tools::imports::import_costs(&root)?;
+        let human: Vec<String> = costs
+            .iter()
+            .map(|c| format!("{}  direct={} ", c.module, c.direct_imports))
+            .collect();
+        ctx.emit_items("imports.cost", &human, &costs)?;
+        return Ok(OK);
+    }
+    if args.flag("--unused") {
+        let ws = tpt_lean_core::paths::WorkspaceRoot::new(&root)?;
+        let file = args
+            .positionals(&["--project", "--suggest", "--minimize", "--limit"])
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid("usage: tpt-lean imports --unused FILE"))?;
+        let path = ws.resolve(&file)?;
+        let findings = tpt_lean_tools::imports::unused_imports(&root, &path)?;
+        let human: Vec<String> = findings.iter().map(|f| format!("{f:?}")).collect();
+        ctx.emit_items("imports.unused", &human, &findings)?;
+        return Ok(OK);
+    }
+    // --minimize FILE: prints a plan (diff) and never writes the file.
+    let file = args
+        .value("--minimize")?
+        .ok_or_else(|| Error::invalid("usage: tpt-lean imports --minimize FILE"))?;
+    let ws = tpt_lean_core::paths::WorkspaceRoot::new(&root)?;
+    let path = ws.resolve(&file)?;
+    let plan = tpt_lean_tools::imports::minimize_imports(&root, &path)?;
+    let human = if plan.diff.is_empty() {
+        "nothing to remove".to_string()
+    } else {
+        plan.diff.clone()
+    };
+    ctx.emit("imports.minimize", &human, &plan)?;
+    Ok(OK)
+}
+
+// ---------------------------------------------------------------- server
+
+/// `tpt-lean server stop|status`.
+pub fn server_lifecycle(ctx: &Ctx, args: &Args, action: &str) -> Result<i32> {
+    args.reject_unknown(&["--project"], &["--project"])?;
+    let root = project_root(args)?;
+    match action {
+        "status" => {
+            let report = tpt_lean_server::status(&root)?;
+            ctx.emit("server.status", &report.to_json().to_string(), &report.to_json())?;
+        }
+        _ => {
+            let report = tpt_lean_server::stop(&root)?;
+            ctx.emit("server.stop", &report.to_json().to_string(), &report.to_json())?;
+        }
+    }
+    Ok(OK)
+}
+
+/// `tpt-lean mcp http [--port N]`: MCP over local HTTP/SSE on 127.0.0.1.
+pub fn mcp_http(_ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&["--project", "--port"], &["--project", "--port"])?;
+    let root = project_root(args)?;
+    let port: u16 = match args.value("--port")? {
+        Some(p) => p.parse().map_err(|_| Error::invalid("--port must be 0-65535"))?,
+        None => 7474,
+    };
+    let server = tpt_lean_mcp::Server::new(&root)?;
+    let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    tpt_lean_mcp::serve_http(&server, addr).map_err(Error::from)?;
+    Ok(OK)
+}

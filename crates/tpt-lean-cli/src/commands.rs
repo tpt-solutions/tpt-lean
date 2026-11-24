@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Command implementations and dispatch.
 
+mod ext;
+
 use crate::args::Args;
 use crate::{Ctx, Mode};
 use serde::Serialize;
@@ -36,13 +38,28 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
         ["index", "status"] => index_status(ctx, args),
         ["index", "clear"] => index_clear(ctx, args),
         ["mcp", "stdio"] => mcp_stdio(ctx, args),
+        ["mcp", "http"] => ext::mcp_http(ctx, args),
+        ["server", "stop"] => ext::server_lifecycle(ctx, args, "stop"),
+        ["server", "status"] => ext::server_lifecycle(ctx, args, "status"),
+        ["docgen"] => ext::docgen_cmd(ctx, args),
+        ["profile"] => ext::profile_cmd(ctx, args),
+        ["lsp"] => ext::lsp_cmd(ctx, args),
+        ["ci"] => ext::ci_cmd(ctx, args),
+        ["bisect"] => ext::bisect_cmd(ctx, args),
         ["server", "start"] => server_start(ctx, args),
-        ["build"] => build(ctx, args),
+        ["build"] => ext::build_cmd(ctx, args),
         ["check"] => check(ctx, args),
-        ["cache", "status"] => cache_status(ctx, args),
-        ["cache", "prune"] => cache_prune(ctx, args),
+        ["cache", "status"] => ext::cache_status(ctx, args),
+        ["cache", "prune"] => ext::cache_prune(ctx, args),
         ["clean"] => clean(ctx, args),
-        ["imports"] => imports(ctx, args),
+        ["goals"] => goals(ctx, args),
+        ["explain"] if args.flag("--last-error") => ext::explain_last(ctx, args),
+        ["explain"] => explain(ctx, args),
+        ["context-pack"] => context_pack(ctx, args),
+        ["imports"] => match ext::imports_analysis(ctx, args) {
+            Some(r) => r,
+            None => imports(ctx, args),
+        },
         ["help"] => help(ctx),
         [cmd, ..] => not_implemented(cmd),
         [] => help(ctx),
@@ -381,6 +398,23 @@ fn doctor(ctx: &Ctx, args: &Args) -> Result<i32> {
         }),
     }
 
+    for c in tpt_lean_tools::doctor::doctor_extensions(&root) {
+        let status = match c.status {
+            tpt_lean_tools::doctor::CheckStatus::Ok => "ok",
+            tpt_lean_tools::doctor::CheckStatus::Warn => "warn",
+            tpt_lean_tools::doctor::CheckStatus::Fail => "fail",
+            tpt_lean_tools::doctor::CheckStatus::Skipped => "skipped",
+        };
+        let detail = match &c.suggestion {
+            Some(s) => format!("{} (suggestion: {s})", c.detail),
+            None => c.detail.clone(),
+        };
+        checks.push(Check {
+            name: c.name,
+            status,
+            detail,
+        });
+    }
     let human: Vec<String> = checks
         .iter()
         .map(|c| {
@@ -668,26 +702,6 @@ fn index_clear(ctx: &Ctx, args: &Args) -> Result<i32> {
     Ok(OK)
 }
 
-fn build(ctx: &Ctx, args: &Args) -> Result<i32> {
-    args.reject_unknown(&["--project", "--timeout"], &["--project", "--timeout"])?;
-    let root = project_root(args)?;
-    let cfg = load_config(args, &root)?;
-    if !cfg.security.allow_build {
-        return Err(Error::new(
-            ErrorCode::InvalidArgument,
-            "building is disabled by security.allow_build",
-        ));
-    }
-    let target = args.positionals(&["--project", "--timeout"]).into_iter().next();
-    let timeout = match args.value("--timeout")? {
-        Some(t) => t
-            .parse::<u64>()
-            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
-        None => cfg.security.command_timeout_seconds,
-    };
-    run_lean(ctx, &root, LeanCommand::LakeBuild { target }, timeout, "build")
-}
-
 fn check(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&["--project", "--timeout"], &["--project", "--timeout"])?;
     let root = project_root(args)?;
@@ -723,6 +737,12 @@ fn run_lean(ctx: &Ctx, root: &Path, command: LeanCommand, timeout: u64, kind: &s
     let tc = adapter::discover_toolchain();
     let policy = adapter::lean_policy(timeout);
     let result = adapter::execute(&tc, &command, Some(root), &policy, &CancelToken::new())?;
+    // Keep the last diagnostics so `explain --last-error` can show them later.
+    let source = match &command {
+        LeanCommand::LeanCheck { file } => std::fs::read_to_string(file).unwrap_or_default(),
+        _ => String::new(),
+    };
+    let _ = adapter::save_last_diagnostics(root, &source, &result.diagnostics);
     let out = &result.output;
     let errors = result
         .diagnostics
@@ -766,43 +786,6 @@ fn run_lean(ctx: &Ctx, root: &Path, command: LeanCommand, timeout: u64, kind: &s
         return Ok(ErrorCode::Timeout.exit_code());
     }
     Ok(if out.success() { OK } else { 1 })
-}
-
-fn cache_status(ctx: &Ctx, _args: &Args) -> Result<i32> {
-    let dir = global_cache_dir();
-    let (exists, bytes) = match &dir {
-        Some(d) if d.is_dir() => (true, dir_size(d)),
-        _ => (false, 0),
-    };
-    let location = dir
-        .as_ref()
-        .map(|d| d.display().to_string())
-        .unwrap_or_else(|| "unknown".into());
-    let human = if exists {
-        format!("global cache: {location} ({bytes} bytes)")
-    } else {
-        format!("global cache: {location} (not created yet)")
-    };
-    ctx.emit(
-        "cache.status",
-        &human,
-        &serde_json::json!({ "location": location, "exists": exists, "bytes": bytes }),
-    )?;
-    Ok(OK)
-}
-
-fn dir_size(dir: &Path) -> u64 {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return 0;
-    };
-    entries
-        .filter_map(|e| e.ok())
-        .map(|e| match e.file_type() {
-            Ok(t) if t.is_dir() => dir_size(&e.path()),
-            Ok(t) if t.is_file() => e.metadata().map(|m| m.len()).unwrap_or(0),
-            _ => 0,
-        })
-        .sum()
 }
 
 /// `tpt-lean mcp stdio`: serve MCP over stdin/stdout. Protocol traffic owns stdout, so no
@@ -872,68 +855,8 @@ fn clean(ctx: &Ctx, args: &Args) -> Result<i32> {
     Ok(if ok { OK } else { 1 })
 }
 
-#[derive(Serialize)]
-struct PruneReport {
-    dry_run: bool,
-    removed_files: usize,
-    freed_bytes: u64,
-    directory: String,
-}
-
 /// `tpt-lean cache prune [--days N] [--dry-run]`: delete global cache files older than N days.
 /// Only files inside the tpt-lean global cache directory are considered.
-fn cache_prune(ctx: &Ctx, args: &Args) -> Result<i32> {
-    args.reject_unknown(&["--days", "--dry-run"], &["--days"])?;
-    let days: u64 = match args.value("--days")? {
-        Some(d) => d.parse().map_err(|_| Error::invalid("--days must be a number"))?,
-        None => 30,
-    };
-    let dry_run = args.flag("--dry-run");
-    let Some(dir) = global_cache_dir() else {
-        return Err(Error::new(
-            ErrorCode::Io,
-            "no global cache directory could be determined",
-        ));
-    };
-    let cutoff = std::time::SystemTime::now()
-        .checked_sub(std::time::Duration::from_secs(days * 86_400))
-        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-    let mut removed = 0usize;
-    let mut freed = 0u64;
-    let mut stack = vec![dir.clone()];
-    while let Some(d) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&d) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(meta) = entry.metadata() else { continue };
-            if meta.is_dir() {
-                stack.push(path);
-            } else if meta.is_file() && meta.modified().map(|m| m < cutoff).unwrap_or(false) {
-                removed += 1;
-                freed += meta.len();
-                if !dry_run {
-                    std::fs::remove_file(&path).map_err(|e| Error::from(e).with_path(&path))?;
-                }
-            }
-        }
-    }
-    let verb = if dry_run { "would remove" } else { "removed" };
-    let human = format!("{verb} {removed} file(s), {freed} bytes older than {days} day(s)");
-    ctx.emit(
-        "cache.prune",
-        &human,
-        &PruneReport {
-            dry_run,
-            removed_files: removed,
-            freed_bytes: freed,
-            directory: dir.display().to_string(),
-        },
-    )?;
-    Ok(OK)
-}
-
 #[derive(Serialize)]
 struct ImportEntry {
     file: String,
@@ -975,4 +898,459 @@ fn imports(ctx: &Ctx, args: &Args) -> Result<i32> {
     };
     ctx.emit_items("imports", &human, &entries)?;
     Ok(OK)
+}
+
+#[derive(Serialize)]
+struct GoalsReport {
+    file: String,
+    line: usize,
+    column: usize,
+    goals: Vec<String>,
+}
+
+/// Split `file:line:col` from the right, so Windows drive letters survive.
+fn parse_position(spec: &str) -> Result<(String, usize, usize)> {
+    let mut parts = spec.rsplitn(3, ':');
+    let col = parts.next().and_then(|c| c.parse::<usize>().ok());
+    let line = parts.next().and_then(|l| l.parse::<usize>().ok());
+    let file = parts.next();
+    match (file, line, col) {
+        (Some(f), Some(l), Some(c)) if !f.is_empty() && l >= 1 && c >= 1 => Ok((f.to_string(), l, c)),
+        _ => Err(Error::invalid(
+            "expected FILE:LINE:COLUMN with 1-based line and column",
+        )),
+    }
+}
+
+/// `tpt-lean goals FILE:LINE:COL`: plain goals at a position, from the Lean language server.
+/// Line and column are 1-based; the column counts characters.
+fn goals(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&["--project", "--timeout"], &["--project", "--timeout"])?;
+    let spec = args
+        .positionals(&["--project", "--timeout"])
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("usage: tpt-lean goals FILE:LINE:COL"))?;
+    let (file, line, column) = parse_position(&spec)?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let ws = WorkspaceRoot::new(&root)?;
+    let path = ws.resolve(&file)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
+    let index = tpt_lean_syntax::position::LineIndex::new(&text);
+    let offset = index
+        .offset_of(line, column)
+        .ok_or_else(|| Error::invalid(format!("{file}:{line}:{column} is outside the file")))?;
+    let utf16 = index.position(offset).column_utf16 as u32;
+    let timeout = match args.value("--timeout")? {
+        Some(t) => t
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
+        None => cfg.security.command_timeout_seconds,
+    };
+    let tc = adapter::discover_toolchain();
+    let (program, server_args) = adapter::lsp::server_command(&root, tc.lake.as_ref(), tc.lean.as_ref())?;
+    let limit = std::time::Duration::from_secs(timeout);
+    let mut client = adapter::lsp::LspClient::start(&program, &server_args, &root, limit)?;
+    let uri = adapter::lsp::open_document(&mut client, &path, &text)?;
+    let result = adapter::lsp::plain_goals(&mut client, &uri, (line - 1) as u32, utf16, limit);
+    client.shutdown(std::time::Duration::from_secs(5));
+    let goals = result?;
+    let human = if goals.is_empty() {
+        format!("no goals at {file}:{line}:{column}")
+    } else {
+        goals.join("\n\n")
+    };
+    ctx.emit(
+        "goals",
+        &human,
+        &GoalsReport {
+            file,
+            line,
+            column,
+            goals,
+        },
+    )?;
+    Ok(OK)
+}
+
+#[derive(Serialize)]
+struct ExplainError {
+    message: String,
+    file: String,
+    line: u64,
+    column: u64,
+}
+
+#[derive(Serialize)]
+struct ExplainContext {
+    goal: Option<String>,
+    hypotheses: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ExplainReport {
+    error: Option<ExplainError>,
+    context: ExplainContext,
+    suggestions: Vec<serde_json::Value>,
+}
+
+/// Split a plain goal into hypotheses (lines before `⊢`) and the target.
+fn split_goal(goal: &str) -> (Vec<String>, Option<String>) {
+    let mut hyps = Vec::new();
+    let mut target = None;
+    for line in goal.lines() {
+        if let Some(t) = line.strip_prefix("⊢ ") {
+            target = Some(t.to_string());
+        } else if !line.trim().is_empty() {
+            hyps.push(line.to_string());
+        }
+    }
+    (hyps, target)
+}
+
+/// `tpt-lean explain FILE:LINE:COL`: diagnostics at a position plus the goal there.
+/// Lemma suggestions come from the project index when one exists; otherwise the list is empty.
+fn explain(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&["--project", "--timeout"], &["--project", "--timeout"])?;
+    let spec = args
+        .positionals(&["--project", "--timeout"])
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("usage: tpt-lean explain FILE:LINE:COL"))?;
+    let (file, line, column) = parse_position(&spec)?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let ws = WorkspaceRoot::new(&root)?;
+    let path = ws.resolve(&file)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
+    let index = tpt_lean_syntax::position::LineIndex::new(&text);
+    let offset = index
+        .offset_of(line, column)
+        .ok_or_else(|| Error::invalid(format!("{file}:{line}:{column} is outside the file")))?;
+    let utf16 = index.position(offset).column_utf16 as u32;
+    let timeout = match args.value("--timeout")? {
+        Some(t) => t
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
+        None => cfg.security.command_timeout_seconds,
+    };
+    let tc = adapter::discover_toolchain();
+    let (program, server_args) = adapter::lsp::server_command(&root, tc.lake.as_ref(), tc.lean.as_ref())?;
+    let limit = std::time::Duration::from_secs(timeout);
+    let mut client = adapter::lsp::LspClient::start(&program, &server_args, &root, limit)?;
+    let uri = adapter::lsp::open_document(&mut client, &path, &text)?;
+    let goals = adapter::lsp::plain_goals(&mut client, &uri, (line - 1) as u32, utf16, limit);
+    let diags = client.diagnostics_for(&uri);
+    client.shutdown(std::time::Duration::from_secs(5));
+    let goals = goals?;
+
+    let (hypotheses, target) = match goals.first() {
+        Some(g) => split_goal(g),
+        None => (Vec::new(), None),
+    };
+    let target_line = (line - 1) as u64;
+    let at_position = diags.iter().find(|d| {
+        let s = &d["range"]["start"];
+        let e = &d["range"]["end"];
+        let (sl, sc) = (
+            s["line"].as_u64().unwrap_or(0),
+            s["character"].as_u64().unwrap_or(0),
+        );
+        let (el, ec) = (
+            e["line"].as_u64().unwrap_or(0),
+            e["character"].as_u64().unwrap_or(0),
+        );
+        let p = (target_line, utf16 as u64);
+        (sl, sc) <= p && p <= (el, ec) && d["severity"].as_u64().unwrap_or(1) == 1
+    });
+    let error = at_position.map(|d| ExplainError {
+        message: d["message"].as_str().unwrap_or("").to_string(),
+        file: file.clone(),
+        line: d["range"]["start"]["line"].as_u64().unwrap_or(0) + 1,
+        column: d["range"]["start"]["character"].as_u64().unwrap_or(0) + 1,
+    });
+    let mut human = Vec::new();
+    match &error {
+        Some(e) => human.push(format!(
+            "error at {}:{}:{}: {}",
+            e.file, e.line, e.column, e.message
+        )),
+        None => human.push(format!("no error at {file}:{line}:{column}")),
+    }
+    if let Some(g) = goals.first() {
+        human.push(String::new());
+        human.push(g.clone());
+    }
+    let suggestions = target
+        .as_deref()
+        .map(|t| ext::lemma_candidates(&root, t, 5))
+        .unwrap_or_default();
+    let report = ExplainReport {
+        error,
+        context: ExplainContext {
+            goal: target,
+            hypotheses,
+        },
+        suggestions,
+    };
+    ctx.emit("explain", &human.join("\n"), &report)?;
+    Ok(OK)
+}
+
+#[derive(Serialize)]
+struct PackPosition {
+    line: usize,
+    column: usize,
+}
+
+#[derive(Serialize)]
+struct PackDiagnostic {
+    severity: String,
+    line: u64,
+    column: u64,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct PackSymbol {
+    name: String,
+    kind: String,
+    line: usize,
+}
+
+#[derive(Serialize)]
+struct PackLemma {
+    name: String,
+    source: String,
+    line: i64,
+    score: f64,
+}
+
+#[derive(Serialize)]
+struct ContextPack {
+    file: String,
+    position: PackPosition,
+    snippet: String,
+    goal: Option<String>,
+    hypotheses: Vec<String>,
+    diagnostics: Vec<PackDiagnostic>,
+    imports: Vec<String>,
+    nearby_definitions: Vec<PackSymbol>,
+    relevant_lemmas: Vec<PackLemma>,
+    constraints: Vec<String>,
+    truncated: bool,
+    approx_tokens: usize,
+}
+
+/// Rough token estimate: about four characters per token.
+fn approx_tokens(text: &str) -> usize {
+    text.chars().count().div_ceil(4)
+}
+
+/// `tpt-lean context-pack FILE:LINE:COL [--max-tokens N]`: a compact bundle for AI agents.
+/// Lean supplies the goal and diagnostics; the index supplies lemma candidates.
+fn context_pack(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--project", "--timeout", "--max-tokens"],
+        &["--project", "--timeout", "--max-tokens"],
+    )?;
+    let spec = args
+        .positionals(&["--project", "--timeout", "--max-tokens"])
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("usage: tpt-lean context-pack FILE:LINE:COL [--max-tokens N]"))?;
+    let (file, line, column) = parse_position(&spec)?;
+    let max_tokens: usize = match args.value("--max-tokens")? {
+        Some(v) => v
+            .parse()
+            .map_err(|_| Error::invalid("--max-tokens must be a number"))?,
+        None => 6000,
+    };
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let ws = WorkspaceRoot::new(&root)?;
+    let path = ws.resolve(&file)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
+    let index = tpt_lean_syntax::position::LineIndex::new(&text);
+    let offset = index
+        .offset_of(line, column)
+        .ok_or_else(|| Error::invalid(format!("{file}:{line}:{column} is outside the file")))?;
+    let utf16 = index.position(offset).column_utf16 as u32;
+    let timeout = match args.value("--timeout")? {
+        Some(t) => t
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
+        None => cfg.security.command_timeout_seconds,
+    };
+
+    // Lean: goal and diagnostics.
+    let tc = adapter::discover_toolchain();
+    let (program, server_args) = adapter::lsp::server_command(&root, tc.lake.as_ref(), tc.lean.as_ref())?;
+    let limit = std::time::Duration::from_secs(timeout);
+    let mut client = adapter::lsp::LspClient::start(&program, &server_args, &root, limit)?;
+    let uri = adapter::lsp::open_document(&mut client, &path, &text)?;
+    let goals = adapter::lsp::plain_goals(&mut client, &uri, (line - 1) as u32, utf16, limit);
+    let diags = client.diagnostics_for(&uri);
+    client.shutdown(std::time::Duration::from_secs(5));
+    let goals = goals?;
+    let goal = goals.first().cloned();
+    let (hypotheses, target) = match &goal {
+        Some(g) => split_goal(g),
+        None => (Vec::new(), None),
+    };
+
+    // Source: a window of lines around the position.
+    let parse = tpt_lean_syntax::parse(&text);
+    let total = index.line_count();
+    let from = line.saturating_sub(6).max(1);
+    let to = (line + 6).min(total);
+    let mut snippet_lines = Vec::new();
+    for n in from..=to {
+        let start = index.line_start(n).unwrap_or(0);
+        let end = index.line_start(n + 1).unwrap_or(text.len());
+        let content = text[start..end].trim_end_matches(['\r', '\n']);
+        snippet_lines.push(format!("{n:>5} | {content}"));
+    }
+    let snippet = snippet_lines.join("\n");
+
+    let diagnostics: Vec<PackDiagnostic> = diags
+        .iter()
+        .map(|d| PackDiagnostic {
+            severity: match d["severity"].as_u64().unwrap_or(1) {
+                1 => "error",
+                2 => "warning",
+                3 => "info",
+                _ => "hint",
+            }
+            .to_string(),
+            line: d["range"]["start"]["line"].as_u64().unwrap_or(0) + 1,
+            column: d["range"]["start"]["character"].as_u64().unwrap_or(0) + 1,
+            message: d["message"].as_str().unwrap_or("").to_string(),
+        })
+        .collect();
+
+    // Nearby definitions: the closest declarations above the position in this file.
+    let mut nearby: Vec<PackSymbol> = parse
+        .symbols
+        .iter()
+        .filter(|s| s.line < line)
+        .map(|s| PackSymbol {
+            name: s.name.clone(),
+            kind: s.kind.clone(),
+            line: s.line,
+        })
+        .collect();
+    let keep_from = nearby.len().saturating_sub(5);
+    nearby.drain(..keep_from);
+
+    // Relevant lemmas: index search on the goal target, when an index exists.
+    let mut lemmas = Vec::new();
+    let mut constraints = vec![format!(
+        "security.workspace_only=true, command_timeout={}s",
+        cfg.security.command_timeout_seconds
+    )];
+    let dirs = ProjectDirs::new(&root);
+    if dirs.index_db().exists() {
+        if let (Some(t), Ok(idx)) = (&target, tpt_lean_index::Index::open(&dirs.index_db())) {
+            let opts = tpt_lean_search::SearchOptions {
+                limit: 5,
+                ..Default::default()
+            };
+            let query: String = t
+                .chars()
+                .map(|c| if c.is_alphanumeric() || c == '_' { c } else { ' ' })
+                .collect();
+            if let Ok(hits) = tpt_lean_search::search(&idx, query.trim(), &opts) {
+                lemmas = hits
+                    .into_iter()
+                    .map(|h| PackLemma {
+                        name: h.name,
+                        source: h.file,
+                        line: h.line,
+                        score: (h.score * 1000.0).round() / 1000.0,
+                    })
+                    .collect();
+            }
+        }
+    } else {
+        constraints.push("no index: run the index scan command to get lemma candidates".into());
+    }
+
+    let imports: Vec<String> = parse.imports.iter().map(|i| i.module.clone()).collect();
+
+    // Budget: drop the least important parts until the estimate fits.
+    let mut pack = ContextPack {
+        file: file.clone(),
+        position: PackPosition { line, column },
+        snippet,
+        goal,
+        hypotheses,
+        diagnostics,
+        imports,
+        nearby_definitions: nearby,
+        relevant_lemmas: lemmas,
+        constraints,
+        truncated: false,
+        approx_tokens: 0,
+    };
+    let estimate = |p: &ContextPack| serde_json::to_string(p).map(|s| approx_tokens(&s)).unwrap_or(0);
+    let mut truncated = false;
+    while estimate(&pack) > max_tokens {
+        truncated = true;
+        if pack.relevant_lemmas.pop().is_none()
+            && (pack.nearby_definitions.is_empty() || {
+                pack.nearby_definitions.remove(0);
+                false
+            })
+        {
+            // Nothing left to drop except the snippet, which is kept whole.
+            break;
+        }
+    }
+    pack.truncated = truncated;
+    pack.approx_tokens = estimate(&pack);
+
+    let mut human = vec![format!(
+        "context for {file}:{line}:{column} (~{} tokens)",
+        pack.approx_tokens
+    )];
+    human.push(pack.snippet.clone());
+    if let Some(g) = &pack.goal {
+        human.push(format!("goal:\n{g}"));
+    }
+    for d in &pack.diagnostics {
+        human.push(format!(
+            "{}:{}:{}: {}: {}",
+            file, d.line, d.column, d.severity, d.message
+        ));
+    }
+    ctx.emit("context-pack", &human.join("\n\n"), &pack)?;
+    Ok(OK)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn position_parses_windows_paths() {
+        let (f, l, c) = parse_position(r"C:\proj\Main.lean:12:7").unwrap();
+        assert_eq!((f.as_str(), l, c), (r"C:\proj\Main.lean", 12, 7));
+        assert!(parse_position("Main.lean:0:1").is_err());
+        assert!(parse_position("Main.lean:3").is_err());
+    }
+
+    #[test]
+    fn goal_is_split_into_hypotheses_and_target() {
+        let (hyps, target) = split_goal("a b : Nat\nh : a = b\n⊢ b = a");
+        assert_eq!(hyps, vec!["a b : Nat".to_string(), "h : a = b".to_string()]);
+        assert_eq!(target.as_deref(), Some("b = a"));
+    }
+
+    #[test]
+    fn token_estimate_is_monotonic() {
+        assert_eq!(approx_tokens(""), 0);
+        assert!(approx_tokens("abcdefgh") < approx_tokens("abcdefghijklmnop"));
+    }
 }
