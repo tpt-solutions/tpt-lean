@@ -335,7 +335,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [ ] `tpt-lean bisect --good --bad` (commits, dependency versions, Mathlib updates, flags, imports)
 - [x] `tpt-lean ci --json --sarif`
 - [ ] SARIF output + schema validation
-- [ ] Machine-readable failure summaries, cache stats in CI output
+- [x] Machine-readable failure summaries, cache stats in CI output (cache stats are the build cache's hit/miss and entry count; cache hits never skip the build)
 - [x] Doctor extensions (server socket health, LSP health, cache age warnings)
 - [x] Security hardening pass (path safety fuzzing, symlink escape, device files, timeouts)
 

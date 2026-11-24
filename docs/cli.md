@@ -79,7 +79,7 @@ Lean (needs `lean` and `lake` on PATH or in `~/.elan/bin`):
 - `profile --compare A.json B.json`: differences between two saved reports
 - `profile FILE --flamegraph OUT.folded`: writes folded stacks (`stack;stack weight`, weight = self time in microseconds) for flamegraph.pl or inferno. Render with `flamegraph.pl OUT.folded > out.svg`.
 - `docgen [--out DIR] [--open] [--json] [--include-deps]`: static HTML site (default `.tpt-lean/docs`) with declaration pages, a namespace tree, source links, dark mode, a search index, and an import list. Search needs the site served over HTTP.
-- `ci [--json] [--sarif] [--timeout S]`: build, diagnostics, and failure summaries. Cache statistics are zeros for now. SARIF is checked structurally, not against the official schema.
+- `ci [--json] [--sarif] [--timeout S]`: build, diagnostics, and failure summaries. Cache statistics come from the build cache: a hit means a successful build with the same key is already recorded. Lake still runs, and a passing run is recorded. SARIF is checked structurally, not against the official schema.
 - `bisect --good REV --bad REV [--timeout S]`: first failing commit, with a `lake build` check per probe in a temporary worktree. Dependency versions, Mathlib, flags, and imports are not bisected.
 - `lsp`: Lean language-server proxy over stdin/stdout (document symbols, workspace symbols from the index, hover goals, cached diagnostics)
 

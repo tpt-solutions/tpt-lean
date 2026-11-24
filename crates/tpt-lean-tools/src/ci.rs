@@ -2,8 +2,10 @@
 //! CI runner: runs `lake build` for a project through the adapter and produces a machine-readable
 //! report, plus a SARIF 2.1.0 document for code-scanning tools.
 //!
-//! Cache statistics are placeholders: no build cache is consulted by this runner yet, so the
-//! counters are zero and `cache.available` is false.
+//! Cache statistics come from the build cache that `tpt-lean build` uses. A hit means a
+//! successful build with the same key is already recorded. Lake still runs either way: the cache
+//! reports state and never replaces the build, since Lean remains the source of truth. A passing
+//! build is recorded, as `tpt-lean build` does.
 //!
 //! SARIF validation is structural only (see [`validate_sarif_shape`]). The official JSON schema is
 //! not vendored, so the output is not checked against it.
@@ -54,7 +56,7 @@ pub struct FailureSummary {
     pub message: String,
 }
 
-/// Placeholder cache counters. All zero until a build cache is wired into CI.
+/// Build-cache counters for this run.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct CacheStats {
     pub available: bool,
@@ -101,12 +103,26 @@ pub fn run_ci(project_root: &Path, toolchain: &Toolchain, opts: &CiOptions) -> R
         lean: path_text(&toolchain.lean),
         lake: path_text(&toolchain.lake),
     };
-    let cache = CacheStats {
-        available: false,
-        hits: 0,
-        misses: 0,
-        entries: 0,
-        note: "no build cache is consulted by ci yet",
+    let probe = tpt_lean_build::probe_cache(&root, None, toolchain).ok();
+    let cache = match &probe {
+        Some(p) => CacheStats {
+            available: p.available,
+            hits: u64::from(p.hit),
+            misses: u64::from(p.available && !p.hit),
+            entries: p.entries,
+            note: if p.available {
+                "a hit means a successful build with the same key is recorded; lake still runs"
+            } else {
+                "no cache directory is available for this user"
+            },
+        },
+        None => CacheStats {
+            available: false,
+            hits: 0,
+            misses: 0,
+            entries: 0,
+            note: "the cache probe failed; see the failures",
+        },
     };
 
     let started = Instant::now();
@@ -118,6 +134,14 @@ pub fn run_ci(project_root: &Path, toolchain: &Toolchain, opts: &CiOptions) -> R
         &policy,
         &CancelToken::new(),
     );
+
+    let built_modules = match &outcome {
+        Ok(r) => tpt_lean_build::progress::parse_output(&r.output.stdout)
+            .iter()
+            .filter(|p| matches!(p, tpt_lean_build::progress::Progress::Started { .. }))
+            .count(),
+        Err(_) => 0,
+    };
 
     let (build, diagnostics, failures) = match outcome {
         Err(e) => (
@@ -188,6 +212,11 @@ pub fn run_ci(project_root: &Path, toolchain: &Toolchain, opts: &CiOptions) -> R
             )
         }
     };
+
+    if let (Some(p), "passed") = (&probe, build.status) {
+        // A failed record write must not fail CI: the build itself passed.
+        let _ = tpt_lean_build::record_success(&root, &p.digest, built_modules, build.duration_ms);
+    }
 
     Ok(CiReport {
         schema_version: CI_SCHEMA_VERSION,

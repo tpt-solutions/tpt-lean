@@ -271,3 +271,61 @@ fn diagnostic_event(run_id: &str, ts: u64, d: &Diagnostic) -> BuildEvent {
         message: d.message.clone(),
     }
 }
+
+/// Build-cache state for a project, computed without running Lake.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CacheProbe {
+    /// Digest of the project's build key: sources, imports, toolchain, flags and target.
+    pub digest: String,
+    /// Whether a successful build with this digest is recorded in the disk cache.
+    pub hit: bool,
+    /// Whether a cache directory is available for this user.
+    pub available: bool,
+    /// Build records stored in the cache, across all projects.
+    pub entries: u64,
+}
+
+/// Look up whether a successful build with the project's current key is recorded. Never runs
+/// Lake and never writes to the cache.
+pub fn probe_cache(
+    project_root: &Path,
+    target: Option<&str>,
+    tc: &tpt_lean_adapter::Toolchain,
+) -> Result<CacheProbe> {
+    let scan = scan_project(project_root)?;
+    let tools = probe_tools(tc)?;
+    let digest = key::key_from_parts(&scan, &tools, target).digest();
+    let Some(disk) = cache::DiskCache::default_location() else {
+        return Ok(CacheProbe {
+            digest,
+            hit: false,
+            available: false,
+            entries: 0,
+        });
+    };
+    let hit = disk
+        .lookup(&digest, &project_root.display().to_string())?
+        .is_some();
+    let entries = cache::status(disk.root()).files;
+    Ok(CacheProbe {
+        digest,
+        hit,
+        available: true,
+        entries,
+    })
+}
+
+/// Record a successful build under `digest`, the same record [`build`] writes when Lake passes.
+/// Does nothing when no cache directory is available.
+pub fn record_success(project_root: &Path, digest: &str, files_built: usize, duration_ms: u64) -> Result<()> {
+    let Some(disk) = cache::DiskCache::default_location() else {
+        return Ok(());
+    };
+    disk.store(&cache::BuildRecord {
+        digest: digest.to_string(),
+        project_root: project_root.display().to_string(),
+        finished_at_ms: now_ms(),
+        duration_ms,
+        files_built,
+    })
+}
