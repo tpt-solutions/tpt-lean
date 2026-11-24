@@ -77,7 +77,7 @@ Lean (needs `lean` and `lake` on PATH or in `~/.elan/bin`):
 - `context-pack FILE:LINE:COL [--max-tokens N]`: bundle for AI agents: snippet, goal, hypotheses, diagnostics, imports, nearby declarations, and index lemma candidates. The snippet, goal, and diagnostics are never dropped, so the budget can be exceeded for very large diagnostics.
 - `profile FILE [--slowest N] [--json]`: wall time, per-declaration time from Lean's trace, tactic totals, and suggested actions. Imports resolve as plain `lean` does, so files importing project modules need `LEAN_PATH`.
 - `profile --compare A.json B.json`: differences between two saved reports
-- `profile --flamegraph`: not implemented (exit 10)
+- `profile FILE --flamegraph OUT.folded`: writes folded stacks (`stack;stack weight`, weight = self time in microseconds) for flamegraph.pl or inferno. Render with `flamegraph.pl OUT.folded > out.svg`.
 - `docgen [--out DIR] [--open] [--json] [--include-deps]`: static HTML site (default `.tpt-lean/docs`) with declaration pages, a namespace tree, source links, dark mode, a search index, and an import list. Search needs the site served over HTTP.
 - `ci [--json] [--sarif] [--timeout S]`: build, diagnostics, and failure summaries. Cache statistics are zeros for now. SARIF is checked structurally, not against the official schema.
 - `bisect --good REV --bad REV [--timeout S]`: first failing commit, with a `lake build` check per probe in a temporary worktree. Dependency versions, Mathlib, flags, and imports are not bisected.
@@ -89,4 +89,3 @@ Servers:
 - `server start [--port N]`: JSON-RPC API on 127.0.0.1 (7373 by default; remote only with `server.allow_remote`). Writes `.tpt-lean/server.json`.
 - `server status`, `server stop`: read and stop the server recorded in `.tpt-lean/server.json`
 
-Not implemented yet (exit 10): `profile --flamegraph`, `fmt --verify`.

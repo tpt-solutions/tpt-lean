@@ -291,10 +291,10 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [ ] Build-step timing, cache hit/miss reports
 - [ ] Slow import detection
 - [ ] Dependency bottleneck graph
-- [ ] Flamegraph output
+- [x] Flamegraph output (folded stacks; render with flamegraph.pl or inferno)
 - [x] JSON reports
 - [x] Suggested actions in report
-- [ ] `tpt-lean profile <file>`, `--flamegraph`, `--slowest N`, `--compare a.json b.json`
+- [x] `tpt-lean profile <file>`, `--flamegraph OUT.folded`, `--slowest N`, `--compare a.json b.json`
 - [ ] Wire into server/MCP
 
 ### tpt-lean-lsp

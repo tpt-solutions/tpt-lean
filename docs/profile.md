@@ -52,7 +52,7 @@ Observed Lean 4.36.0 output:
 
 ## Not implemented
 
-Memory tracking, flamegraph output, slow-import detection, dependency bottleneck graphs, and
+Memory tracking, slow-import detection, dependency bottleneck graphs, and
 build-step and cache hit/miss reports. Each is listed in the report's `notes` field.
 
 ## Reports
