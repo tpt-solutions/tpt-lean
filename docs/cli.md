@@ -13,6 +13,11 @@ Binaries: `tpt-lean` and the short alias `tlean`.
 | `-v`, `--verbose` | debug logging to stderr (or set `TPT_LEAN_LOG`) |
 | `-q`, `--quiet` | errors only |
 
+## Positions
+
+`FILE:LINE:COL` uses a 1-based line and a 1-based column that counts characters. Lean
+positions are converted to UTF-16 units internally for the language server.
+
 ## Configuration precedence
 
 defaults < `tpt-lean.toml` < `.tpt-lean/config.toml` < environment (`TPT_LEAN_<SECTION>_<KEY>`) <
@@ -45,12 +50,43 @@ On failure with `--json`, stdout contains:
 
 ## Commands
 
-- `init <dir> [--mathlib]`
-- `doctor`
+Environment and project:
+- `init <dir> [--mathlib] [--template default|theorem|teaching|library]`
+- `doctor`: toolchain, project, config, index, cache, server socket, language server start and shutdown, cache age. Warnings include a suggestion where one applies.
 - `config show`
+- `clean [--timeout S]`: runs `lake clean`
+- `cache status`
+- `cache prune [--days N] [--dry-run]`: removes old files in the global cache only (build records and tool memos included)
+
+Source:
 - `fmt [--check] [--diff] [--verify] [paths...]` (`--verify` needs Lean and is not implemented yet)
+- `imports [file]`: lists `import` lines for one file or the whole project
+- `imports --unused FILE`: heuristic. An import is flagged when none of the module's declared names appear in the file. Modules with instances, notations, tactics, or attributes are never flagged.
+- `imports --suggest "QUERY" [--limit N]`: modules whose declarations match the query (needs an index)
+- `imports --minimize FILE`: prints the proposed removal as a diff. The file is never written.
+- `imports --cost`: direct import counts per module (structural estimate, not compile time)
 - `search <query> [--namespace NS] [--near TERM]... [--limit N]`
 - `index scan | refresh | status | clear`
-- `build [target] [--timeout SECONDS]`
-- `check [file] [--timeout SECONDS]`
-- `cache status`
+
+Lean (needs `lean` and `lake` on PATH or in `~/.elan/bin`):
+- `build [target] [--json] [--watch] [--poll-ms N] [--explain-slow] [--timeout S]`: runs `lake build`. `--json` prints one event per line (`build_started`, `cache_hit`/`cache_miss`, `file_started`, `file_finished`, `file_failed`, `diagnostic`, `build_finished`). Lake's output is parsed after it exits, so events are replayed rather than streamed. `--watch` polls for changes. It is not an OS file watcher.
+- `check [file] [--timeout S]`: runs `lake build`, or `lean <file>`. Diagnostics are saved for `explain --last-error`.
+- `goals FILE:LINE:COL`: plain goal at a position, from the Lean language server
+- `explain FILE:LINE:COL`: error at a position plus the goal, and lemma candidates from the project index when one exists
+- `explain --last-error`: diagnostics saved by the last `check`
+- `context-pack FILE:LINE:COL [--max-tokens N]`: bundle for AI agents: snippet, goal, hypotheses, diagnostics, imports, nearby declarations, and index lemma candidates. The snippet, goal, and diagnostics are never dropped, so the budget can be exceeded for very large diagnostics.
+- `profile FILE [--slowest N] [--json]`: wall time, per-declaration time from Lean's trace, tactic totals, and suggested actions. Imports resolve as plain `lean` does, so files importing project modules need `LEAN_PATH`.
+- `profile --compare A.json B.json`: differences between two saved reports
+- `profile --flamegraph`: not implemented (exit 10)
+- `docgen [--out DIR] [--open] [--json] [--include-deps]`: static HTML site (default `.tpt-lean/docs`) with declaration pages, a namespace tree, source links, dark mode, a search index, and an import list. Search needs the site served over HTTP.
+- `ci [--json] [--sarif] [--timeout S]`: build, diagnostics, and failure summaries. Cache statistics are zeros for now. SARIF is checked structurally, not against the official schema.
+- `bisect --good REV --bad REV [--timeout S]`: first failing commit, with a `lake build` check per probe in a temporary worktree. Dependency versions, Mathlib, flags, and imports are not bisected.
+- `lsp`: Lean language-server proxy over stdin/stdout (document symbols, workspace symbols from the index, hover goals, cached diagnostics)
+
+Servers:
+- `mcp stdio`: MCP over stdin/stdout. Tools are classed read, write, build, or profile, and denied tools return an error naming the missing permission. `tpt_lean_profile_file` is not available yet.
+- `mcp http [--port N]`: MCP over local HTTP on 127.0.0.1 (default 7474)
+- `server start [--port N]`: JSON-RPC API on 127.0.0.1 (7373 by default; remote only with `server.allow_remote`). Writes `.tpt-lean/server.json`.
+- `server status`, `server stop`: read and stop the server recorded in `.tpt-lean/server.json`
+
+Not implemented yet (exit 10): `profile --flamegraph`, `fmt --verify`.
