@@ -4,9 +4,9 @@
 //! Lean prints diagnostics as `file:line:column: severity: message`, where the message may
 //! continue on following lines. Columns are reported in Unicode code points by Lean's CLI.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Diagnostic {
     pub file: String,
     pub line: u32,
@@ -15,7 +15,7 @@ pub struct Diagnostic {
     pub message: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Error,

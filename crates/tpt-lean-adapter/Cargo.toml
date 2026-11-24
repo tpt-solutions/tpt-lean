@@ -9,7 +9,10 @@ authors.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true
+serde_json.workspace = true
 serde.workspace = true
+tpt-lean-index.workspace = true
+tpt-lean-search.workspace = true
 
 [lints]
 workspace = true

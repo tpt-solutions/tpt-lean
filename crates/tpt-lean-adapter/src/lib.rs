@@ -5,10 +5,14 @@
 //! controlled `lake build` and `lean` invocations built from typed options, and parsing of
 //! diagnostics. Commands are never assembled from strings; there is no shell.
 //!
-//! Levels 2 (LSP) and 3 (sidecar) are not implemented yet; see `todo.md`.
+//! Level 2 (LSP client, with restart and cancellation) is in `lsp` and `session`. Level 3 (sidecar) is not implemented yet; see `todo.md`.
 
 pub mod diagnostics;
+pub mod last_diagnostics;
+pub mod lemmas;
+pub mod lsp;
 pub mod runner;
+pub mod session;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -16,7 +20,12 @@ use tpt_lean_core::policy::{CancelToken, ProcessPolicy};
 use tpt_lean_core::{Error, ErrorCode, Result};
 
 pub use diagnostics::{parse_lean_output, Diagnostic, Severity};
+pub use last_diagnostics::{
+    last_diagnostics_path, load_last_diagnostics, save_last_diagnostics, LastDiagnostics,
+};
+pub use lemmas::suggest_lemmas;
 pub use runner::{run, ProcessOutput};
+pub use session::LspSession;
 
 /// Locations of the Lean toolchain executables.
 #[derive(Debug, Clone, PartialEq, Eq)]
