@@ -25,7 +25,6 @@ const PROFILER_THRESHOLD_MS: u32 = 1;
 
 const NOT_MEASURED: &[&str] = &[
     "memory usage: not measured (Lean does not report it per declaration, and no portable limit is implemented)",
-    "flamegraph output: not implemented",
     "slow import detection and dependency bottleneck graph: not implemented",
     "build-step timing and cache hit/miss reports: not implemented",
     "imports and startup: included in wall time only, not attributed to declarations",
@@ -38,6 +37,16 @@ const NOT_MEASURED: &[&str] = &[
 /// process. A non-zero Lean exit status is not an error: the report records the error count, and
 /// its timings are then incomplete.
 pub fn profile_file(project_root: &Path, file: &Path, timeout_secs: u64) -> Result<ProfileReport> {
+    profile_file_traced(project_root, file, timeout_secs).map(|(report, _)| report)
+}
+
+/// Like [`profile_file`], and also returns Lean's combined output, which holds the trace tree
+/// that [`crate::flamegraph_folded`] turns into folded stacks.
+pub fn profile_file_traced(
+    project_root: &Path,
+    file: &Path,
+    timeout_secs: u64,
+) -> Result<(ProfileReport, String)> {
     if !project_root.is_dir() {
         return Err(
             Error::new(ErrorCode::ProjectNotFound, "project root is not a directory").with_path(project_root),
@@ -112,7 +121,7 @@ pub fn profile_file(project_root: &Path, file: &Path, timeout_secs: u64) -> Resu
                 .to_string(),
         );
     }
-    Ok(report)
+    Ok((report, combined))
 }
 
 /// Insert the profiler options as one line after the header (`prelude`, `module`, `import`

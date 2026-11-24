@@ -221,6 +221,44 @@ pub fn is_ident_char(c: char) -> bool {
     c.is_alphanumeric() || matches!(c, '_' | '\'' | '.' | '!' | '?')
 }
 
+/// Folded stacks (`a;b;c <weight>` per line, the input of flamegraph.pl and inferno). Each
+/// node contributes one line whose weight is its self time in microseconds, under the path of
+/// ancestors above it. Frames are the node tag and the first words of its text.
+pub fn folded_stacks(nodes: &[Node]) -> String {
+    let mut out = String::new();
+    for node in nodes {
+        let self_us = (node.self_ms(nodes) * 1000.0).round() as u64;
+        if self_us == 0 {
+            continue;
+        }
+        let mut frames = vec![frame_label(node)];
+        let mut cur = node.parent;
+        while let Some(p) = cur {
+            frames.push(frame_label(&nodes[p]));
+            cur = nodes[p].parent;
+        }
+        frames.reverse();
+        out.push_str(&frames.join(";"));
+        out.push(' ');
+        out.push_str(&self_us.to_string());
+        out.push('\n');
+    }
+    out
+}
+
+fn frame_label(node: &Node) -> String {
+    let words: Vec<&str> = node.text.split_whitespace().take(6).collect();
+    let label = if words.is_empty() {
+        node.tag.clone()
+    } else {
+        format!("{}: {}", node.tag, words.join(" "))
+    };
+    label
+        .chars()
+        .map(|c| if matches!(c, ';' | '\n' | '\r') { ' ' } else { c })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +348,34 @@ mod tests {
         assert_eq!(name, "Lean.Parser.Tactic.omega");
         assert!((ms - 2.34).abs() < 1e-9);
         assert_eq!(count, 1);
+    }
+}
+
+#[cfg(test)]
+mod folded_tests {
+    use super::*;
+
+    #[test]
+    fn folded_lines_use_self_time_in_microseconds() {
+        let nodes = parse_trace(
+            "[A] [0.010] ✅️ root\n  [B] [0.004] ✅️ child\n    [C] [0.001] ✅️ leaf\n  [D] [0.002] ✅️ child2\n[E] [0.001] ✅️ other",
+        );
+        let folded = folded_stacks(&nodes);
+        let lines: Vec<&str> = folded.lines().collect();
+        assert_eq!(
+            lines,
+            vec![
+                "A: root 4000",
+                "A: root;B: child 3000",
+                "A: root;B: child;C: leaf 1000",
+                "A: root;D: child2 2000",
+                "E: other 1000",
+            ]
+        );
+    }
+
+    #[test]
+    fn no_trace_means_no_stacks() {
+        assert!(folded_stacks(&parse_trace("elaboration took 12ms\n")).is_empty());
     }
 }
