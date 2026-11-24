@@ -153,7 +153,7 @@ Crate: `tpt-lean-adapter`
 - [x] Goals query (`$/lean/plainGoal`, `plainTermGoal`)
 - [ ] Document / workspace symbols
 - [x] Request cancellation, restarts, crash recovery
-- [ ] Version compatibility handling across Lean versions
+- [ ] Version compatibility handling across Lean versions (partial: `doctor` reports the tested-version set and pin mismatches; LSP features are not gated on the version, and only 4.36.0 is tested)
 
 ### Level 3 — Lean sidecar
 - [ ] Small Lean package emitting structured JSON (symbols, types, goals) using Lean APIs (done: `lean/tpt-lean-sidecar` emits declarations with kind, pretty type and docstring, schema v1; goals not yet)

@@ -242,6 +242,64 @@ struct Check {
     detail: String,
 }
 
+/// Compare the Lean found on PATH with the project's pin and with the versions this release
+/// is tested against. A mismatch is a warning, not a failure: the tools still run.
+fn lean_compat_check(tc: &adapter::Toolchain, pinned_file: &str) -> Check {
+    let policy = adapter::lean_policy(10);
+    let installed = tc
+        .lean
+        .as_ref()
+        .and_then(|_| {
+            adapter::execute(tc, &LeanCommand::LeanVersion, None, &policy, &CancelToken::new()).ok()
+        })
+        .and_then(|r| adapter::parse_version(&r.output.stdout));
+    let Some(installed) = installed else {
+        return Check {
+            name: "lean-version",
+            status: "warn",
+            detail: "could not read the installed Lean version".into(),
+        };
+    };
+    let mut notes: Vec<String> = Vec::new();
+    if let Some(pinned) = adapter::compat::pinned_version(pinned_file) {
+        if pinned != installed {
+            notes.push(format!(
+                "lean on PATH is {installed} but lean-toolchain pins {pinned}"
+            ));
+        }
+    }
+    let tested = adapter::compat::TESTED_LEAN_VERSIONS.join(", ");
+    let status = match adapter::compat::classify(&installed) {
+        adapter::compat::Compatibility::Tested => "ok",
+        adapter::compat::Compatibility::Newer => {
+            notes.push(format!(
+                "{installed} is newer than the tested versions ({tested}); output may differ"
+            ));
+            "warn"
+        }
+        adapter::compat::Compatibility::Older => {
+            notes.push(format!(
+                "{installed} is older than the tested versions ({tested}); output may differ"
+            ));
+            "warn"
+        }
+        adapter::compat::Compatibility::Between | adapter::compat::Compatibility::Unknown => {
+            notes.push(format!("{installed} is not a tested version ({tested})"));
+            "warn"
+        }
+    };
+    let detail = if notes.is_empty() {
+        format!("{installed} is a tested version and matches the pin")
+    } else {
+        notes.join("; ")
+    };
+    Check {
+        name: "lean-version",
+        status: if notes.is_empty() { status } else { "warn" },
+        detail,
+    }
+}
+
 fn doctor(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&[], &[])?;
     let mut checks: Vec<Check> = Vec::new();
@@ -299,11 +357,14 @@ fn doctor(ctx: &Ctx, args: &Args) -> Result<i32> {
                 detail: format!("found {} at {}", p.marker, p.root.display()),
             });
             match p.toolchain {
-                Some(t) => checks.push(Check {
-                    name: "toolchain",
-                    status: "ok",
-                    detail: format!("lean-toolchain pins {t}"),
-                }),
+                Some(t) => {
+                    checks.push(Check {
+                        name: "toolchain",
+                        status: "ok",
+                        detail: format!("lean-toolchain pins {t}"),
+                    });
+                    checks.push(lean_compat_check(&tc, &t));
+                }
                 None => checks.push(Check {
                     name: "toolchain",
                     status: "warn",
