@@ -246,13 +246,10 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--compare",
             "--flamegraph",
         ],
-        &["--project", "--timeout", "--slowest"],
+        &["--project", "--timeout", "--slowest", "--flamegraph"],
     )?;
-    if args.flag("--flamegraph") {
-        return Err(Error::not_implemented("`profile --flamegraph`"));
-    }
     if args.flag("--compare") {
-        let paths = args.positionals(&["--project", "--timeout", "--slowest"]);
+        let paths = args.positionals(&["--project", "--timeout", "--slowest", "--flamegraph"]);
         let [a, b] = paths.as_slice() else {
             return Err(Error::invalid("usage: tpt-lean profile --compare A.json B.json"));
         };
@@ -263,17 +260,35 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
         return Ok(OK);
     }
     let file = args
-        .positionals(&["--project", "--timeout", "--slowest"])
+        .positionals(&["--project", "--timeout", "--slowest", "--flamegraph"])
         .into_iter()
         .next()
-        .ok_or_else(|| Error::invalid("usage: tpt-lean profile FILE [--slowest N] [--json]"))?;
+        .ok_or_else(|| {
+            Error::invalid("usage: tpt-lean profile FILE [--slowest N] [--json] [--flamegraph OUT.folded]")
+        })?;
     let root = project_root(args)?;
     let cfg = load_config(args, &root)?;
     let ws = tpt_lean_core::paths::WorkspaceRoot::new(&root)?;
     let path = ws.resolve(&file)?;
     let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
     toolchain_or_error()?;
-    let report = tpt_lean_profile::profile_file(&root, &path, timeout)?;
+    let (report, output) = tpt_lean_profile::profile_file_traced(&root, &path, timeout)?;
+    if let Some(out_path) = args.value("--flamegraph")? {
+        let folded = tpt_lean_profile::flamegraph_folded(&output);
+        std::fs::write(&out_path, &folded).map_err(|e| Error::from(e).with_path(&out_path))?;
+        let stacks = folded.lines().count();
+        let human = if stacks == 0 {
+            format!("no trace nodes in the output; wrote an empty file to {out_path}")
+        } else {
+            format!("wrote {stacks} folded stack(s) to {out_path}")
+        };
+        ctx.emit(
+            "profile.flamegraph",
+            &human,
+            &json!({ "path": out_path, "stacks": stacks }),
+        )?;
+        return Ok(OK);
+    }
     let n: usize = match args.value("--slowest")? {
         Some(v) => v
             .parse()
