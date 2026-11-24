@@ -22,52 +22,52 @@ Second rule: every advanced feature has a simple JSON output mode.
 Crates: `tpt-lean-core`, `tpt-lean-cli`
 
 ### Repo and licensing
-- [ ] Initialize git repo, `.gitignore`, `.gitattributes` (line endings for Windows)
-- [ ] Cargo workspace `Cargo.toml` (shared package metadata, edition, MSRV, `license = "MIT OR Apache-2.0"`, authors/owner TPT Solutions)
-- [ ] `LICENSE-MIT` (copyright TPT Solutions)
-- [ ] `LICENSE-APACHE` (Apache-2.0 text, copyright TPT Solutions)
-- [ ] SPDX header convention (`SPDX-License-Identifier: MIT OR Apache-2.0`) and check
-- [ ] `README.md` (identity, license section, contribution = dual-licensed inbound)
-- [ ] `CONTRIBUTING.md` and `SECURITY.md`
-- [ ] `rust-toolchain.toml`, `rustfmt.toml`, clippy config
+- [x] Initialize git repo, `.gitignore`, `.gitattributes` (line endings for Windows)
+- [x] Cargo workspace `Cargo.toml` (shared package metadata, edition, MSRV, `license = "MIT OR Apache-2.0"`, authors/owner TPT Solutions)
+- [x] `LICENSE-MIT` (copyright TPT Solutions)
+- [x] `LICENSE-APACHE` (Apache-2.0 text, copyright TPT Solutions)
+- [x] SPDX header convention (`SPDX-License-Identifier: MIT OR Apache-2.0`) and check
+- [x] `README.md` (identity, license section, contribution = dual-licensed inbound)
+- [x] `CONTRIBUTING.md` (issues-only; `SECURITY.md` removed)
+- [x] `rust-toolchain.toml`, `rustfmt.toml`, clippy config
 
 ### Dependency policy
-- [ ] `deny.toml` (allow list above, `confidence-threshold = 0.95`, bans, sources)
-- [ ] Verify cargo-deny accepts `MIT OR Apache-2.0` crates and rejects an Apache-only test crate
-- [ ] `cargo deny check licenses` / `bans` / `advisories` locally
-- [ ] `cargo audit` locally
-- [ ] Script to generate dependency license report (used per release)
-- [ ] Document dependency policy (`docs/dependencies.md`)
+- [x] `deny.toml` (allow list above, `confidence-threshold = 0.95`, bans, sources)
+- [x] Verify cargo-deny accepts `MIT OR Apache-2.0` crates and rejects an Apache-only test crate
+- [x] `cargo deny check licenses` / `bans` / `advisories` locally
+- [x] `cargo audit` locally
+- [x] Script to generate dependency license report (used per release)
+- [x] Document dependency policy (`docs/dependencies.md`)
 
 ### CI
 - [ ] GitHub Actions: build + test on Windows, Linux, macOS
-- [ ] CI: `cargo fmt --check`, `cargo clippy -D warnings`
-- [ ] CI: cargo-deny (licenses, bans) and cargo-audit
-- [ ] CI: cache cargo registry/target
-- [ ] CI: dependency license report artifact
+- [x] CI: `cargo fmt --check`, `cargo clippy -D warnings`
+- [x] CI: cargo-deny (licenses, bans) and cargo-audit
+- [x] CI: cache cargo registry/target
+- [x] CI: dependency license report artifact
 
 ### tpt-lean-core
-- [ ] Error types and stable error codes
-- [ ] Config model + loading (`tpt-lean.toml`: project, build, index, server, security)
-- [ ] Config precedence (defaults, project, `.tpt-lean/config.toml`, env, CLI flags)
-- [ ] Project discovery (find `lakefile.lean` / `lakefile.toml` / `tpt-lean.toml`)
-- [ ] Toolchain detection (`lean`, `lake`, `elan`, `lean-toolchain`)
-- [ ] Path normalization (Windows/Unix, case, UNC, `\\?\`)
-- [ ] File identity and hashing (pick MIT-compatible hash crate, e.g. blake3 — check license)
-- [ ] Cache key types
-- [ ] Process execution policy types (timeout, memory limit, cancellation token, output limit, env sanitization)
-- [ ] Logging/tracing integration
-- [ ] JSON schema types and schema conventions (versioned, stable field names)
-- [ ] Data directory layout: `.tpt-lean/` (config, index.sqlite, logs, profiles, runs, tmp)
-- [ ] Global cache dir per OS (XDG / `~/Library/Caches` / `%LOCALAPPDATA%`)
+- [x] Error types and stable error codes
+- [x] Config model + loading (`tpt-lean.toml`: project, build, index, server, security)
+- [x] Config precedence (defaults, project, `.tpt-lean/config.toml`, env, CLI flags)
+- [x] Project discovery (find `lakefile.lean` / `lakefile.toml` / `tpt-lean.toml`)
+- [x] Toolchain detection (`lean`, `lake`, `elan`, `lean-toolchain`)
+- [x] Path normalization (Windows/Unix, case, UNC, `\\?\`)
+- [x] File identity and hashing (pick MIT-compatible hash crate, e.g. blake3 — check license)
+- [x] Cache key types
+- [x] Process execution policy types (timeout, memory limit, cancellation token, output limit, env sanitization)
+- [x] Logging/tracing integration
+- [x] JSON schema types and schema conventions (versioned, stable field names)
+- [x] Data directory layout: `.tpt-lean/` (config, index.sqlite, logs, profiles, runs, tmp)
+- [x] Global cache dir per OS (XDG / `~/Library/Caches` / `%LOCALAPPDATA%`)
 
 ### tpt-lean-cli
-- [ ] CLI shell with subcommand skeleton (all commands from spec section 15 stubbed)
-- [ ] Global flags: `--json`, `--ndjson`, `--project`, `--verbose`, `--quiet`
-- [ ] Binary names `tpt-lean` and alias `tlean`
-- [ ] Exit code conventions
-- [ ] Human vs JSON output abstraction
-- [ ] Unit tests for config loading, path normalization, cache keys
+- [x] CLI shell with subcommand skeleton (all commands from spec section 15 stubbed)
+- [x] Global flags: `--json`, `--ndjson`, `--project`, `--verbose`, `--quiet`
+- [x] Binary names `tpt-lean` and alias `tlean`
+- [x] Exit code conventions
+- [x] Human vs JSON output abstraction
+- [x] Unit tests for config loading, path normalization, cache keys
 
 ---
 
@@ -75,62 +75,62 @@ Crates: `tpt-lean-core`, `tpt-lean-cli`
 Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 
 ### tpt-lean-syntax
-- [ ] Tokenizer (keywords, identifiers with namespaces/guillemets, numbers, strings, unicode ops, comments incl. nested `/- -/` and doc comments)
-- [ ] Source spans / `TextRange`, line/column mapping (UTF-8 and UTF-16 for LSP)
-- [ ] Lossless CST (`SyntaxNode`, `SyntaxElement`, `Token`)
-- [ ] Comment and whitespace preservation (round-trip test: parse → print == input)
-- [ ] Indentation tracking
-- [ ] Import extraction
-- [ ] Declaration boundary detection (theorem, def, lemma, instance, structure, inductive, class, abbrev, namespace, section, etc.)
+- [x] Tokenizer (keywords, identifiers with namespaces/guillemets, numbers, strings, unicode ops, comments incl. nested `/- -/` and doc comments)
+- [x] Source spans / `TextRange`, line/column mapping (UTF-8 and UTF-16 for LSP)
+- [x] Lossless CST (`SyntaxNode`, `SyntaxElement`, `Token`)
+- [x] Comment and whitespace preservation (round-trip test: parse → print == input)
+- [x] Indentation tracking
+- [x] Import extraction
+- [x] Declaration boundary detection (theorem, def, lemma, instance, structure, inductive, class, abbrev, namespace, section, etc.)
 - [ ] Tactic block detection (`by`, `·`, `case`, etc.)
-- [ ] Lightweight symbol extraction (name, kind, namespace, range, docstring)
-- [ ] Error recovery and "uncertain" markers (needed by formatter safety)
-- [ ] Fuzz/property tests (no panics, round-trip)
+- [x] Lightweight symbol extraction (name, kind, namespace, range, docstring)
+- [x] Error recovery and "uncertain" markers (needed by formatter safety)
+- [x] Fuzz/property tests (no panics, round-trip)
 - [ ] Golden tests: `input.lean`, `expected_symbols.json`
 
 ### tpt-lean-index
-- [ ] SQLite integration (choose crate, verify license, bundled SQLite)
+- [x] SQLite integration (choose crate, verify license, bundled SQLite)
 - [ ] Schema + migrations: projects, files, symbols, docstrings, imports, dependencies, diagnostics, build_runs, profile_runs, cache_entries
-- [ ] FTS5 setup for name/docstring search
+- [x] FTS5 setup for name/docstring search
 - [ ] Fast file scan (respect ignore rules, `.lake` handling)
-- [ ] Syntax-level indexing using `tpt-lean-syntax`
-- [ ] Import graph / dependency edges
+- [x] Syntax-level indexing using `tpt-lean-syntax`
+- [x] Import graph / dependency edges
 - [ ] Incremental invalidation by file hash and import graph
-- [ ] Mathlib/dependency indexing from local `.lake/packages` (no redistribution)
-- [ ] Index health check API (used by doctor)
+- [x] Mathlib/dependency indexing from local `.lake/packages` (no redistribution)
+- [x] Index health check API (used by doctor)
 - [ ] Schema version + upgrade path
-- [ ] `tpt-lean index scan` / `refresh` / `status`
-- [ ] Concurrency model (readers while writer refreshes; WAL)
+- [x] `tpt-lean index scan` / `refresh` / `status`
+- [x] Concurrency model (readers while writer refreshes; WAL)
 - [ ] Hooks for semantic enrichment (filled in Phase 2)
 
 ### tpt-lean-search
 - [ ] Name search (exact, prefix, namespace-aware)
 - [ ] Docstring search (FTS5)
-- [ ] `--namespace` filter and `--near` mode
+- [x] `--namespace` filter and `--near` mode
 - [ ] Ranking factors (exact name, namespace proximity, docstring relevance, imported modules first, kind, dependency distance; recency later)
-- [ ] Output: table, JSON, NDJSON
-- [ ] `tpt-lean search` CLI wiring
+- [x] Output: table, JSON, NDJSON
+- [x] `tpt-lean search` CLI wiring
 - [ ] Benchmarks vs targets (warm p50 < 10 ms, p95 < 50 ms)
 - [ ] Type-shaped search placeholder (completed in Phase 2)
 
 ### tpt-lean-fmt
-- [ ] Trailing whitespace and final newline normalization
-- [ ] Indentation normalization
-- [ ] Simple tactic block alignment
-- [ ] Import formatting (sort/dedupe, conservative)
-- [ ] Spacing around common tokens
-- [ ] Comments preserved exactly
-- [ ] Refuse to write if syntax tree invalid or uncertain
-- [ ] Idempotency tests (fmt(fmt(x)) == fmt(x))
-- [ ] `tpt-lean fmt`, `fmt --check`, `fmt <file>`, `fmt --diff`
+- [x] Trailing whitespace and final newline normalization
+- [x] Indentation normalization
+- [x] Simple tactic block alignment
+- [x] Import formatting (sort/dedupe, conservative)
+- [x] Spacing around common tokens
+- [x] Comments preserved exactly
+- [x] Refuse to write if syntax tree invalid or uncertain
+- [x] Idempotency tests (fmt(fmt(x)) == fmt(x))
+- [x] `tpt-lean fmt`, `fmt --check`, `fmt <file>`, `fmt --diff`
 - [ ] `fmt --verify` stub (needs Lean; completed in Phase 2)
 - [ ] Golden tests: `input.lean` → `expected_formatted.lean`
 - [ ] Benchmark: 5,000-line file < 100 ms
 
 ### doctor (initial)
-- [ ] `tpt-lean doctor`: Lean, Lake, toolchain compat, project config, dependency cache, Mathlib availability, write permissions, SQLite index health
+- [x] `tpt-lean doctor`: Lean, Lake, toolchain compat, project config, dependency cache, Mathlib availability, write permissions, SQLite index health
 - [ ] Doctor suggestions (e.g. `cache prune`)
-- [ ] Doctor JSON output
+- [x] Doctor JSON output
 - [ ] Server socket health (stub until Phase 3)
 
 ---
@@ -139,13 +139,13 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 Crate: `tpt-lean-adapter`
 
 ### Level 1 — CLI integration
-- [ ] `lean --version`, `lake --version`, `lake env printenv`
-- [ ] Controlled `lake build` (typed options only)
-- [ ] Controlled `lean` invocation (typed options only)
-- [ ] Output parsing into structured diagnostics (severity, file, line, col, message)
+- [x] `lean --version`, `lake --version`, `lake env printenv`
+- [x] Controlled `lake build` (typed options only)
+- [x] Controlled `lean` invocation (typed options only)
+- [x] Output parsing into structured diagnostics (severity, file, line, col, message)
 - [ ] Process runner enforcing timeout, memory limit (where supported), cancellation, output size limit, env sanitization
 - [ ] Windows process handling (job objects for kill/limit) and POSIX equivalents
-- [ ] No arbitrary shell execution anywhere (test for it)
+- [x] No arbitrary shell execution anywhere (test for it)
 
 ### Level 2 — LSP integration
 - [ ] JSON-RPC LSP client over stdio to `lake serve` / `lean --server`
@@ -165,7 +165,7 @@ Crate: `tpt-lean-adapter`
 - [ ] Deferred: evaluate `.olean`/`.ilean` stability; record decision (do not implement yet)
 
 ### Commands
-- [ ] `tpt-lean check` (file and project)
+- [x] `tpt-lean check` (file and project)
 - [ ] `tpt-lean goals <file>:<line>:<col>`
 - [ ] `tpt-lean explain <file>:<line>:<col>` and `--last-error` (JSON schema per spec 8.3)
 - [ ] `tpt-lean context-pack <file>:<line>:<col> [--json] [--max-tokens]`
@@ -183,21 +183,21 @@ Crate: `tpt-lean-adapter`
 Crates: `tpt-lean-ffi`, `tpt-lean-server`
 
 ### tpt-lean-ffi
-- [ ] Crate setup (`cdylib` + `staticlib`)
-- [ ] Hand-written C header `tpt_lean.h` as ABI contract
-- [ ] `tptl_abi_version()` (separate from crate version)
-- [ ] Context new/free, `tptl_last_error`
-- [ ] Project discovery
-- [ ] Index open/free
-- [ ] Search query + results free + results to JSON
+- [x] Crate setup (`cdylib` + `staticlib`)
+- [x] Hand-written C header `tpt_lean.h` as ABI contract
+- [x] `tptl_abi_version()` (separate from crate version)
+- [x] Context new/free, `tptl_last_error`
+- [x] Project discovery
+- [x] Index open/free
+- [x] Search query + results free + results to JSON
 - [ ] Syntax parse
-- [ ] `tptl_format_text` + `tptl_string_free`
+- [x] `tptl_format_text` + `tptl_string_free`
 - [ ] Diagnostic parsing
 - [ ] Cache query
-- [ ] Stable error codes (`TptlStatus`)
+- [x] Stable error codes (`TptlStatus`)
 - [ ] No panic unwinding across boundary (`catch_unwind` on every export)
 - [ ] No Rust types across boundary; explicit lengths; explicit ownership
-- [ ] Document thread safety per handle type
+- [x] Document thread safety per handle type
 - [ ] Tests: C harness, Python ctypes, Go cgo
 - [ ] FFI tests: memory frees, invalid args, error handling, ABI version, concurrent reads
 - [ ] Windows/Linux/macOS build of shared lib
@@ -205,10 +205,10 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [ ] Optional: header generation (not a blocker)
 
 ### tpt-lean-server
-- [ ] JSON-RPC 2.0 core (shared crate/module reused by MCP)
+- [x] JSON-RPC 2.0 core (shared crate/module reused by MCP)
 - [ ] Transports: Unix domain socket (Linux/macOS), named pipe or localhost TCP (Windows)
 - [ ] Optional localhost HTTP: `POST /v1/rpc`
-- [ ] Remote access disabled by default
+- [x] Remote access disabled by default
 - [ ] Methods: `project.info`, `project.doctor`
 - [ ] Methods: `search.query`, `search.symbol`, `search.goal`
 - [ ] Methods: `index.status`, `index.refresh`
@@ -233,19 +233,19 @@ Crate: `tpt-lean-mcp` (hand-written over serde_json)
 
 - [ ] MCP protocol implementation (initialize, capabilities, tools/list, tools/call, resources, prompts, cancellation, progress)
 - [ ] Verify target MCP protocol version(s)
-- [ ] stdio transport (first)
-- [ ] `tpt-lean mcp stdio`
-- [ ] Tool `tpt_lean_search`
+- [x] stdio transport (first)
+- [x] `tpt-lean mcp stdio`
+- [x] Tool `tpt_lean_search`
 - [ ] Tool `tpt_lean_context_pack`
 - [ ] Tool `tpt_lean_goals_at`
-- [ ] Tool `tpt_lean_check_file`
-- [ ] Tool `tpt_lean_format_text`
+- [x] Tool `tpt_lean_check_file`
+- [x] Tool `tpt_lean_format_text`
 - [ ] Tool `tpt_lean_explain_diagnostic`
 - [ ] Tool `tpt_lean_format_file` (write permission)
 - [ ] Tool `tpt_lean_build_project` (build permission)
 - [ ] Tool `tpt_lean_profile_file` (profile permission)
 - [ ] Tool `tpt_lean_imports_suggest`
-- [ ] Tool `tpt_lean_index_status`
+- [x] Tool `tpt_lean_index_status`
 - [ ] Tool input/output JSON schemas
 - [ ] Resources: project info, diagnostics, index status, file symbols/ast/goals, build log, profile
 - [ ] Optional prompts: explain_lean_error, find_lemma_for_goal, reduce_proof_timeout, suggest_imports, summarize_proof_state
@@ -269,9 +269,9 @@ Crate: `tpt-lean-build`
 - [ ] `tpt-lean build --json`
 - [ ] `tpt-lean build --watch` (cross-platform file watcher; license check)
 - [ ] `tpt-lean build --explain-slow`
-- [ ] `tpt-lean clean`
-- [ ] `tpt-lean cache status`
-- [ ] `tpt-lean cache prune`
+- [x] `tpt-lean clean`
+- [x] `tpt-lean cache status`
+- [x] `tpt-lean cache prune`
 - [ ] Cache-hit overhead < 200 ms
 - [ ] Better logs and diagnostics
 - [ ] Wire `build.*` into server and MCP
@@ -324,10 +324,10 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 ---
 
 ## Phase 7 — Remaining CLI utilities (not in spec phase list)
-- [ ] `tpt-lean init <name>` with generated lakefile.lean, lean-toolchain, Main.lean, tpt-lean.toml, .gitignore, README.md
+- [x] `tpt-lean init <name>` with generated lakefile.lean, lean-toolchain, Main.lean, tpt-lean.toml, .gitignore, README.md
 - [ ] `init --mathlib`
 - [ ] Templates: theorem, mathlib, teaching, library
-- [ ] `tpt-lean imports` (list graph)
+- [x] `tpt-lean imports` (list graph)
 - [ ] `imports --unused`
 - [ ] `imports --suggest "<query>"`
 - [ ] `imports --minimize <file>`
@@ -376,11 +376,11 @@ Crate: `tpt-lean-wasm`
 ---
 
 ## Cross-cutting (check off when fully done across all phases)
-- [ ] Every feature has a JSON output mode
+- [x] Every feature has a JSON output mode
 - [ ] Every path from API/MCP is checked against workspace roots
-- [ ] No arbitrary shell execution; commands built from typed options only
+- [x] No arbitrary shell execution; commands built from typed options only
 - [ ] Every Lean process has timeout, memory limit (where supported), cancellation, output limit, sanitized env
 - [ ] Index and cache treated as acceleration only; Lean is the source of truth
-- [ ] No Apache-only (or other disallowed) dependency in the tree
+- [x] No Apache-only (or other disallowed) dependency in the tree
 - [ ] Unit, golden, integration, FFI, and MCP/API schema tests in place (spec section 17)
 - [ ] Windows, Linux, macOS all green in CI
