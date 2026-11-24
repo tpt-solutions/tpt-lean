@@ -24,7 +24,7 @@ const CHECK_FAILED: i32 = 1;
 
 /// Route the parsed arguments to a command. Returns the process exit code.
 pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
-    if args.command.is_empty() || args.rest.first().map(|s| s.as_str()) == Some("--help") {
+    if args.help || args.command.is_empty() {
         return help(ctx);
     }
     let name: Vec<&str> = args.command.iter().map(|s| s.as_str()).collect();
@@ -37,6 +37,7 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
         ["index", "scan"] | ["index", "refresh"] => index_refresh(ctx, args),
         ["index", "status"] => index_status(ctx, args),
         ["index", "clear"] => index_clear(ctx, args),
+        ["index", "sidecar"] => index_sidecar(ctx, args),
         ["mcp", "stdio"] => mcp_stdio(ctx, args),
         ["mcp", "http"] => ext::mcp_http(ctx, args),
         ["server", "stop"] => ext::server_lifecycle(ctx, args, "stop"),
@@ -465,13 +466,21 @@ struct FmtReport {
 
 fn fmt(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&["--check", "--diff", "--verify", "--project"], &["--project"])?;
-    if args.flag("--verify") {
-        return not_implemented("`fmt --verify` (needs the Lean adapter, Phase 2)");
-    }
     let root = project_root(args)?;
     let ws = WorkspaceRoot::new(&root)?;
     let check = args.flag("--check");
     let show_diff = args.flag("--diff");
+    let verify = args.flag("--verify");
+    // Lean and the timeout are only needed for --verify; load them lazily.
+    let verifier = if verify {
+        let cfg = load_config(args, &root)?;
+        Some((
+            adapter::discover_toolchain(),
+            adapter::lean_policy(cfg.security.command_timeout_seconds),
+        ))
+    } else {
+        None
+    };
     let positional = args.positionals(&["--project"]);
     let files: Vec<PathBuf> = if positional.is_empty() {
         tpt_lean_index::collect_lean_files(&root)?
@@ -503,6 +512,35 @@ fn fmt(ctx: &Ctx, args: &Args) -> Result<i32> {
                 });
             }
             Ok(out) if out.changed => {
+                if let Some((toolchain, policy)) = &verifier {
+                    let outcome = adapter::verify::verify_format(
+                        toolchain,
+                        &root,
+                        &src,
+                        &out.output,
+                        policy,
+                        &tpt_lean_core::policy::CancelToken::new(),
+                    );
+                    let refusal = match outcome {
+                        Ok(v) if v.verified => None,
+                        Ok(v) => Some(format!(
+                            "formatting adds {} Lean error(s): {}",
+                            v.new_errors.len(),
+                            v.new_errors.join("; ")
+                        )),
+                        Err(e) => Some(format!("could not verify with lean: {e}")),
+                    };
+                    if let Some(reason) = refusal {
+                        any_error = true;
+                        human.push(format!("{rel}: not formatted ({reason})"));
+                        reports.push(FmtReport {
+                            file: rel,
+                            changed: false,
+                            error: Some(reason),
+                        });
+                        continue;
+                    }
+                }
                 any_changed = true;
                 if show_diff {
                     if let Some(h) = tpt_lean_fmt::diff(&src, &out.output) {
@@ -686,6 +724,78 @@ fn index_status(ctx: &Ctx, args: &Args) -> Result<i32> {
     } else {
         ErrorCode::IndexError.exit_code()
     })
+}
+
+#[derive(Serialize)]
+struct SidecarFailure {
+    module: String,
+    reason: String,
+}
+
+#[derive(Serialize)]
+struct SidecarReport {
+    stored: Vec<String>,
+    failed: Vec<SidecarFailure>,
+}
+
+/// `index sidecar`: describe the project's built modules with the Lean sidecar and store the
+/// declarations in the index. Modules that are already current are skipped.
+fn index_sidecar(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--project", "--exe", "--timeout"],
+        &["--project", "--exe", "--timeout"],
+    )?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let dirs = ProjectDirs::new(&root);
+    let exe = match args.value("--exe")? {
+        Some(path) => PathBuf::from(path),
+        None => std::env::var_os("TPT_LEAN_SIDECAR")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                Error::invalid(
+                    "sidecar not found: pass --exe or set TPT_LEAN_SIDECAR to the built tpt_sidecar binary (build lean/tpt-lean-sidecar with `lake build`)",
+                )
+            })?,
+    };
+    let timeout = match args.value("--timeout")? {
+        Some(v) => v
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
+        None => cfg.security.command_timeout_seconds,
+    };
+    let toolchain = adapter::discover_toolchain();
+    let mut index = Index::open(&dirs.index_db())?;
+    let stats = adapter::sidecar::index_sidecar(
+        &mut index,
+        &root,
+        &exe,
+        &toolchain,
+        &adapter::lean_policy(timeout),
+        &CancelToken::new(),
+    )?;
+    let mut human = vec![format!(
+        "stored declarations for {} module(s); {} failed",
+        stats.stored.len(),
+        stats.failed.len()
+    )];
+    human.extend(
+        stats
+            .failed
+            .iter()
+            .map(|(module, reason)| format!("  {module}: {}", reason.lines().next().unwrap_or(""))),
+    );
+    let report = SidecarReport {
+        stored: stats.stored,
+        failed: stats
+            .failed
+            .into_iter()
+            .map(|(module, reason)| SidecarFailure { module, reason })
+            .collect(),
+    };
+    let ok = report.failed.is_empty();
+    ctx.emit("index.sidecar", &human.join("\n"), &report)?;
+    Ok(if ok { OK } else { ErrorCode::IndexError.exit_code() })
 }
 
 fn index_clear(ctx: &Ctx, args: &Args) -> Result<i32> {

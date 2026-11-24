@@ -14,6 +14,8 @@ pub struct Args {
     pub quiet: bool,
     pub project: Option<String>,
     pub overrides: Vec<(String, String)>,
+    /// `--help` or `-h` appeared anywhere on the command line.
+    pub help: bool,
     /// Subcommand path, e.g. `["index", "scan"]`.
     pub command: Vec<String>,
     /// Remaining positionals and per-command flags, in order.
@@ -55,7 +57,7 @@ impl Args {
                     .ok_or_else(|| Error::invalid("--set needs section.key=value"))?;
                 out.overrides.push(split_kv(kv)?);
             } else if a == "--help" || a == "-h" {
-                out.rest.push("--help".into());
+                out.help = true;
             } else {
                 out.rest.push(a.to_string());
             }
