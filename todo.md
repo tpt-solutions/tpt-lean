@@ -90,18 +90,18 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 
 ### tpt-lean-index
 - [x] SQLite integration (choose crate, verify license, bundled SQLite)
-- [ ] Schema + migrations: projects, files, symbols, docstrings, imports, dependencies, diagnostics, build_runs, profile_runs, cache_entries (partial: no separate docstrings/dependencies tables; only schema v1 exists)
+- [x] Schema + migrations: projects, files, symbols, docstrings, imports, dependencies, diagnostics, build_runs, profile_runs, cache_entries (schema v2: adds module_sources and declarations; docstrings live in symbols and declarations, dependencies are import edges)
 - [x] FTS5 setup for name/docstring search
 - [ ] Fast file scan (respect ignore rules, `.lake` handling) (skips .lake/build/target only; no .gitignore parsing)
 - [x] Syntax-level indexing using `tpt-lean-syntax`
 - [x] Import graph / dependency edges
-- [ ] Incremental invalidation by file hash and import graph (hash only; import-graph invalidation not built)
+- [x] Incremental invalidation by file hash and import graph (sidecar data is dropped when a module's source or import closure changes)
 - [x] Mathlib/dependency indexing from local `.lake/packages` (no redistribution)
 - [x] Index health check API (used by doctor)
-- [ ] Schema version + upgrade path (version recorded; no upgrade steps yet)
+- [x] Schema version + upgrade path (stepwise migrations, each in a transaction; newer databases refused)
 - [x] `tpt-lean index scan` / `refresh` / `status`
 - [x] Concurrency model (readers while writer refreshes; WAL)
-- [ ] Hooks for semantic enrichment (filled in Phase 2)
+- [x] Hooks for semantic enrichment (filled in Phase 2: `store_declarations` takes sidecar output)
 
 ### tpt-lean-search
 - [x] Name search (exact, prefix, namespace-aware)
@@ -123,7 +123,7 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 - [x] Refuse to write if syntax tree invalid or uncertain
 - [x] Idempotency tests (fmt(fmt(x)) == fmt(x))
 - [x] `tpt-lean fmt`, `fmt --check`, `fmt <file>`, `fmt --diff`
-- [ ] `fmt --verify` stub (needs Lean; completed in Phase 2) (flag exists and reports not_implemented)
+- [x] `fmt --verify` (done in Phase 2: formatted text is written only if Lean reports no new errors)
 - [x] Golden tests: `input.lean` → `expected_formatted.lean`
 - [ ] Benchmark: 5,000-line file < 100 ms (not run)
 
@@ -143,7 +143,7 @@ Crate: `tpt-lean-adapter`
 - [x] Controlled `lake build` (typed options only)
 - [x] Controlled `lean` invocation (typed options only)
 - [x] Output parsing into structured diagnostics (severity, file, line, col, message)
-- [ ] Process runner enforcing timeout, memory limit (where supported), cancellation, output size limit, env sanitization (timeout, output limit, cancellation, env done; memory limit not enforced)
+- [x] Process runner enforcing timeout, memory limit (where supported), cancellation, output size limit, env sanitization (memory limit by sampling watchdog over the process tree; timeout/cancel kill the whole tree)
 - [ ] Windows process handling (job objects for kill/limit) and POSIX equivalents (not done: no job objects (workspace forbids unsafe for now))
 - [x] No arbitrary shell execution anywhere (test for it)
 
@@ -156,10 +156,10 @@ Crate: `tpt-lean-adapter`
 - [ ] Version compatibility handling across Lean versions
 
 ### Level 3 — Lean sidecar
-- [ ] Small Lean package emitting structured JSON (symbols, types, goals) using Lean APIs
-- [ ] Sidecar licensed MIT OR Apache-2.0 like the rest
-- [ ] Sidecar build/versioning against current + previous stable Lean
-- [ ] Semantic enrichment into index (declaration types, docstrings)
+- [ ] Small Lean package emitting structured JSON (symbols, types, goals) using Lean APIs (done: `lean/tpt-lean-sidecar` emits declarations with kind, pretty type and docstring, schema v1; goals not yet)
+- [x] Sidecar licensed MIT OR Apache-2.0 like the rest (SPDX headers in each file)
+- [ ] Sidecar build/versioning against current + previous stable Lean (pinned to v4.36.0 only; previous stable not yet)
+- [x] Semantic enrichment into index (declaration types, docstrings; via `tpt-lean index sidecar`)
 
 ### Level 4 — Native artifact reader
 - [ ] Deferred: evaluate `.olean`/`.ilean` stability; record decision (do not implement yet)
@@ -172,7 +172,7 @@ Crate: `tpt-lean-adapter`
 - [ ] Context pack content: snippet, goal, hypotheses, diagnostics, imported symbols, nearby defs, relevant lemmas, recent build errors, project constraints
 - [ ] Token budgeting for context pack
 - [ ] Type-shaped search (`--type`) and goal-based search (`--goal-at`)
-- [ ] `fmt --verify`
+- [x] `fmt --verify`
 - [ ] Cached diagnostics / safe cached goals in index
 - [ ] Integration tests against current + previous stable Lean (nightly optional)
 - [ ] Context pack perf target (p50 < 100 ms, p95 < 500 ms excl. elaboration)
@@ -362,7 +362,7 @@ Crate: `tpt-lean-wasm`
 - [ ] Per-release dependency license report
 - [x] Per-release `cargo deny` / `cargo audit` gate
 - [ ] Versioning policy (crate semver vs ABI version)
-- [ ] CHANGELOG
+- [x] CHANGELOG
 - [ ] User docs (install, quickstart, every command, JSON schemas)
 - [ ] Security model docs (permission classes, path safety, command safety, resource limits)
 - [x] Integration docs: FFI, JSON-RPC API, MCP
@@ -379,7 +379,7 @@ Crate: `tpt-lean-wasm`
 - [x] Every feature has a JSON output mode
 - [x] Every path from API/MCP is checked against workspace roots (no API layer yet; WorkspaceRoot exists)
 - [x] No arbitrary shell execution; commands built from typed options only
-- [ ] Every Lean process has timeout, memory limit (where supported), cancellation, output limit, sanitized env (memory limit missing)
+- [ ] Every Lean process has timeout, memory limit (where supported), cancellation, output limit, sanitized env (runner enforces all of these; the LSP client is sanitized but is a long-lived server, so it has no timeout or memory limit)
 - [x] Index and cache treated as acceleration only; Lean is the source of truth
 - [x] No Apache-only (or other disallowed) dependency in the tree
 - [x] Unit, golden, integration, FFI, and MCP/API schema tests in place (spec section 17) (unit and golden present; no Lean integration, FFI or MCP tests)
