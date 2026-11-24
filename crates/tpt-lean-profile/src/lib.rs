@@ -11,11 +11,11 @@ mod report;
 mod run;
 mod trace;
 
-pub use report::ImportTiming;
 pub use report::{
     compare, format_ms, from_json, read_report, render_report, slowest, suggest, to_json, DeclTiming,
     ProfileReport, TacticTiming, FORMAT_VERSION,
 };
+pub use report::{import_graph_dot, ImportTiming};
 pub use run::{import_timings, profile_file, profile_file_traced};
 
 /// Folded stacks for the trace tree in Lean's combined output, ready for flamegraph.pl or inferno.

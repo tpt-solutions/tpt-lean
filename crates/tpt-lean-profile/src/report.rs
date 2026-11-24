@@ -66,6 +66,68 @@ pub struct ImportTiming {
     pub error: Option<String>,
 }
 
+/// Graphviz DOT for the direct imports of the profiled file, with each import's measured load
+/// cost on its edge. Imports at or above half the largest cost are drawn in red, those at or
+/// above a fifth in orange, the rest in grey; imports Lean could not load are dashed. This is the
+/// first level only: each cost already includes the import's own closure.
+pub fn import_graph_dot(report: &ProfileReport) -> String {
+    let max = report
+        .import_timings
+        .iter()
+        .map(|t| t.load_ms)
+        .fold(0.0_f64, f64::max);
+    let mut out = String::new();
+    let _ = writeln!(out, "digraph imports {{");
+    let _ = writeln!(out, "  rankdir=LR;");
+    let _ = writeln!(out, "  node [shape=box, fontname=\"Helvetica\"];");
+    // Label the profiled file by its name; the full path is in the report itself.
+    let name = std::path::Path::new(&report.file)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| report.file.clone());
+    let file = dot_escape(&name);
+    let _ = writeln!(out, "  \"{file}\" [style=bold];");
+    for imp in &report.import_timings {
+        let module = dot_escape(&imp.module);
+        match &imp.error {
+            Some(err) => {
+                let label = dot_escape(&format!("{}\nnot loaded: {err}", imp.module));
+                let _ = writeln!(
+                    out,
+                    "  \"{module}\" [label=\"{label}\", style=dashed, color=grey];"
+                );
+                let _ = writeln!(out, "  \"{file}\" -> \"{module}\" [style=dashed, color=grey];");
+            }
+            None => {
+                let colour = if max > 0.0 && imp.load_ms >= max / 2.0 {
+                    "red"
+                } else if max > 0.0 && imp.load_ms >= max / 5.0 {
+                    "orange"
+                } else {
+                    "grey"
+                };
+                let cost = format_ms(imp.load_ms);
+                let label = dot_escape(&format!("{}\n{cost}", imp.module));
+                let _ = writeln!(out, "  \"{module}\" [label=\"{label}\"];");
+                let _ = writeln!(
+                    out,
+                    "  \"{file}\" -> \"{module}\" [label=\"{cost}\", color={colour}, penwidth={}];",
+                    if colour == "grey" { "1" } else { "2" }
+                );
+            }
+        }
+    }
+    let _ = writeln!(out, "}}");
+    out
+}
+
+/// Escape a string for a double-quoted DOT identifier or label.
+fn dot_escape(text: &str) -> String {
+    text.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
 /// Aggregated time of one tactic across the file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TacticTiming {
@@ -381,6 +443,68 @@ mod tests {
             suggestions: vec![],
             notes: vec![],
         }
+    }
+
+    #[test]
+    fn import_graph_colours_by_cost() {
+        let mut r = report("Main.lean", 100.0, vec![]);
+        r.import_timings = vec![
+            ImportTiming {
+                module: "Big".into(),
+                line: 1,
+                load_ms: 800.0,
+                error: None,
+            },
+            ImportTiming {
+                module: "Mid".into(),
+                line: 2,
+                load_ms: 300.0,
+                error: None,
+            },
+            ImportTiming {
+                module: "Small".into(),
+                line: 3,
+                load_ms: 10.0,
+                error: None,
+            },
+            ImportTiming {
+                module: "Missing".into(),
+                line: 4,
+                load_ms: 0.0,
+                error: Some("unknown module".into()),
+            },
+        ];
+        let dot = import_graph_dot(&r);
+        assert!(dot.starts_with("digraph imports {"), "{dot}");
+        assert!(
+            dot.contains(r#""Main.lean" -> "Big" [label="800.0ms", color=red"#),
+            "{dot}"
+        );
+        assert!(
+            dot.contains(r#""Main.lean" -> "Mid" [label="300.0ms", color=orange"#),
+            "{dot}"
+        );
+        assert!(
+            dot.contains(r#""Main.lean" -> "Small" [label="10.0ms", color=grey"#),
+            "{dot}"
+        );
+        assert!(dot.contains("style=dashed"), "{dot}");
+        assert!(dot.contains("not loaded: unknown module"), "{dot}");
+        assert!(dot.trim_end().ends_with('}'), "{dot}");
+    }
+
+    #[test]
+    fn dot_labels_escape_quotes_and_backslashes() {
+        let mut r = report(r#"Main "x".lean"#, 1.0, vec![]);
+        r.import_timings = vec![ImportTiming {
+            module: r#"A\B"#.into(),
+            line: 1,
+            load_ms: 5.0,
+            error: None,
+        }];
+        let dot = import_graph_dot(&r);
+        assert!(dot.contains(r#""Main \"x\".lean""#), "{dot}");
+        assert!(dot.contains(r#""A\\B" [label="A\\B\n5.0ms"]"#), "{dot}");
     }
 
     #[test]

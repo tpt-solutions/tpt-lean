@@ -246,8 +246,9 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--compare",
             "--flamegraph",
             "--imports",
+            "--graph",
         ],
-        &["--project", "--timeout", "--slowest", "--flamegraph"],
+        &["--project", "--timeout", "--slowest", "--flamegraph", "--graph"],
     )?;
     if args.flag("--compare") {
         let paths = args.positionals(&["--project", "--timeout", "--slowest", "--flamegraph"]);
@@ -274,8 +275,20 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
     toolchain_or_error()?;
     let (mut report, output) = tpt_lean_profile::profile_file_traced(&root, &path, timeout)?;
-    if args.flag("--imports") {
+    let graph_path = args.value("--graph")?;
+    if args.flag("--imports") || graph_path.is_some() {
         report.import_timings = tpt_lean_profile::import_timings(&root, &path, timeout)?;
+    }
+    if let Some(out_path) = graph_path {
+        let dot = tpt_lean_profile::import_graph_dot(&report);
+        std::fs::write(&out_path, &dot).map_err(|e| Error::from(e).with_path(&out_path))?;
+        let edges = report.import_timings.len();
+        ctx.emit(
+            "profile.graph",
+            &format!("wrote an import graph with {edges} import(s) to {out_path}"),
+            &json!({ "path": out_path, "imports": edges }),
+        )?;
+        return Ok(OK);
     }
     if let Some(out_path) = args.value("--flamegraph")? {
         let folded = tpt_lean_profile::flamegraph_folded(&output);

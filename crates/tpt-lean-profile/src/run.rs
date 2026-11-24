@@ -26,7 +26,7 @@ const PROFILER_THRESHOLD_MS: u32 = 1;
 
 const NOT_MEASURED: &[&str] = &[
     "memory usage: not measured (Lean does not report it per declaration, and no portable limit is implemented)",
-    "dependency bottleneck graph: not implemented",
+    "dependency bottleneck graph: direct imports only (`--graph`); transitive costs are not attributed",
     "imports: load cost is timed only when requested (`--imports`), one approximate run per import",
     "build-step timing and cache hit/miss reports: not implemented",
     "imports and startup: included in wall time only, not attributed to declarations",
