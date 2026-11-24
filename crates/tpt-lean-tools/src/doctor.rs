@@ -241,7 +241,10 @@ mod tests {
         .unwrap();
         assert_eq!(server_socket_check(&dir).status, CheckStatus::Ok);
 
+        // Port 1 is never bound by a normal user process. Re-probing the port that was just
+        // released is racy: other processes can bind it, and the probe then succeeds.
         drop(listener);
+        fs::write(dir.join(".tpt-lean").join("server.json"), r#"{"port": 1}"#).unwrap();
         let c = server_socket_check(&dir);
         assert_eq!(c.status, CheckStatus::Warn, "{c:?}");
 
