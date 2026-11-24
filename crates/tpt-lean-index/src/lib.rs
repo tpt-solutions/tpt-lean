@@ -183,8 +183,14 @@ struct ModuleInfo {
     imports: Vec<String>,
 }
 
+/// Files at a package root that configure the build rather than define a module.
+const NON_MODULE_FILES: &[&str] = &["lakefile.lean"];
+
 /// Module name for a file path relative to its package root: `Sub/Other.lean` -> `Sub.Other`.
 pub fn module_name_of(rel_path: &str) -> Option<String> {
+    if NON_MODULE_FILES.contains(&rel_path) {
+        return None;
+    }
     let stem = rel_path.strip_suffix(".lean")?;
     (!stem.is_empty()).then(|| stem.replace('/', "."))
 }
@@ -319,9 +325,7 @@ impl Index {
         let mut stale = Vec::new();
         for (module, source_hash, import_hash) in stored {
             let current = match table.get(&module) {
-                Some(info) => {
-                    info.hash == source_hash && import_hash_of(&table, &module) == import_hash
-                }
+                Some(info) => info.hash == source_hash && import_hash_of(&table, &module) == import_hash,
                 None => false,
             };
             if !current {
@@ -344,7 +348,7 @@ impl Index {
                 "SELECT replace(substr(f.rel_path, 1, length(f.rel_path) - 5), '/', '.'),
                         f.package_id, f.id, f.hash, i.module
                  FROM files f LEFT JOIN imports i ON i.file_id = f.id
-                 WHERE f.rel_path LIKE '%.lean'",
+                 WHERE f.rel_path LIKE '%.lean' AND f.rel_path NOT IN ('lakefile.lean')",
             )
             .map_err(|e| db_err(e, &self.path))?;
         let rows = stmt
@@ -360,8 +364,7 @@ impl Index {
             .map_err(|e| db_err(e, &self.path))?;
         let mut table: HashMap<String, ModuleInfo> = HashMap::new();
         for row in rows {
-            let (module, package_id, file_id, hash, import) =
-                row.map_err(|e| db_err(e, &self.path))?;
+            let (module, package_id, file_id, hash, import) = row.map_err(|e| db_err(e, &self.path))?;
             let entry = table.entry(module).or_insert_with(|| ModuleInfo {
                 package_id,
                 file_id,
@@ -431,7 +434,9 @@ impl Index {
         let stored: HashMap<String, (String, String, String, i64)> = {
             let mut stmt = self
                 .conn
-                .prepare("SELECT module, source_hash, import_hash, toolchain, sidecar_schema FROM module_sources")
+                .prepare(
+                    "SELECT module, source_hash, import_hash, toolchain, sidecar_schema FROM module_sources",
+                )
                 .map_err(|e| db_err(e, &self.path))?;
             let rows = stmt
                 .query_map([], |r| {
@@ -924,7 +929,11 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tpt-index-sidecar-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join("Sub")).unwrap();
-        std::fs::write(dir.join("Main.lean"), "import Sub.Other\n\ntheorem main_ok : True := trivial\n").unwrap();
+        std::fs::write(
+            dir.join("Main.lean"),
+            "import Sub.Other\n\ntheorem main_ok : True := trivial\n",
+        )
+        .unwrap();
         std::fs::write(dir.join("Sub").join("Other.lean"), "def helper := 1\n").unwrap();
         std::fs::write(dir.join("Alone.lean"), "def solo := 2\n").unwrap();
         dir
@@ -940,9 +949,12 @@ mod tests {
     }
 
     fn store_all(idx: &mut Index, tc: &str, schema: i64) {
-        idx.store_declarations("Main", tc, schema, &[decl("main_ok")]).unwrap();
-        idx.store_declarations("Sub.Other", tc, schema, &[decl("Sub.helper")]).unwrap();
-        idx.store_declarations("Alone", tc, schema, &[decl("solo")]).unwrap();
+        idx.store_declarations("Main", tc, schema, &[decl("main_ok")])
+            .unwrap();
+        idx.store_declarations("Sub.Other", tc, schema, &[decl("Sub.helper")])
+            .unwrap();
+        idx.store_declarations("Alone", tc, schema, &[decl("solo")])
+            .unwrap();
     }
 
     #[test]
@@ -950,13 +962,17 @@ mod tests {
         assert_eq!(module_name_of("Sub/Other.lean").as_deref(), Some("Sub.Other"));
         assert_eq!(module_name_of("Main.lean").as_deref(), Some("Main"));
         assert!(module_name_of("notes.txt").is_none());
+        assert!(module_name_of("lakefile.lean").is_none());
     }
 
     #[test]
     fn sidecar_declarations_are_stored_and_queryable() {
         let dir = project_with_imports("store");
         let mut idx = Index::open_in_memory().unwrap();
-        let roots = vec![ScanRoot { package: "project".into(), path: dir.clone() }];
+        let roots = vec![ScanRoot {
+            package: "project".into(),
+            path: dir.clone(),
+        }];
         idx.refresh(&roots).unwrap();
         store_all(&mut idx, "tc1", 1);
         let rows = idx.declarations_named("Sub.help", 10).unwrap();
@@ -976,7 +992,10 @@ mod tests {
     fn importer_is_invalidated_when_an_import_changes() {
         let dir = project_with_imports("invalidate");
         let mut idx = Index::open_in_memory().unwrap();
-        let roots = vec![ScanRoot { package: "project".into(), path: dir.clone() }];
+        let roots = vec![ScanRoot {
+            package: "project".into(),
+            path: dir.clone(),
+        }];
         idx.refresh(&roots).unwrap();
         store_all(&mut idx, "tc1", 1);
         assert!(idx.modules_needing_sidecar("tc1", 1).unwrap().is_empty());
@@ -998,7 +1017,10 @@ mod tests {
     fn unchanged_refresh_keeps_sidecar_data() {
         let dir = project_with_imports("keep");
         let mut idx = Index::open_in_memory().unwrap();
-        let roots = vec![ScanRoot { package: "project".into(), path: dir.clone() }];
+        let roots = vec![ScanRoot {
+            package: "project".into(),
+            path: dir.clone(),
+        }];
         idx.refresh(&roots).unwrap();
         store_all(&mut idx, "tc1", 1);
         let stats = idx.refresh(&roots).unwrap();
@@ -1011,7 +1033,10 @@ mod tests {
     fn toolchain_or_sidecar_schema_change_makes_data_stale() {
         let dir = project_with_imports("versions");
         let mut idx = Index::open_in_memory().unwrap();
-        let roots = vec![ScanRoot { package: "project".into(), path: dir.clone() }];
+        let roots = vec![ScanRoot {
+            package: "project".into(),
+            path: dir.clone(),
+        }];
         idx.refresh(&roots).unwrap();
         store_all(&mut idx, "tc1", 1);
         assert_eq!(idx.modules_needing_sidecar("tc2", 1).unwrap().len(), 3);
@@ -1027,7 +1052,8 @@ mod tests {
             let conn = Connection::open(&path).unwrap();
             conn.execute_batch(SCHEMA_V1).unwrap();
             conn.pragma_update(None, "user_version", 1).unwrap();
-            conn.execute("INSERT INTO packages(name, root) VALUES ('project', '/x')", []).unwrap();
+            conn.execute("INSERT INTO packages(name, root) VALUES ('project', '/x')", [])
+                .unwrap();
             conn.execute(
                 "INSERT INTO files(package_id, rel_path, hash, size, indexed_at) VALUES (1, 'Main.lean', 'h', 1, 0)",
                 [],
@@ -1051,7 +1077,8 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         {
             let conn = Connection::open(&path).unwrap();
-            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1).unwrap();
+            conn.pragma_update(None, "user_version", SCHEMA_VERSION + 1)
+                .unwrap();
         }
         assert!(Index::open(&path).is_err());
         let _ = std::fs::remove_file(&path);
