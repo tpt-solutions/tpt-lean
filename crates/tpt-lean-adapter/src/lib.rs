@@ -5,7 +5,7 @@
 //! controlled `lake build` and `lean` invocations built from typed options, and parsing of
 //! diagnostics. Commands are never assembled from strings; there is no shell.
 //!
-//! Level 2 (LSP client, with restart and cancellation) is in `lsp` and `session`. Level 3 (sidecar) is not implemented yet; see `todo.md`.
+//! Level 2 (LSP client, with restart and cancellation) is in `lsp` and `session`. Level 3 (the Lean sidecar, in `lean/tpt-lean-sidecar`) is in `sidecar`.
 
 pub mod diagnostics;
 pub mod last_diagnostics;
@@ -13,6 +13,8 @@ pub mod lemmas;
 pub mod lsp;
 pub mod runner;
 pub mod session;
+pub mod sidecar;
+pub mod verify;
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -93,6 +95,8 @@ pub enum Command {
     LeanCheck {
         file: PathBuf,
     },
+    /// `lean --print-prefix`: the toolchain directory that the `lean` executable belongs to.
+    LeanPrintPrefix,
 }
 
 impl Command {
@@ -122,6 +126,7 @@ impl Command {
                 (lake()?, args)
             }
             Command::LeanCheck { file } => (lean()?, vec![file.display().to_string()]),
+            Command::LeanPrintPrefix => (lean()?, vec!["--print-prefix".into()]),
             Command::LakeClean => (lake()?, vec!["clean".into()]),
         })
     }
@@ -146,6 +151,25 @@ pub fn execute(
     let output = run(&program, &args, cwd, policy, cancel)?;
     let diagnostics = parse_lean_output(&format!("{}\n{}", output.stdout, output.stderr));
     Ok(CommandResult { output, diagnostics })
+}
+
+/// The toolchain directory for the active Lean, as reported by `lean --print-prefix`.
+///
+/// This asks Lean rather than guessing from the executable's location, because under elan the
+/// `lean` on PATH is a proxy that resolves to a toolchain elsewhere.
+pub fn lean_sysroot(toolchain: &Toolchain, policy: &ProcessPolicy, cancel: &CancelToken) -> Result<PathBuf> {
+    let result = execute(toolchain, &Command::LeanPrintPrefix, None, policy, cancel)?;
+    let out = &result.output;
+    if out.success() {
+        let prefix = out.stdout.trim();
+        if !prefix.is_empty() {
+            return Ok(PathBuf::from(prefix));
+        }
+    }
+    Err(Error::new(
+        ErrorCode::LeanNotFound,
+        format!("lean --print-prefix failed: {}", out.stderr.trim()),
+    ))
 }
 
 /// Parse the first line of `lean --version` / `lake --version` into a version string,
