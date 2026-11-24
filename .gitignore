@@ -22,3 +22,7 @@ desktop.ini
 # Env / secrets
 .env
 .env.*
+
+# Python bytecode
+__pycache__/
+*.pyc
