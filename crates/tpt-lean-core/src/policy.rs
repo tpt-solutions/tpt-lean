@@ -17,6 +17,9 @@ pub struct ProcessPolicy {
     pub memory_limit_bytes: Option<u64>,
     /// Environment variables allowed through. Everything else is removed.
     pub env_allowlist: Vec<String>,
+    /// Variables set explicitly by the caller, applied after the allowlist. Use only for
+    /// values the caller computed itself (for example `LEAN_SYSROOT`), never copied from input.
+    pub extra_env: Vec<(String, String)>,
 }
 
 impl Default for ProcessPolicy {
@@ -26,6 +29,7 @@ impl Default for ProcessPolicy {
             output_limit_bytes: 8 * 1024 * 1024,
             memory_limit_bytes: None,
             env_allowlist: default_env_allowlist(),
+            extra_env: Vec::new(),
         }
     }
 }
