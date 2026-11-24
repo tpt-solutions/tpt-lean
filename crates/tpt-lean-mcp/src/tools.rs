@@ -206,7 +206,7 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "tpt_lean_profile_file",
-            description: "Profile a .lean file with timing. Not available yet: the profile crate is a placeholder, so this tool returns an error and no data. Requires build permission.",
+            description: "Profile a .lean file: wall time, per-declaration timings from Lean's trace, tactic totals and suggestions. Runs Lean. Requires build permission (security.allow_build).",
             class: Permission::Profile,
             input: object(json!({ "file": file_prop() }), &["file"]),
             output: object(json!({}), &[]),
@@ -771,9 +771,11 @@ impl Server {
     }
 
     fn tool_profile_file(&self, args: &Value) -> Result<Value, String> {
-        // Validate the path first so a bad path is reported as such.
-        let _ = self.lean_file_arg(args)?;
-        Err("profiling is not available yet: the tpt-lean-profile crate is not implemented. No profile was produced.".into())
+        let (path, _rel, _text) = self.lean_file_arg(args)?;
+        let timeout = self.timeout_seconds(args);
+        let report =
+            tpt_lean_profile::profile_file(self.root(), &path, timeout).map_err(|e| e.to_string())?;
+        serde_json::to_value(&report).map_err(|e| e.to_string())
     }
 
     fn tool_imports_suggest(&self, args: &Value) -> Result<Value, String> {

@@ -189,13 +189,17 @@ fn read_tools_work_with_build_and_write_denied() {
 // ---- profile ------------------------------------------------------------------------------
 
 #[test]
-fn profile_tool_reports_not_available_and_produces_no_data() {
+fn profile_tool_returns_a_report_when_lean_is_available() {
+    if !lean_available() {
+        return;
+    }
     let dir = project("profile", &[("A.lean", "def a := 1\n")]);
     let server = Server::new(&dir).unwrap();
     let r = call(&server, "tpt_lean_profile_file", json!({"file": "A.lean"}));
-    assert_eq!(r["isError"], true);
-    assert!(text_of(&r).contains("not available"), "{}", text_of(&r));
-    assert!(r.get("structuredContent").is_none());
+    assert_eq!(r["isError"], false, "{}", text_of(&r));
+    let report = body_of(&r);
+    assert!(report.get("wall_ms").is_some(), "{report}");
+    assert!(text_of(&r).contains("A.lean"));
 }
 
 // ---- build --------------------------------------------------------------------------------
