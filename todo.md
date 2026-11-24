@@ -317,7 +317,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [x] Source links
 - [x] Theorem/definition pages
 - [x] Namespace tree
-- [ ] Dependency graph
+- [x] Dependency graph (inline SVG on the Dependencies page; omitted above 200 modules)
 - [x] JSON export
 - [x] `tpt-lean docgen`, `--open`, `--json`, `--include-deps`
 

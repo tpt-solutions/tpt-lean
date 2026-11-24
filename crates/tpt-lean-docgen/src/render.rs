@@ -491,6 +491,99 @@ fn decl_body(model: &Model, d: &DeclInfo, ids: &HashMap<&str, usize>) -> String 
     )
 }
 
+/// Largest module count for which the dependency graph is drawn. Beyond it the per-module
+/// lists on the same page are the readable form.
+const GRAPH_MODULE_LIMIT: usize = 200;
+
+/// Inline SVG of the import graph between documented modules. Imported modules are drawn to the
+/// left of the modules that import them; each module's column is the longest chain of imports
+/// beneath it, capped so that cycles terminate. Edges to external modules are not drawn.
+fn dependency_svg(model: &Model) -> String {
+    let n = model.modules.len();
+    if n == 0 {
+        return String::new();
+    }
+    if n > GRAPH_MODULE_LIMIT {
+        return format!(
+            "<p class=\"muted\">The graph is omitted for {n} modules (more than {GRAPH_MODULE_LIMIT}); the lists below show every import.</p>\n"
+        );
+    }
+    let edges: Vec<(usize, usize)> = model
+        .imports
+        .iter()
+        .filter_map(|e| e.resolved.map(|to| (e.from, to)))
+        .filter(|(from, to)| from != to)
+        .collect();
+
+    let mut col = vec![0usize; n];
+    for _ in 0..n {
+        let mut changed = false;
+        for &(from, to) in &edges {
+            if col[from] < col[to] + 1 && col[to] + 1 < n {
+                col[from] = col[to] + 1;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    let columns = col.iter().copied().max().unwrap_or(0) + 1;
+    let mut rows_in_col = vec![0usize; columns];
+    let mut row = vec![0usize; n];
+    for i in 0..n {
+        row[i] = rows_in_col[col[i]];
+        rows_in_col[col[i]] += 1;
+    }
+    let tallest = rows_in_col.iter().copied().max().unwrap_or(1);
+
+    const COL_W: usize = 200;
+    const ROW_H: usize = 30;
+    const NODE_W: usize = 172;
+    const NODE_H: usize = 22;
+    const PAD: usize = 10;
+    let width = columns * COL_W + PAD * 2;
+    let height = tallest * ROW_H + PAD * 2;
+    let x = |i: usize| PAD + col[i] * COL_W;
+    let y = |i: usize| PAD + row[i] * ROW_H;
+
+    let mut s = format!(
+        "<svg class=\"depgraph\" width=\"{width}\" height=\"{height}\" viewBox=\"0 0 {width} {height}\" xmlns=\"http://www.w3.org/2000/svg\" role=\"img\" aria-label=\"import graph\">\n\
+         <defs><marker id=\"arrow\" viewBox=\"0 0 10 10\" refX=\"10\" refY=\"5\" markerWidth=\"6\" markerHeight=\"6\" orient=\"auto\"><path d=\"M0,0 L10,5 L0,10 z\" fill=\"currentColor\"/></marker></defs>\n"
+    );
+    for &(from, to) in &edges {
+        // Arrow from the importer (right) to the imported module (left).
+        s.push_str(&format!(
+            "<line x1=\"{}\" y1=\"{}\" x2=\"{}\" y2=\"{}\" stroke=\"currentColor\" opacity=\"0.45\" marker-end=\"url(#arrow)\"/>\n",
+            x(from),
+            y(from) + NODE_H / 2,
+            x(to) + NODE_W,
+            y(to) + NODE_H / 2
+        ));
+    }
+    for (i, module) in model.modules.iter().enumerate() {
+        let name = &module.name;
+        let label: String = if name.chars().count() > 24 {
+            let head: String = name.chars().take(23).collect();
+            format!("{head}…")
+        } else {
+            name.clone()
+        };
+        s.push_str(&format!(
+            "<a href=\"{}\"><rect x=\"{}\" y=\"{}\" width=\"{NODE_W}\" height=\"{NODE_H}\" rx=\"4\" fill=\"none\" stroke=\"currentColor\"/><text x=\"{}\" y=\"{}\" font-size=\"12\" fill=\"currentColor\">{}</text></a>\n",
+            src_href(i, name),
+            x(i),
+            y(i),
+            x(i) + 8,
+            y(i) + 15,
+            esc(&label)
+        ));
+    }
+    s.push_str("</svg>\n");
+    s
+}
+
 fn deps_body(model: &Model) -> String {
     let mut importers: Vec<Vec<usize>> = vec![Vec::new(); model.modules.len()];
     for e in &model.imports {
@@ -501,6 +594,7 @@ fn deps_body(model: &Model) -> String {
     let mut b = String::from(
         "<h1>Dependencies</h1>\n<p class=\"muted\">Import edges between documented modules. Imports that do not match a documented module are shown as external.</p>\n",
     );
+    b.push_str(&dependency_svg(model));
     for (i, m) in model.modules.iter().enumerate() {
         b.push_str(&format!(
             "<section id=\"m{i}\">\n<h2><a href=\"{}\">{}</a> <span class=\"muted\">{}</span></h2>\n",
@@ -637,5 +731,87 @@ mod tests {
         assert_eq!(slug("Foo.add_comm'"), "Foo_add_comm_");
         assert_eq!(slug("αβ"), "__");
         assert_eq!(slug(""), "x");
+    }
+
+    fn module_named(name: &str) -> model::ModuleInfo {
+        model::ModuleInfo {
+            name: name.into(),
+            package: PROJECT_PACKAGE.into(),
+            file: format!("{name}.lean"),
+            declarations: 0,
+            imports: vec![],
+        }
+    }
+
+    fn chain_model() -> Model {
+        Model {
+            project: "p".into(),
+            packages: vec![],
+            modules: vec![module_named("A"), module_named("B"), module_named("C")],
+            declarations: vec![],
+            imports: vec![
+                model::ImportEdge {
+                    from: 0,
+                    to: "B".into(),
+                    resolved: Some(1),
+                },
+                model::ImportEdge {
+                    from: 1,
+                    to: "C".into(),
+                    resolved: Some(2),
+                },
+                model::ImportEdge {
+                    from: 0,
+                    to: "Init".into(),
+                    resolved: None,
+                },
+            ],
+            namespaces: vec![],
+        }
+    }
+
+    #[test]
+    fn dependency_graph_puts_imported_modules_left() {
+        let svg = dependency_svg(&chain_model());
+        assert!(svg.starts_with("<svg"), "{svg}");
+        // Two resolved edges are drawn; the external import is not.
+        assert_eq!(svg.matches("<line").count(), 2, "{svg}");
+        // C imports nothing, so it is the leftmost column (x = padding = 10); A imports B
+        // which imports C, so A is the rightmost column (x = 10 + 2 * 200 = 410).
+        assert!(svg.contains("<rect x=\"10\" y=\"10\""), "{svg}");
+        assert!(svg.contains("<rect x=\"410\" y=\"10\""), "{svg}");
+        assert!(svg.contains("href=\"src/"), "{svg}");
+    }
+
+    #[test]
+    fn dependency_graph_survives_cycles_and_large_projects() {
+        // A cycle A -> B -> A must not loop forever or place a module outside the graph.
+        let cyclic = Model {
+            imports: vec![
+                model::ImportEdge {
+                    from: 0,
+                    to: "B".into(),
+                    resolved: Some(1),
+                },
+                model::ImportEdge {
+                    from: 1,
+                    to: "A".into(),
+                    resolved: Some(0),
+                },
+            ],
+            modules: vec![module_named("A"), module_named("B")],
+            ..chain_model()
+        };
+        let svg = dependency_svg(&cyclic);
+        assert_eq!(svg.matches("<rect").count(), 2, "{svg}");
+
+        let many = Model {
+            modules: (0..GRAPH_MODULE_LIMIT + 1)
+                .map(|i| module_named(&format!("M{i}")))
+                .collect(),
+            imports: vec![],
+            ..chain_model()
+        };
+        assert!(dependency_svg(&many).contains("graph is omitted"));
     }
 }
