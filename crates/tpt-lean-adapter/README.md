@@ -1,0 +1,98 @@
+# tpt-lean-adapter
+
+The controlled bridge between [tpt-lean](https://github.com/tpt-solutions/tpt-lean) and the
+official Lean tools, `lean` and `lake`.
+
+Every invocation is built from typed options. Commands are never assembled from strings and
+there is no shell. Output is parsed into structured diagnostics and goal values. Lean remains
+the authority for everything it reports: this crate forwards Lean's answers and never
+substitutes its own.
+
+## Status
+
+Early development (`0.1.0`, not yet published).
+
+| Level | Scope | State |
+| --- | --- | --- |
+| 1 | CLI integration: `lean`, `lake` version queries, `lake build`, `lean <file>`, diagnostic parsing | implemented |
+| 2 | LSP client to `lake serve` or `lean --server`: document sync, diagnostics, plain goals, restart, cancellation | implemented |
+| 3 | Lean sidecar (`lean/tpt-lean-sidecar`) emitting structured declarations (name, kind, type, docstring) as versioned JSON; goals are still via LSP | implemented (declarations only) |
+
+## What it provides
+
+- **Toolchain discovery** (`discover_toolchain`, `Toolchain`): finds `lean` and `lake` on `PATH`,
+  then in `ELAN_HOME/bin` (default `~/.elan/bin`).
+- **Typed commands** (`Command`): one variant per supported invocation, each mapped to a fixed
+  argument vector. Examples include `lake env printenv` and `lean --version`. Build targets
+  pass `validate_target` first: letters, digits, `_`, `.`, and `-` only, with no path
+  separators.
+- **Process runner** (`runner`, `run`, `execute`, `ProcessOutput`, `CommandResult`): runs a
+  command with a timeout, an output size limit, cancellation, and a sanitized environment
+  (`lean_policy`, `policy_with_timeout`).
+- **Diagnostics** (`diagnostics`, `Diagnostic`, `Severity`): `parse_lean_output` turns Lean's
+  messages into severity, file, line, column, and message.
+- **Last-run diagnostics** (`last_diagnostics`): `save_last_diagnostics` and
+  `load_last_diagnostics` keep the most recent diagnostics on disk so `tpt-lean explain
+  --last-error` can read them.
+- **LSP client** (`lsp`, `session`, `LspClient`, `LspSession`): speaks JSON-RPC over stdio to
+  Lean's server. `server_command` selects `lake serve` or `lean --server`. Helpers include
+  `open_document`, `path_to_uri`, `plain_goals`, `plain_term_goal`, and `goal_terms` for the
+  `$/lean/plainGoal` and `$/lean/plainTermGoal` requests.
+- **Lemma suggestions** (`lemmas`, `suggest_lemmas`): candidate lemmas for a goal, drawn from
+  the index rather than from Lean.
+- **Version parsing** (`parse_version`): reads the versions printed by `lean` and `lake`.
+
+## Usage
+
+```toml
+[dependencies]
+tpt-lean-adapter = "0.1"
+```
+
+The CLI uses this crate for `tpt-lean check`, `goals`, `explain`, and `context-pack`.
+
+## Safety properties
+
+- No shell: arguments are passed as vectors, and there is a test asserting this.
+- Timeouts, output limits, and cancellation apply to every run.
+- The environment is filtered through an allow list before any child process starts.
+- Paths are validated by the calling crate against workspace roots before they reach a command.
+
+## Limits
+
+- The memory limit is enforced by sampling, not by the OS: the runner checks the summed
+  resident memory of the process tree every 100 ms and kills the tree when it is exceeded, so
+  a process can briefly overshoot. Job objects (Windows) and rlimits (POSIX) are not used, which
+  keeps the crate free of `unsafe`. Killing uses `taskkill /T` on Windows and a `pgrep` walk on
+  POSIX; if the runner itself is killed, its children are not.
+- Lean version compatibility is not checked. Output parsing targets the current stable Lean
+  output format; the previous stable release is planned as a test target.
+- The Lean sidecar exposes declarations of one module (name, kind, pretty-printed type,
+  docstring). It does not yet emit goals. Its output is stored by `tpt-lean index sidecar`.
+
+## Dependencies
+
+| Crate | Purpose |
+| --- | --- |
+| `tpt-lean-core` | policy types, errors, paths |
+| `tpt-lean-index` | symbol data for lemma suggestions |
+| `tpt-lean-search` | ranking for lemma suggestions |
+| `serde`, `serde_json` | LSP messages and stored diagnostics |
+
+## Testing
+
+```
+cargo test -p tpt-lean-adapter
+```
+
+The crate has unit tests. `tests/lean_integration.rs` exercises a real `lean` and `lake` install.
+
+## Related documentation
+
+- [Build orchestration](https://github.com/tpt-solutions/tpt-lean/blob/master/docs/build.md)
+- [LSP proxy](https://github.com/tpt-solutions/tpt-lean/blob/master/docs/lsp.md)
+
+## License
+
+Licensed under either of [MIT](https://opensource.org/licenses/MIT) or
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0), at your option.

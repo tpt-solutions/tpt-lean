@@ -1,0 +1,82 @@
+# tpt-lean-search
+
+Search over the local [tpt-lean](https://github.com/tpt-solutions/tpt-lean) index. Supports
+exact, prefix, and namespace-aware name search, docstring full-text search, namespace filters,
+`--near` co-location filtering, and deterministic ranking.
+
+This crate only reads. It takes an open `tpt-lean-index` and returns ranked hits. Results are
+search hints, not proofs; check them with Lean before relying on them.
+
+## Status
+
+Early development (`0.1.0`, not yet published). Name search, docstring search, the namespace
+and `--near` filters, and ranking are implemented. Some ranking factors from the specification
+are still missing (see Limits).
+
+## Features
+
+- **Name matching**, in order of strength:
+  1. exact full name,
+  2. exact short name,
+  3. prefix of the full name,
+  4. prefix of the short name.
+- **Docstring relevance** through the FTS5 table in `tpt-lean-index`.
+- **Namespace filter**: keeps only symbols whose namespace equals, or lies under, a given prefix.
+- **`--near` filter**: keeps only symbols whose file also declares a symbol matching each of
+  the listed terms, so you can find a lemma defined next to other related lemmas.
+- **Imported-module preference**: the caller can pass the modules imported by the current file;
+  symbols from those packages rank higher.
+- **Kind and package weighting**: theorems and definitions are weighted by kind, and project
+  symbols rank above dependency symbols.
+
+Scores are deterministic and normalized to `0.0..=1.0`. The same index and query always produce
+the same order.
+
+## Public API
+
+- `search(index, query, options)` runs a search and returns `Hit` values.
+- `SearchOptions` carries the namespace prefix, `--near` terms, imported modules, and result
+  limit.
+- `Hit` carries the matched symbol and its normalized score.
+
+## Usage
+
+```
+tpt-lean search <query> [--namespace NS] [--near TERM] [--limit N]
+```
+
+Output can be a table, JSON (`--json`), or NDJSON (`--ndjson`).
+
+```toml
+[dependencies]
+tpt-lean-search = "0.1"
+```
+
+## Limits
+
+- Ranking does not yet include recency or dependency distance.
+- Imported-module ranking is implemented in the library, but the CLI does not pass the current
+  file's imports yet.
+- Type-shaped search (`--type`) and goal-based search (`--goal-at`) are not implemented; they
+  need the Lean adapter.
+- Benchmark targets (warm p50 under 10 ms, p95 under 50 ms) have not been measured.
+
+## Dependencies
+
+| Crate | Purpose |
+| --- | --- |
+| `tpt-lean-core` | shared types and errors |
+| `tpt-lean-index` | the index being searched |
+
+## Testing
+
+```
+cargo test -p tpt-lean-search
+```
+
+The crate has unit tests for search behavior.
+
+## License
+
+Licensed under either of [MIT](https://opensource.org/licenses/MIT) or
+[Apache-2.0](https://www.apache.org/licenses/LICENSE-2.0), at your option.
