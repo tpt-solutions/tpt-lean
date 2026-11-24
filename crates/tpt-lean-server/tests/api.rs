@@ -398,3 +398,33 @@ fn stale_state_file_is_reported_and_cleaned_up() {
     assert_eq!(report.outcome, StopOutcome::StaleRemoved);
     assert!(!dir.join("server.json").exists());
 }
+
+#[test]
+fn profile_run_needs_allow_profile() {
+    let project = TempProject::new("deny-profile", Some("[security]\nallow_profile = false\n"));
+    project.write("Foo.lean", "theorem t : 1 = 1 := rfl\n");
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(&server, "profile.run", json!({ "path": "Foo.lean" }));
+    assert_eq!(error_code(&r), PERMISSION_DENIED);
+    assert_eq!(r["error"]["data"]["permission"], "profile");
+    assert_eq!(
+        r["error"]["data"]["config_key"],
+        "security.allow_build and security.allow_profile"
+    );
+}
+
+#[test]
+fn profile_run_returns_a_report() {
+    if tpt_lean_adapter::discover_toolchain().lean.is_none() {
+        eprintln!("skipping: lean not found");
+        return;
+    }
+    let project = TempProject::new("profile-run", None);
+    project.write("Foo.lean", "theorem t : 1 = 1 := rfl\n");
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(&server, "profile.run", json!({ "path": "Foo.lean" }));
+    let report = result_of(&r);
+    assert_eq!(report["format_version"], 1);
+    assert!(report["declarations"].is_array(), "{report}");
+    assert!(report["wall_ms"].as_f64().unwrap_or(-1.0) >= 0.0, "{report}");
+}

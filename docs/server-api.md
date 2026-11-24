@@ -30,6 +30,7 @@ Each method has a class. The check happens before dispatch.
 | read | `project.info`, `index.status`, `search.query`, `search.symbol`, `format.text`, `diagnostics.get` | always |
 | write | `format.file`, `index.refresh` | `security.allow_write = true` (default false) |
 | build | `check.file`, `goals.at` | `security.allow_build = true` (default true) |
+| profile | `profile.run` | `security.allow_build` and `security.allow_profile` (both default true) |
 | control | `server.shutdown` | always (loopback unless remote is allowed) |
 
 A denied request gets error `-32001` with `data: {"permission", "config_key"}`.
@@ -55,6 +56,7 @@ are rejected.
 | `check.file` | `path` | `ok`, `exit_code`, `timed_out`, `output_truncated`, `diagnostics[]` (runs `lean <file>`) |
 | `diagnostics.get` | `path` | `known`, `diagnostics[]` from the last `check.file` in this server process |
 | `goals.at` | `path`, `line`, `column` (both 1-based) | `goals[]` (plain goals from the Lean language server) |
+| `profile.run` | `path` | the profile report, as `tpt-lean profile --json` (runs Lean on an instrumented copy of the file; can take as long as the file takes to elaborate, bounded by `security.command_timeout_seconds`) |
 | `server.shutdown` | none | `stopping: true` |
 
 `check.file` and `goals.at` need a Lean toolchain. Without one they return `-32000` with a

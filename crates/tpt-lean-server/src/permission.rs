@@ -7,6 +7,8 @@
 //!   Granted only when `security.allow_write` is true (default false).
 //! - `build`: runs Lean (`check.file`, `goals.at`). Granted when `security.allow_build` is true
 //!   (default true).
+//! - `profile`: runs Lean on instrumented copies of files (`profile.run`). Granted only when
+//!   both `security.allow_build` and `security.allow_profile` are true.
 //! - `control`: lifecycle only (`server.shutdown`). Always granted; the server only listens on
 //!   loopback unless `server.allow_remote` is set.
 
@@ -17,6 +19,7 @@ pub enum Permission {
     Read,
     Write,
     Build,
+    Profile,
     Control,
 }
 
@@ -26,6 +29,7 @@ impl Permission {
             Permission::Read => "read",
             Permission::Write => "write",
             Permission::Build => "build",
+            Permission::Profile => "profile",
             Permission::Control => "control",
         }
     }
@@ -35,6 +39,7 @@ impl Permission {
         match self {
             Permission::Write => Some("security.allow_write"),
             Permission::Build => Some("security.allow_build"),
+            Permission::Profile => Some("security.allow_build and security.allow_profile"),
             Permission::Read | Permission::Control => None,
         }
     }
@@ -45,6 +50,7 @@ impl Permission {
             Permission::Read | Permission::Control => true,
             Permission::Write => config.security.allow_write,
             Permission::Build => config.security.allow_build,
+            Permission::Profile => config.security.allow_build && config.security.allow_profile,
         }
     }
 }
@@ -61,6 +67,7 @@ pub const METHODS: &[(&str, Permission)] = &[
     ("index.refresh", Permission::Write),
     ("check.file", Permission::Build),
     ("goals.at", Permission::Build),
+    ("profile.run", Permission::Profile),
     ("server.shutdown", Permission::Control),
 ];
 
@@ -84,6 +91,19 @@ mod tests {
         assert!(!Permission::Build.granted(&cfg));
         assert!(Permission::Read.granted(&cfg));
         assert!(Permission::Control.granted(&cfg));
+    }
+
+    #[test]
+    fn profile_needs_both_switches() {
+        let mut cfg = Config::default();
+        assert!(Permission::Profile.granted(&cfg));
+        cfg.security.allow_profile = false;
+        assert!(!Permission::Profile.granted(&cfg));
+        assert!(Permission::Build.granted(&cfg));
+        cfg.security.allow_profile = true;
+        cfg.security.allow_build = false;
+        assert!(!Permission::Profile.granted(&cfg));
+        assert_eq!(lookup("profile.run"), Some(Permission::Profile));
     }
 
     #[test]

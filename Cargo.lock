@@ -763,6 +763,7 @@ dependencies = [
  "tpt-lean-core",
  "tpt-lean-fmt",
  "tpt-lean-index",
+ "tpt-lean-profile",
  "tpt-lean-search",
  "tpt-lean-syntax",
 ]

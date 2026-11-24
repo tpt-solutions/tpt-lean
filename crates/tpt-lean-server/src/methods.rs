@@ -137,6 +137,24 @@ impl Server {
         }))
     }
 
+    /// Profile one Lean file. Requires the `profile` permission. The result is the same report
+    /// as `tpt-lean profile --json`.
+    pub(crate) fn profile_run(&self, params: &Value) -> MethodResult {
+        let rel = str_param(params, "path")?;
+        let path = self.lean_path_param(params, "path")?;
+        if !path.is_file() {
+            return Err(RpcError::new(INVALID_PARAMS, format!("no such file: {rel}")));
+        }
+        let timeout = self.config().security.command_timeout_seconds;
+        let report = tpt_lean_profile::profile_file(self.root(), &path, timeout).map_err(app_error)?;
+        serde_json::to_value(&report).map_err(|e| {
+            app_error(tpt_lean_core::Error::new(
+                tpt_lean_core::ErrorCode::Internal,
+                e.to_string(),
+            ))
+        })
+    }
+
     /// Diagnostics from the last `check.file` for this file in this server process.
     pub(crate) fn diagnostics_get(&self, params: &Value) -> MethodResult {
         let rel = str_param(params, "path")?;

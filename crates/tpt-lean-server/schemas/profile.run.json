@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "profile.run",
+  "permission": "profile",
+  "params": {
+    "type": "object",
+    "required": ["path"],
+    "properties": {
+      "path": { "type": "string", "description": "Project-relative or absolute path to a .lean file inside the root." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": [
+      "format_version",
+      "file",
+      "wall_ms",
+      "lean_exit_code",
+      "lean_errors",
+      "declared_ms",
+      "declarations",
+      "categories",
+      "tactics",
+      "suggestions",
+      "notes"
+    ],
+    "properties": {
+      "format_version": { "type": "integer" },
+      "file": { "type": "string", "description": "The profiled file, as the request gave it." },
+      "wall_ms": { "type": "number" },
+      "lean_exit_code": { "type": ["integer", "null"] },
+      "lean_errors": { "type": "integer", "minimum": 0 },
+      "declared_ms": { "type": "number" },
+      "declarations": { "type": "array" },
+      "categories": { "type": "object" },
+      "tactics": { "type": "array" },
+      "peak_memory_bytes": { "type": "integer", "minimum": 0 },
+      "import_timings": { "type": "array" },
+      "suggestions": { "type": "array", "items": { "type": "string" } },
+      "notes": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}

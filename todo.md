@@ -217,7 +217,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [ ] Methods: `goals.at`, `diagnostics.get`, `diagnostics.explain`
 - [ ] Methods: `imports.suggest`, `imports.unused` (wired in Phase 7)
 - [ ] Methods: `context.pack`
-- [ ] Methods: `build.run/cancel/status`, `profile.run/get` (wired in Phases 5–6)
+- [ ] Methods: `build.run/cancel/status`, `profile.run/get` (wired in Phases 5–6; `profile.run` done, the rest not)
 - [ ] Streaming: `GET /v1/events` (SSE) or JSON-RPC notifications
 - [x] API request/response JSON schemas
 - [ ] Permission enforcement per request (read/write/build/profile/network)
