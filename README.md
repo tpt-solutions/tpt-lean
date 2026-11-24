@@ -1,0 +1,60 @@
+# tpt-lean
+
+A fast, Rust-powered toolbox for Lean 4. tpt-lean makes the workflow around Lean easier and
+faster: project health checks, a formatter, a local symbol index and search, and a controlled
+bridge to the official `lean` and `lake` tools.
+
+**Lean remains the trusted proof checker.** tpt-lean does not reimplement Lean's kernel,
+elaborator, or Mathlib. Index and cache results are accelerators, never sources of truth.
+
+Owner: TPT Solutions
+
+## Status
+
+Early development. Implemented today:
+
+| Command | What it does |
+| --- | --- |
+| `tpt-lean init <dir> [--mathlib]` | create a starter Lean project |
+| `tpt-lean doctor` | check Lean, Lake, project, config, index, and cache |
+| `tpt-lean config show` | print the effective configuration |
+| `tpt-lean fmt [--check\|--diff] [paths]` | conservative, idempotent formatter |
+| `tpt-lean index scan\|refresh\|status\|clear` | SQLite symbol index (incremental) |
+| `tpt-lean search <query> [--namespace NS] [--near TERM] [--limit N]` | name, prefix, and docstring search |
+| `tpt-lean build [target]` | `lake build` through typed options |
+| `tpt-lean check [file]` | `lake build`, or `lean <file>` |
+| `tpt-lean cache status` | global cache location and size |
+
+Planned commands (goals, explain, context-pack, profile, MCP, server, FFI, docgen, LSP proxy)
+exit with code 10 (`not_implemented`). See `todo.md` for the full plan.
+
+Every command accepts `--json` (one envelope object) or `--ndjson` (one record per line).
+The binaries are `tpt-lean` and `tlean`. See `docs/cli.md`.
+
+## Build
+
+Requires a stable Rust toolchain (1.82 or newer).
+
+```
+cargo build --workspace
+cargo test --workspace
+```
+
+## Layout
+
+```
+crates/tpt-lean-core     configuration, errors, paths, hashing, process policy, JSON envelope
+crates/tpt-lean-syntax   lossless lexer, shallow CST, symbols, imports, tactic blocks
+crates/tpt-lean-index    SQLite index (WAL, FTS5)
+crates/tpt-lean-search   ranking over the index
+crates/tpt-lean-fmt      conservative formatter
+crates/tpt-lean-adapter  typed invocations of lean/lake with timeout and output limits
+crates/tpt-lean-cli      the tpt-lean and tlean binaries
+```
+
+## Licensing
+
+Dual-licensed under [MIT](LICENSE-MIT) or [Apache-2.0](LICENSE-APACHE), at your option.
+Unless you state otherwise, any contribution you submit is dual-licensed the same way.
+Dependencies must be MIT, Apache-2.0 (as an alternative in an OR expression), BSD, ISC, Zlib,
+Unlicense, CC0, or Unicode-3.0. See `docs/dependencies.md` and `deny.toml`.
