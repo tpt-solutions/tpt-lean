@@ -245,6 +245,7 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--json",
             "--compare",
             "--flamegraph",
+            "--imports",
         ],
         &["--project", "--timeout", "--slowest", "--flamegraph"],
     )?;
@@ -272,7 +273,10 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     let path = ws.resolve(&file)?;
     let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
     toolchain_or_error()?;
-    let (report, output) = tpt_lean_profile::profile_file_traced(&root, &path, timeout)?;
+    let (mut report, output) = tpt_lean_profile::profile_file_traced(&root, &path, timeout)?;
+    if args.flag("--imports") {
+        report.import_timings = tpt_lean_profile::import_timings(&root, &path, timeout)?;
+    }
     if let Some(out_path) = args.value("--flamegraph")? {
         let folded = tpt_lean_profile::flamegraph_folded(&output);
         std::fs::write(&out_path, &folded).map_err(|e| Error::from(e).with_path(&out_path))?;

@@ -13,6 +13,7 @@ repository.workspace = true
 
 [dependencies]
 tpt-lean-core.workspace = true
+tpt-lean-syntax.workspace = true
 tpt-lean-adapter.workspace = true
 serde.workspace = true
 serde_json = { workspace = true, features = ["float_roundtrip"] }

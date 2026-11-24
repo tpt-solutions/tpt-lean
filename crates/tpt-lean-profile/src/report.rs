@@ -26,6 +26,9 @@ pub struct ProfileReport {
     /// Totals from the `cumulative profiling times` block, keyed by Lean's label.
     pub categories: BTreeMap<String, f64>,
     pub tactics: Vec<TacticTiming>,
+    /// Per-import load costs. Empty unless the import timing was requested.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub import_timings: Vec<ImportTiming>,
     pub suggestions: Vec<String>,
     /// Things this report does not measure, so readers do not mistake absence for zero.
     pub notes: Vec<String>,
@@ -48,6 +51,19 @@ pub struct DeclTiming {
     pub kernel_ms: f64,
     pub main_cost: Option<String>,
     pub main_cost_ms: f64,
+}
+
+/// Cost of loading one direct import, measured by `run::import_timings`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImportTiming {
+    pub module: String,
+    /// 1-based line of the import in the profiled file.
+    pub line: u32,
+    /// Extra wall time over an empty file, in milliseconds. One run per import, so treat small
+    /// differences as noise. Includes the import's transitive closure.
+    pub load_ms: f64,
+    /// Set when Lean could not load the import; `load_ms` is then zero.
+    pub error: Option<String>,
 }
 
 /// Aggregated time of one tactic across the file.
@@ -145,6 +161,27 @@ pub fn render_report(report: &ProfileReport, n: usize) -> String {
         let _ = writeln!(out, "\nTactics:");
         for t in report.tactics.iter().take(n) {
             let _ = writeln!(out, "  {} x{}: {}", t.name, t.count, format_ms(t.total_ms));
+        }
+    }
+    if !report.import_timings.is_empty() {
+        let _ = writeln!(out, "\nImports (slowest to load, approximate):");
+        let mut sorted: Vec<&ImportTiming> = report.import_timings.iter().collect();
+        sorted.sort_by(|a, b| b.load_ms.total_cmp(&a.load_ms));
+        for imp in sorted.into_iter().take(n) {
+            match &imp.error {
+                Some(err) => {
+                    let _ = writeln!(out, "  {} (line {}): not loaded: {err}", imp.module, imp.line);
+                }
+                None => {
+                    let _ = writeln!(
+                        out,
+                        "  {} (line {}): {}",
+                        imp.module,
+                        imp.line,
+                        format_ms(imp.load_ms)
+                    );
+                }
+            }
         }
     }
     if !report.suggestions.is_empty() {
@@ -340,6 +377,7 @@ mod tests {
             declarations: decls,
             categories: BTreeMap::from([("elaboration".to_string(), 9.5)]),
             tactics: vec![],
+            import_timings: vec![],
             suggestions: vec![],
             notes: vec![],
         }

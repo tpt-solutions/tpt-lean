@@ -180,7 +180,7 @@ pub fn index_sidecar(
 }
 
 /// `LEAN_PATH` as Lake sets it for the project, or `None` when Lake cannot report it.
-fn lean_path_for(
+pub fn lean_path_for(
     toolchain: &Toolchain,
     project_root: &Path,
     policy: &ProcessPolicy,

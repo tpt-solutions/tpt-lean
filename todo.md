@@ -289,7 +289,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [x] Tactic timing where available
 - [ ] Memory usage tracking
 - [ ] Build-step timing, cache hit/miss reports
-- [ ] Slow import detection
+- [x] Slow import detection (`profile --imports`: one approximate lean run per direct import, minus an empty-file baseline)
 - [ ] Dependency bottleneck graph
 - [x] Flamegraph output (folded stacks; render with flamegraph.pl or inferno)
 - [x] JSON reports

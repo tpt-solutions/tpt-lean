@@ -7,11 +7,12 @@
 //! modules: imports resolve through the toolchain and `LEAN_PATH`, as with a plain `lean` run.
 
 use crate::analysis::{analyze, round_ms};
-use crate::report::{suggest, ProfileReport, FORMAT_VERSION};
+use crate::report::{suggest, ImportTiming, ProfileReport, FORMAT_VERSION};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tpt_lean_adapter::sidecar::lean_path_for;
 use tpt_lean_adapter::{discover_toolchain, execute, Command, Severity};
 use tpt_lean_core::policy::{CancelToken, ProcessPolicy};
 use tpt_lean_core::{Error, ErrorCode, Result};
@@ -25,7 +26,8 @@ const PROFILER_THRESHOLD_MS: u32 = 1;
 
 const NOT_MEASURED: &[&str] = &[
     "memory usage: not measured (Lean does not report it per declaration, and no portable limit is implemented)",
-    "slow import detection and dependency bottleneck graph: not implemented",
+    "dependency bottleneck graph: not implemented",
+    "imports: load cost is timed only when requested (`--imports`), one approximate run per import",
     "build-step timing and cache hit/miss reports: not implemented",
     "imports and startup: included in wall time only, not attributed to declarations",
     "tactic timing: aggregated per file from profiler lines, not per declaration",
@@ -60,12 +62,8 @@ pub fn profile_file_traced(
     fs::write(&copy, instrument(&source))
         .map_err(|e| Error::new(ErrorCode::Io, format!("writing instrumented copy: {e}")))?;
 
-    let policy = ProcessPolicy {
-        timeout: Duration::from_secs(timeout_secs),
-        output_limit_bytes: OUTPUT_LIMIT_BYTES,
-        ..ProcessPolicy::default()
-    };
     let toolchain = discover_toolchain();
+    let policy = project_policy(&toolchain, project_root, timeout_secs);
     let result = execute(
         &toolchain,
         &Command::LeanCheck { file: copy },
@@ -109,6 +107,7 @@ pub fn profile_file_traced(
             .map(|(k, v)| (k, round_ms(v)))
             .collect(),
         tactics: analysis.tactics,
+        import_timings: Vec::new(),
         suggestions: Vec::new(),
         notes: NOT_MEASURED.iter().map(|s| (*s).to_string()).collect(),
     };
@@ -116,12 +115,126 @@ pub fn profile_file_traced(
     if combined.contains("unknown module prefix") || combined.contains("unknown package") {
         report.suggestions.insert(
             0,
-            "some imports could not be resolved; set LEAN_PATH to the built project libraries, \
-             since this profiler does not run through `lake env`"
+            "some imports could not be resolved: run `lake build` so the project modules exist, and check the module names"
                 .to_string(),
         );
     }
     Ok((report, combined))
+}
+
+/// Time the load of each direct import of `file`: one `lean` run per import, on a file that
+/// holds only that import, minus one run on an empty file. Each figure includes the import's
+/// transitive closure and comes from a single run, so small differences are noise. Imports that
+/// Lean cannot load are reported with their error rather than failing the whole call.
+pub fn import_timings(project_root: &Path, file: &Path, timeout_secs: u64) -> Result<Vec<ImportTiming>> {
+    if !project_root.is_dir() {
+        return Err(
+            Error::new(ErrorCode::ProjectNotFound, "project root is not a directory").with_path(project_root),
+        );
+    }
+    let source = fs::read_to_string(file)
+        .map_err(|e| Error::new(ErrorCode::Io, format!("reading file: {e}")).with_path(file))?;
+    let imports = tpt_lean_syntax::parse(&source).imports;
+
+    let work = WorkDir::create()?;
+    let toolchain = discover_toolchain();
+    let policy = project_policy(&toolchain, project_root, timeout_secs);
+    let baseline_path = work.path().join("baseline.lean");
+    write_file(&baseline_path, "")?;
+    let baseline = time_lean(&toolchain, project_root, &baseline_path, &policy, timeout_secs)?;
+    if let Some(err) = &baseline.error {
+        return Err(Error::new(
+            ErrorCode::LeanNotFound,
+            format!("cannot time imports: an empty file did not check: {err}"),
+        ));
+    }
+
+    let mut out = Vec::with_capacity(imports.len());
+    for (i, imp) in imports.iter().enumerate() {
+        let path = work.path().join(format!("import_{i}.lean"));
+        write_file(&path, &format!("import {}\n", imp.module))?;
+        let run = time_lean(&toolchain, project_root, &path, &policy, timeout_secs)?;
+        let load_ms = match run.error {
+            Some(_) => 0.0,
+            None => round_ms((run.wall_ms - baseline.wall_ms).max(0.0)),
+        };
+        out.push(ImportTiming {
+            module: imp.module.clone(),
+            line: imp.line as u32,
+            load_ms,
+            error: run.error,
+        });
+    }
+    Ok(out)
+}
+
+/// Policy for profiled Lean runs. `LEAN_PATH` comes from `lake env` when the project is a Lake
+/// project, so its own modules resolve as they do under `lake build`.
+fn project_policy(
+    toolchain: &tpt_lean_adapter::Toolchain,
+    project_root: &Path,
+    timeout_secs: u64,
+) -> ProcessPolicy {
+    let mut policy = ProcessPolicy {
+        timeout: Duration::from_secs(timeout_secs),
+        output_limit_bytes: OUTPUT_LIMIT_BYTES,
+        ..ProcessPolicy::default()
+    };
+    if let Some(lean_path) = lean_path_for(toolchain, project_root, &policy, &CancelToken::new()) {
+        policy.extra_env.push(("LEAN_PATH".to_string(), lean_path));
+    }
+    policy
+}
+
+/// Result of one timed `lean` run.
+struct TimedRun {
+    wall_ms: f64,
+    error: Option<String>,
+}
+
+fn time_lean(
+    toolchain: &tpt_lean_adapter::Toolchain,
+    project_root: &Path,
+    file: &Path,
+    policy: &ProcessPolicy,
+    timeout_secs: u64,
+) -> Result<TimedRun> {
+    let result = execute(
+        toolchain,
+        &Command::LeanCheck {
+            file: file.to_path_buf(),
+        },
+        Some(project_root),
+        policy,
+        &CancelToken::new(),
+    )?;
+    let out = &result.output;
+    if out.timed_out {
+        return Ok(TimedRun {
+            wall_ms: timeout_secs as f64 * 1000.0,
+            error: Some(format!("timed out after {timeout_secs}s")),
+        });
+    }
+    let error = if out.success() {
+        None
+    } else {
+        Some(
+            result
+                .diagnostics
+                .iter()
+                .find(|d| d.severity == Severity::Error)
+                .map(|d| d.message.lines().next().unwrap_or("").trim().to_string())
+                .unwrap_or_else(|| format!("lean exited with {:?}", out.exit_code)),
+        )
+    };
+    Ok(TimedRun {
+        wall_ms: out.duration.as_secs_f64() * 1000.0,
+        error,
+    })
+}
+
+fn write_file(path: &Path, text: &str) -> Result<()> {
+    fs::write(path, text).map_err(|e| Error::new(ErrorCode::Io, format!("writing {}: {e}", path.display())))
 }
 
 /// Insert the profiler options as one line after the header (`prelude`, `module`, `import`

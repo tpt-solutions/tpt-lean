@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
-use tpt_lean_profile::{compare, from_json, profile_file, to_json};
+use tpt_lean_profile::{compare, from_json, import_timings, profile_file, to_json};
 
 struct TempProject(PathBuf);
 
@@ -111,4 +111,31 @@ fn zero_timeout_reports_timeout() {
     fs::write(&file, GOOD).unwrap();
     let err = profile_file(project.path(), &file, 0).unwrap_err();
     assert_eq!(err.code(), tpt_lean_core::ErrorCode::Timeout);
+}
+
+#[test]
+fn import_timings_time_each_import_and_report_failures() {
+    if !lean_available() {
+        return;
+    }
+    let project = TempProject::new("imports");
+    let file = project.path().join("Imp.lean");
+    fs::write(
+        &file,
+        "import Std
+import NoSuchModuleForTpt
+
+theorem t : 1 = 1 := rfl
+",
+    )
+    .unwrap();
+    let timings = import_timings(project.path(), &file, 300).expect("timings");
+    assert_eq!(timings.len(), 2, "{timings:?}");
+    assert_eq!(timings[0].module, "Std");
+    assert_eq!(timings[0].line, 1);
+    assert!(timings[0].error.is_none(), "{timings:?}");
+    assert!(timings[0].load_ms >= 0.0);
+    assert_eq!(timings[1].module, "NoSuchModuleForTpt");
+    assert!(timings[1].error.is_some(), "{timings:?}");
+    assert_eq!(timings[1].load_ms, 0.0);
 }
