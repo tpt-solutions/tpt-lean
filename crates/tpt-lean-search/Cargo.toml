@@ -1,0 +1,15 @@
+[package]
+name = "tpt-lean-search"
+description = "tpt-lean: search component"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tpt-lean-core.workspace = true
+tpt-lean-index.workspace = true
+
+[lints]
+workspace = true

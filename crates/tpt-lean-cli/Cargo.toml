@@ -1,0 +1,32 @@
+[package]
+name = "tpt-lean-cli"
+description = "Command-line interface for tpt-lean (binaries: tpt-lean, tlean)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+autobins = false
+
+[[bin]]
+name = "tpt-lean"
+path = "src/main.rs"
+
+[[bin]]
+name = "tlean"
+path = "src/bin/tlean.rs"
+
+[dependencies]
+tpt-lean-core.workspace = true
+tpt-lean-syntax.workspace = true
+tpt-lean-index.workspace = true
+tpt-lean-search.workspace = true
+tpt-lean-fmt.workspace = true
+tpt-lean-adapter.workspace = true
+tpt-lean-mcp.workspace = true
+tpt-lean-server.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

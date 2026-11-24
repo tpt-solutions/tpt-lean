@@ -1,0 +1,21 @@
+[package]
+name = "tpt-lean-core"
+description = "Shared types, configuration, errors, project model and paths for tpt-lean"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true
+sha2.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

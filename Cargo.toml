@@ -1,0 +1,48 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/tpt-lean-core",
+    "crates/tpt-lean-syntax",
+    "crates/tpt-lean-index",
+    "crates/tpt-lean-search",
+    "crates/tpt-lean-fmt",
+    "crates/tpt-lean-adapter",
+    "crates/tpt-lean-mcp",
+    "crates/tpt-lean-ffi",
+    "crates/tpt-lean-server",
+    "crates/tpt-lean-cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "MIT OR Apache-2.0"
+authors = ["TPT Solutions"]
+
+[workspace.dependencies]
+tpt-lean-core = { path = "crates/tpt-lean-core", version = "0.1.0" }
+tpt-lean-syntax = { path = "crates/tpt-lean-syntax", version = "0.1.0" }
+tpt-lean-index = { path = "crates/tpt-lean-index", version = "0.1.0" }
+tpt-lean-search = { path = "crates/tpt-lean-search", version = "0.1.0" }
+tpt-lean-fmt = { path = "crates/tpt-lean-fmt", version = "0.1.0" }
+tpt-lean-adapter = { path = "crates/tpt-lean-adapter", version = "0.1.0" }
+tpt-lean-mcp = { path = "crates/tpt-lean-mcp", version = "0.1.0" }
+tpt-lean-server = { path = "crates/tpt-lean-server", version = "0.1.0" }
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+rusqlite = { version = "0.43", features = ["bundled"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

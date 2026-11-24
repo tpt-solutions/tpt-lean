@@ -1,0 +1,25 @@
+[package]
+name = "tpt-lean-ffi"
+description = "Stable C ABI wrapper around tpt-lean (cdylib and staticlib)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+tpt-lean-core.workspace = true
+tpt-lean-index.workspace = true
+tpt-lean-search.workspace = true
+tpt-lean-fmt.workspace = true
+serde_json.workspace = true
+
+# The C ABI requires unsafe code; the rest of the workspace forbids it.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

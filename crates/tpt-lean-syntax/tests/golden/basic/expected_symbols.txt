@@ -1,0 +1,5 @@
+imports Mathlib.Data.Nat.Basic,Std
+line=7 kind=theorem name=Geo.compact_max private=false doc=Compact sets attain their maximum.
+line=10 kind=def name=Geo.helper private=true doc=-
+line=13 kind=lemma name=Geo.nested_lemma private=false doc=-
+line=19 kind=theorem name=top_level private=false doc=-

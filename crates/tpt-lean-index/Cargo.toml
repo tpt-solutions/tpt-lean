@@ -1,0 +1,16 @@
+[package]
+name = "tpt-lean-index"
+description = "tpt-lean: index component"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tpt-lean-core.workspace = true
+tpt-lean-syntax.workspace = true
+rusqlite.workspace = true
+
+[lints]
+workspace = true

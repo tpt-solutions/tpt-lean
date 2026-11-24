@@ -1,0 +1,18 @@
+[package]
+name = "tpt-lean-server"
+description = "Local JSON-RPC 2.0 API server for tpt-lean (TCP on localhost)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+tpt-lean-core.workspace = true
+tpt-lean-index.workspace = true
+tpt-lean-search.workspace = true
+tpt-lean-fmt.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true
