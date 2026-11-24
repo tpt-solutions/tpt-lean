@@ -138,7 +138,7 @@ impl Server {
     }
 
     /// Profile one Lean file. Requires the `profile` permission. The result is the same report
-    /// as `tpt-lean profile --json`.
+    /// as `tpt-lean profile --json`, plus the `id` it is stored under for `profile.get`.
     pub(crate) fn profile_run(&self, params: &Value) -> MethodResult {
         let rel = str_param(params, "path")?;
         let path = self.lean_path_param(params, "path")?;
@@ -147,12 +147,47 @@ impl Server {
         }
         let timeout = self.config().security.command_timeout_seconds;
         let report = tpt_lean_profile::profile_file(self.root(), &path, timeout).map_err(app_error)?;
-        serde_json::to_value(&report).map_err(|e| {
-            app_error(tpt_lean_core::Error::new(
-                tpt_lean_core::ErrorCode::Internal,
-                e.to_string(),
-            ))
-        })
+        let id = profile_id(&path);
+        let mut value = serde_json::to_value(&report).map_err(internal)?;
+        let dir = ProjectDirs::new(self.root()).profiles();
+        std::fs::create_dir_all(&dir).map_err(|e| internal(e.to_string()))?;
+        let body = serde_json::to_string_pretty(&value).map_err(internal)?;
+        std::fs::write(dir.join(format!("{id}.json")), body).map_err(|e| internal(e.to_string()))?;
+        value["id"] = json!(id);
+        Ok(value)
+    }
+
+    /// Stored profiles. Without `id`: every stored id, newest first, and no report. With `id`:
+    /// the stored report for that id. Ids are validated before any path is built.
+    pub(crate) fn profile_get(&self, params: &Value) -> MethodResult {
+        let dir = ProjectDirs::new(self.root()).profiles();
+        let mut ids: Vec<String> = match std::fs::read_dir(&dir) {
+            Ok(entries) => entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    name.strip_suffix(".json").map(str::to_string)
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+        ids.sort();
+        ids.reverse();
+        let report = match params.get("id").and_then(Value::as_str) {
+            None => Value::Null,
+            Some(id) => {
+                if !valid_profile_id(id) || !ids.iter().any(|known| known == id) {
+                    return Err(RpcError::new(
+                        INVALID_PARAMS,
+                        format!("no stored profile with id {id:?}"),
+                    ));
+                }
+                let text = std::fs::read_to_string(dir.join(format!("{id}.json")))
+                    .map_err(|e| internal(e.to_string()))?;
+                serde_json::from_str(&text).map_err(internal)?
+            }
+        };
+        Ok(json!({ "ids": ids, "report": report }))
     }
 
     /// Diagnostics from the last `check.file` for this file in this server process.
@@ -221,4 +256,45 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), RpcError> {
         return Err(RpcError::new(APP_ERROR, format!("cannot write file: {e}")));
     }
     Ok(())
+}
+
+/// A stored-profile id: the run time in milliseconds, then the file stem, both safe for a file
+/// name. Ids from `profile_id` always pass `valid_profile_id`.
+fn profile_id(path: &Path) -> String {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let stem: String = path
+        .file_stem()
+        .map(|s| {
+            s.to_string_lossy()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take(40)
+                .collect()
+        })
+        .unwrap_or_default();
+    if stem.is_empty() {
+        format!("{millis:013}")
+    } else {
+        format!("{millis:013}-{stem}")
+    }
+}
+
+/// Only ids made of ASCII letters, digits, `-` and `_`, up to 80 characters. Rejects `..` and
+/// path separators, so an id can name only a file directly inside the profiles directory.
+fn valid_profile_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 80
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+fn internal(message: impl ToString) -> RpcError {
+    app_error(tpt_lean_core::Error::new(
+        tpt_lean_core::ErrorCode::Internal,
+        message.to_string(),
+    ))
 }

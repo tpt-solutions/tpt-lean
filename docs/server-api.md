@@ -56,7 +56,8 @@ are rejected.
 | `check.file` | `path` | `ok`, `exit_code`, `timed_out`, `output_truncated`, `diagnostics[]` (runs `lean <file>`) |
 | `diagnostics.get` | `path` | `known`, `diagnostics[]` from the last `check.file` in this server process |
 | `goals.at` | `path`, `line`, `column` (both 1-based) | `goals[]` (plain goals from the Lean language server) |
-| `profile.run` | `path` | the profile report, as `tpt-lean profile --json` (runs Lean on an instrumented copy of the file; can take as long as the file takes to elaborate, bounded by `security.command_timeout_seconds`) |
+| `profile.run` | `path` | the profile report, as `tpt-lean profile --json`, plus `id`; the report is also stored in `.tpt-lean/profiles/` (runs Lean on an instrumented copy of the file; bounded by `security.command_timeout_seconds`) |
+| `profile.get` | optional `id` | without `id`: `ids` of stored profiles, newest first, and `report: null`; with `id`: the stored `report`. Ids are restricted to letters, digits, `-` and `_` |
 | `server.shutdown` | none | `stopping: true` |
 
 `check.file` and `goals.at` need a Lean toolchain. Without one they return `-32000` with a

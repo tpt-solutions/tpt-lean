@@ -427,4 +427,51 @@ fn profile_run_returns_a_report() {
     assert_eq!(report["format_version"], 1);
     assert!(report["declarations"].is_array(), "{report}");
     assert!(report["wall_ms"].as_f64().unwrap_or(-1.0) >= 0.0, "{report}");
+    // The run is stored under its id, and profile.get returns the same report.
+    let id = report["id"]
+        .as_str()
+        .expect("profile.run returns an id")
+        .to_string();
+    let stored = rpc(&server, "profile.get", json!({ "id": id }));
+    assert_eq!(
+        result_of(&stored)["report"]["wall_ms"],
+        report["wall_ms"],
+        "{stored}"
+    );
+}
+
+#[test]
+fn profile_get_lists_and_returns_stored_reports() {
+    let project = TempProject::new("profile-get", None);
+    let dir = project.path().join(".tpt-lean").join("profiles");
+    std::fs::create_dir_all(&dir).unwrap();
+    let report = json!({
+        "format_version": 1,
+        "file": "Foo.lean",
+        "wall_ms": 1.0,
+        "lean_exit_code": null,
+        "lean_errors": 0,
+        "declared_ms": 0.0,
+        "declarations": [],
+        "categories": {},
+        "tactics": [],
+        "suggestions": [],
+        "notes": []
+    });
+    std::fs::write(dir.join("0000000000001-Foo.json"), report.to_string()).unwrap();
+    let server = Server::new(project.path()).unwrap();
+
+    let listed = rpc(&server, "profile.get", json!({}));
+    let ids = result_of(&listed)["ids"].as_array().unwrap().clone();
+    assert_eq!(ids, vec![json!("0000000000001-Foo")]);
+    assert!(result_of(&listed)["report"].is_null());
+
+    let one = rpc(&server, "profile.get", json!({ "id": "0000000000001-Foo" }));
+    assert_eq!(result_of(&one)["report"]["file"], "Foo.lean");
+
+    // Ids that could escape the profiles directory are refused, not read.
+    let bad = rpc(&server, "profile.get", json!({ "id": "../config" }));
+    assert_eq!(error_code(&bad), -32602, "{bad}");
+    let unknown = rpc(&server, "profile.get", json!({ "id": "missing" }));
+    assert_eq!(error_code(&unknown), -32602, "{unknown}");
 }

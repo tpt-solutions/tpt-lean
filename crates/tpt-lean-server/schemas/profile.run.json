@@ -12,6 +12,7 @@
   "result": {
     "type": "object",
     "required": [
+      "id",
       "format_version",
       "file",
       "wall_ms",
@@ -25,6 +26,7 @@
       "notes"
     ],
     "properties": {
+      "id": { "type": "string", "description": "Name the report is stored under; pass it to profile.get." },
       "format_version": { "type": "integer" },
       "file": { "type": "string", "description": "The profiled file, as the request gave it." },
       "wall_ms": { "type": "number" },

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "profile.get",
+  "permission": "read",
+  "params": {
+    "type": "object",
+    "properties": {
+      "id": { "type": "string", "description": "A stored profile id. Omit to list the stored ids." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["ids", "report"],
+    "properties": {
+      "ids": { "type": "array", "items": { "type": "string" } },
+      "report": { "type": ["object", "null"] }
+    }
+  }
+}

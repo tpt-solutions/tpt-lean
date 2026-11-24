@@ -176,6 +176,7 @@ impl Server {
             "format.file" => self.format_file(params),
             "check.file" => self.check_file(params),
             "profile.run" => self.profile_run(params),
+            "profile.get" => self.profile_get(params),
             "diagnostics.get" => self.diagnostics_get(params),
             "goals.at" => self.goals_at(params),
             "server.shutdown" => self.server_shutdown(),
