@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "index.status",
+  "permission": "read",
+  "params": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "required": ["schema_version", "files", "symbols", "packages", "integrity_ok"],
+    "properties": {
+      "schema_version": { "type": "integer" },
+      "files": { "type": "integer" },
+      "symbols": { "type": "integer" },
+      "packages": { "type": "array", "items": { "type": "string" } },
+      "integrity_ok": { "type": "boolean" }
+    }
+  }
+}

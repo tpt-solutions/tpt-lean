@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "project.info",
+  "permission": "read",
+  "params": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "required": ["root", "marker", "server_version", "methods", "permissions"],
+    "properties": {
+      "root": { "type": "string" },
+      "marker": { "type": ["string", "null"] },
+      "server_version": { "type": "string" },
+      "methods": { "type": "array", "items": { "type": "string" } },
+      "permissions": {
+        "type": "object",
+        "required": ["read", "write", "build", "control"],
+        "properties": {
+          "read": { "type": "boolean" },
+          "write": { "type": "boolean" },
+          "build": { "type": "boolean" },
+          "control": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

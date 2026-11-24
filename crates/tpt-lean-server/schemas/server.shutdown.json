@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "server.shutdown",
+  "permission": "control",
+  "params": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "required": ["stopping"],
+    "properties": {
+      "stopping": { "type": "boolean" }
+    }
+  }
+}

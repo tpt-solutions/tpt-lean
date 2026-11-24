@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "format.file",
+  "permission": "write",
+  "params": {
+    "type": "object",
+    "required": ["path"],
+    "properties": {
+      "path": { "type": "string", "description": "Project-relative or absolute path to a .lean file inside the root." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["path", "changed", "written"],
+    "properties": {
+      "path": { "type": "string" },
+      "changed": { "type": "boolean" },
+      "written": { "type": "boolean" }
+    }
+  }
+}

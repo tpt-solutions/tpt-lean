@@ -1,0 +1,99 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+//! Permission classes for API methods.
+//!
+//! Every request is checked against the class its method needs before dispatch:
+//! - `read`: no side effects on the project or the index.
+//! - `write`: changes files (`format.file`) or the index in `.tpt-lean/` (`index.refresh`).
+//!   Granted only when `security.allow_write` is true (default false).
+//! - `build`: runs Lean (`check.file`, `goals.at`). Granted when `security.allow_build` is true
+//!   (default true).
+//! - `control`: lifecycle only (`server.shutdown`). Always granted; the server only listens on
+//!   loopback unless `server.allow_remote` is set.
+
+use tpt_lean_core::config::Config;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Permission {
+    Read,
+    Write,
+    Build,
+    Control,
+}
+
+impl Permission {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Permission::Read => "read",
+            Permission::Write => "write",
+            Permission::Build => "build",
+            Permission::Control => "control",
+        }
+    }
+
+    /// The configuration key that grants this class, when the class is configurable.
+    pub fn config_key(self) -> Option<&'static str> {
+        match self {
+            Permission::Write => Some("security.allow_write"),
+            Permission::Build => Some("security.allow_build"),
+            Permission::Read | Permission::Control => None,
+        }
+    }
+
+    /// Whether the configuration grants this class.
+    pub fn granted(self, config: &Config) -> bool {
+        match self {
+            Permission::Read | Permission::Control => true,
+            Permission::Write => config.security.allow_write,
+            Permission::Build => config.security.allow_build,
+        }
+    }
+}
+
+/// Every method the server dispatches, with the permission class it requires.
+pub const METHODS: &[(&str, Permission)] = &[
+    ("project.info", Permission::Read),
+    ("index.status", Permission::Read),
+    ("search.query", Permission::Read),
+    ("search.symbol", Permission::Read),
+    ("format.text", Permission::Read),
+    ("diagnostics.get", Permission::Read),
+    ("format.file", Permission::Write),
+    ("index.refresh", Permission::Write),
+    ("check.file", Permission::Build),
+    ("goals.at", Permission::Build),
+    ("server.shutdown", Permission::Control),
+];
+
+/// The permission class a method requires, or `None` for an unknown method.
+pub fn lookup(method: &str) -> Option<Permission> {
+    METHODS.iter().find(|(name, _)| *name == method).map(|(_, p)| *p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn write_and_build_follow_config() {
+        let mut cfg = Config::default();
+        assert!(!Permission::Write.granted(&cfg));
+        assert!(Permission::Build.granted(&cfg));
+        cfg.security.allow_write = true;
+        cfg.security.allow_build = false;
+        assert!(Permission::Write.granted(&cfg));
+        assert!(!Permission::Build.granted(&cfg));
+        assert!(Permission::Read.granted(&cfg));
+        assert!(Permission::Control.granted(&cfg));
+    }
+
+    #[test]
+    fn lookup_knows_every_method_once() {
+        assert_eq!(lookup("format.file"), Some(Permission::Write));
+        assert_eq!(lookup("check.file"), Some(Permission::Build));
+        assert_eq!(lookup("nope"), None);
+        let mut names: Vec<&str> = METHODS.iter().map(|(n, _)| *n).collect();
+        names.sort();
+        names.dedup();
+        assert_eq!(names.len(), METHODS.len());
+    }
+}

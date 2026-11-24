@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "index.refresh",
+  "permission": "write",
+  "params": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "result": {
+    "type": "object",
+    "required": ["scanned", "updated", "unchanged", "removed"],
+    "properties": {
+      "scanned": { "type": "integer", "minimum": 0 },
+      "updated": { "type": "integer", "minimum": 0 },
+      "unchanged": { "type": "integer", "minimum": 0 },
+      "removed": { "type": "integer", "minimum": 0 }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "search.symbol",
+  "permission": "read",
+  "params": {
+    "type": "object",
+    "required": ["name"],
+    "properties": {
+      "name": { "type": "string" },
+      "limit": { "type": "integer", "minimum": 1, "maximum": 200 }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["items"],
+    "properties": {
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "short_name", "kind", "namespace", "package", "source", "line"],
+          "properties": {
+            "name": { "type": "string" },
+            "short_name": { "type": ["string", "null"] },
+            "kind": { "type": "string" },
+            "namespace": { "type": "string" },
+            "package": { "type": "string" },
+            "source": { "type": "string" },
+            "line": { "type": "integer" }
+          }
+        }
+      }
+    }
+  }
+}

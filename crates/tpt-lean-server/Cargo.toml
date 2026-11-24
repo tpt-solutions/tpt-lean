@@ -12,6 +12,8 @@ tpt-lean-core.workspace = true
 tpt-lean-index.workspace = true
 tpt-lean-search.workspace = true
 tpt-lean-fmt.workspace = true
+tpt-lean-syntax.workspace = true
+tpt-lean-adapter.workspace = true
 serde_json.workspace = true
 
 [lints]

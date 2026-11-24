@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "goals.at",
+  "permission": "build",
+  "params": {
+    "type": "object",
+    "required": ["path", "line", "column"],
+    "properties": {
+      "path": { "type": "string" },
+      "line": { "type": "integer", "minimum": 1, "description": "1-based line." },
+      "column": { "type": "integer", "minimum": 1, "description": "1-based column, counted in characters." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["path", "line", "column", "goals"],
+    "properties": {
+      "path": { "type": "string" },
+      "line": { "type": "integer", "minimum": 1 },
+      "column": { "type": "integer", "minimum": 1 },
+      "goals": { "type": "array", "items": { "type": "string" } }
+    }
+  }
+}

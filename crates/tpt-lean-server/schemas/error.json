@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "JSON-RPC error response",
+  "description": "Error envelope returned for every failed request. Codes: -32700 parse error, -32600 invalid request, -32601 method not found, -32602 invalid params, -32000 application error, -32001 permission denied (data.permission and data.config_key), -32002 path outside the project root.",
+  "type": "object",
+  "required": ["jsonrpc", "id", "error"],
+  "properties": {
+    "jsonrpc": { "type": "string", "enum": ["2.0"] },
+    "id": { "type": ["string", "integer", "null"] },
+    "error": {
+      "type": "object",
+      "required": ["code", "message"],
+      "properties": {
+        "code": { "type": "integer" },
+        "message": { "type": "string" },
+        "data": { "type": "object" }
+      }
+    }
+  }
+}
