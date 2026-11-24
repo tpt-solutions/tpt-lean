@@ -17,6 +17,7 @@ serde_json.workspace = true
 serde.workspace = true
 tpt-lean-index.workspace = true
 tpt-lean-search.workspace = true
+sysinfo = { version = "0.37", default-features = false, features = ["system"] }
 
 [lints]
 workspace = true

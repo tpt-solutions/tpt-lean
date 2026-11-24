@@ -15,7 +15,7 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{channel, Receiver, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
-use tpt_lean_core::policy::CancelToken;
+use tpt_lean_core::policy::{sanitize_env, CancelToken};
 use tpt_lean_core::{Error, ErrorCode, Result};
 
 /// How often a cancellable request re-checks its cancel token.
@@ -66,9 +66,15 @@ pub fn path_to_uri(path: &Path) -> String {
 impl LspClient {
     /// Start a server process and run the initialize handshake.
     pub fn start(program: &Path, args: &[String], cwd: &Path, timeout: Duration) -> Result<Self> {
+        // Same environment policy as the runner: only allowlisted variables reach the server.
         let mut child = Command::new(program)
             .args(args)
             .current_dir(cwd)
+            .env_clear()
+            .envs(sanitize_env(
+                std::env::vars(),
+                &tpt_lean_core::policy::default_env_allowlist(),
+            ))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
