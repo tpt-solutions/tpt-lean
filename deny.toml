@@ -1,0 +1,32 @@
+# cargo-deny policy for tpt-lean. Run: cargo deny check licenses bans sources
+# Policy source: todo.md "Dependency policy" and spec section 4.
+
+[graph]
+all-features = true
+
+[licenses]
+version = 2
+confidence-threshold = 0.95
+# A crate whose license is an OR-expression is accepted when any alternative is allowed.
+# Apache-2.0 alone is NOT on this list, so Apache-only crates are rejected.
+allow = [
+    "MIT",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "Unicode-3.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
