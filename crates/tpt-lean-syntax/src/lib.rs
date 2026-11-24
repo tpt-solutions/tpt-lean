@@ -50,13 +50,28 @@ pub struct Symbol {
     pub is_private: bool,
 }
 
+/// What introduced a tactic block.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TacticKind {
+    /// `by` (a term or tactic block).
+    By,
+    /// `·`, a focusing bullet.
+    Bullet,
+    /// `case tag =>` or `next =>`.
+    Case,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TacticBlock {
-    /// Line of the `by` keyword.
+    pub kind: TacticKind,
+    /// Line of the introducing token (`by`, `·`, `case`, `next`).
     pub start_line: usize,
-    /// Last line whose content is indented deeper than the line containing `by`.
+    /// Last line of the block. For `by` it is the last line indented deeper than the line that
+    /// contains `by`; for bullets and cases it is the last line indented deeper than the token.
     pub end_line: usize,
     pub range: TextRange,
+    /// Number of tactic blocks that strictly contain this one (0 for outermost blocks).
+    pub depth: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -223,18 +238,32 @@ fn clean_doc(raw: &str) -> String {
 
 fn find_tactic_blocks(src: &str, tokens: &[Token], lines: &LineIndex) -> Vec<TacticBlock> {
     let sig: Vec<&Token> = tokens.iter().filter(|t| significant(t)).collect();
-    let mut out = Vec::new();
+    let mut out: Vec<TacticBlock> = Vec::new();
     for (i, t) in sig.iter().enumerate() {
-        if !(t.kind == TokenKind::Keyword && t.range.text(src) == "by") {
+        let text = t.range.text(src);
+        let kind = if t.kind == TokenKind::Keyword && text == "by" {
+            TacticKind::By
+        } else if text == "·" {
+            TacticKind::Bullet
+        } else if (t.kind == TokenKind::Keyword && text == "case")
+            || (text == "next" && starts_line(src, lines, t.range.start))
+        {
+            TacticKind::Case
+        } else {
             continue;
-        }
-        let by_line = lines.line_of(t.range.start);
-        let base = indentation_of_line(src, lines, by_line);
-        let mut end_line = by_line;
+        };
+        let start_line = lines.line_of(t.range.start);
+        // `by` is measured from the indentation of its line (as before); bullets and cases are
+        // measured from their own column, so the body is whatever sits deeper than the token.
+        let base = match kind {
+            TacticKind::By => indentation_of_line(src, lines, start_line),
+            TacticKind::Bullet | TacticKind::Case => lines.column_of(t.range.start),
+        };
+        let mut end_line = start_line;
         let mut last_offset = t.range.end;
         for later in sig.iter().skip(i + 1) {
             let line = lines.line_of(later.range.start);
-            if line == by_line {
+            if line == start_line {
                 last_offset = later.range.end;
                 continue;
             }
@@ -246,12 +275,31 @@ fn find_tactic_blocks(src: &str, tokens: &[Token], lines: &LineIndex) -> Vec<Tac
             }
         }
         out.push(TacticBlock {
-            start_line: by_line,
+            kind,
+            start_line,
             end_line,
             range: TextRange::new(t.range.start, last_offset),
+            depth: 0,
         });
     }
+    let ranges: Vec<TextRange> = out.iter().map(|b| b.range).collect();
+    for (i, block) in out.iter_mut().enumerate() {
+        block.depth = ranges
+            .iter()
+            .enumerate()
+            .filter(|(j, r)| {
+                *j != i && **r != block.range && r.start <= block.range.start && block.range.end <= r.end
+            })
+            .count();
+    }
     out
+}
+
+/// True when the token at `offset` is the first significant thing on its line.
+fn starts_line(src: &str, lines: &LineIndex, offset: usize) -> bool {
+    let line = lines.line_of(offset);
+    let line_start = lines.line_start(line).unwrap_or(0);
+    src[line_start..offset].trim().is_empty()
 }
 
 fn find_uncertain(src: &str, tokens: &[Token], lines: &LineIndex) -> Vec<Uncertain> {
@@ -326,6 +374,36 @@ mod tests {
         assert_eq!(p.tactic_blocks.len(), 1);
         assert_eq!(p.tactic_blocks[0].start_line, 7);
         assert_eq!(p.tactic_blocks[0].end_line, 9);
+    }
+
+    #[test]
+    fn bullets_and_cases_are_nested_tactic_blocks() {
+        let src =
+            "theorem t : P ∧ Q := by\n  constructor\n  · exact p\n    simp\n  case right =>\n    exact q\n";
+        let p = parse(src);
+        let kinds: Vec<TacticKind> = p.tactic_blocks.iter().map(|b| b.kind).collect();
+        assert_eq!(kinds, vec![TacticKind::By, TacticKind::Bullet, TacticKind::Case]);
+
+        let by = &p.tactic_blocks[0];
+        assert_eq!((by.start_line, by.end_line, by.depth), (1, 6, 0));
+
+        let bullet = &p.tactic_blocks[1];
+        assert_eq!((bullet.start_line, bullet.end_line, bullet.depth), (3, 4, 1));
+
+        let case = &p.tactic_blocks[2];
+        assert_eq!((case.start_line, case.end_line, case.depth), (5, 6, 1));
+    }
+
+    #[test]
+    fn next_at_line_start_is_a_case_block() {
+        let p = parse("example : True := by\n  next => trivial\n");
+        assert!(p
+            .tactic_blocks
+            .iter()
+            .any(|b| b.kind == TacticKind::Case && b.start_line == 2));
+        // An identifier called `next` mid-line is not a tactic.
+        let q = parse("def f := next 3\n");
+        assert!(q.tactic_blocks.is_empty());
     }
 
     #[test]

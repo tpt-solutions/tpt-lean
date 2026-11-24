@@ -244,7 +244,11 @@ fn indent_tactic_blocks(src: &str) -> String {
             .any(|t| t.range.start < start && t.range.end > start)
     };
     let mut bump: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
-    for block in &parse.tactic_blocks {
+    for block in parse
+        .tactic_blocks
+        .iter()
+        .filter(|b| b.kind == tpt_lean_syntax::TacticKind::By)
+    {
         let by_line = block.start_line;
         if !line_tail_is_by(src, &parse, by_line) {
             continue;

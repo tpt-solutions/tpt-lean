@@ -82,7 +82,7 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 - [x] Indentation tracking
 - [x] Import extraction
 - [x] Declaration boundary detection (theorem, def, lemma, instance, structure, inductive, class, abbrev, namespace, section, etc.)
-- [ ] Tactic block detection (`by`, `·`, `case`, etc.) (only `by` blocks; no `·` or `case`)
+- [x] Tactic block detection (`by`, `·`, `case`/`next`, with nesting depth)
 - [x] Lightweight symbol extraction (name, kind, namespace, range, docstring)
 - [x] Error recovery and "uncertain" markers (needed by formatter safety)
 - [x] Fuzz/property tests (no panics, round-trip) (deterministic pseudo-random round-trip test, not cargo-fuzz)
