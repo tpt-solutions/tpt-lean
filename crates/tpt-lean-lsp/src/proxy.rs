@@ -6,7 +6,7 @@
 
 use crate::framing::{read_message, write_message};
 use crate::symbols::document_symbols;
-use crate::workspace::workspace_symbols;
+use crate::workspace::{definitions, workspace_symbols};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -51,6 +51,8 @@ struct Document {
     upstream_uri: String,
     text_hash: u64,
     symbols: Vec<Value>,
+    /// Full text, kept for answers that need the word under the cursor.
+    text: String,
 }
 
 /// Diagnostics last computed for a document, kept after the document is closed.
@@ -166,6 +168,7 @@ impl<W: Write> Proxy<W> {
                 Ok(Value::Array(symbols))
             }
             "textDocument/hover" => self.hover(params, cancel),
+            "textDocument/definition" => self.definition(params, cancel),
             _ => {
                 let upstream = self.upstream_params(params);
                 self.session
@@ -218,6 +221,7 @@ impl<W: Write> Proxy<W> {
                 upstream_uri,
                 text_hash,
                 symbols: document_symbols(text),
+                text: text.to_string(),
             },
         );
         if let Err(e) = self.session.sync_document(&path, text) {
@@ -288,6 +292,28 @@ impl<W: Write> Proxy<W> {
             Some(doc) => Value::Array(doc.symbols.clone()),
             None => Value::Array(Vec::new()),
         }
+    }
+
+    /// Go-to-definition: when the index has declarations whose exact name is the word under the
+    /// cursor, answer from the index. Otherwise forward to Lean.
+    fn definition(&mut self, params: &Value, cancel: &CancelToken) -> Result<Value> {
+        let uri = params["textDocument"]["uri"].as_str().unwrap_or_default();
+        let line = params["position"]["line"].as_u64().unwrap_or(0) as usize;
+        let character = params["position"]["character"].as_u64().unwrap_or(0) as usize;
+        let word = self
+            .documents
+            .get(uri)
+            .and_then(|doc| word_at(&doc.text, line, character));
+        if let Some(word) = word {
+            let locations = definitions(&self.project_root, &self.index_path, &word, 20)?;
+            if !locations.is_empty() {
+                return Ok(Value::Array(locations));
+            }
+        }
+        let upstream = self.upstream_params(params);
+        self.session
+            .request_cancellable("textDocument/definition", upstream, cancel)
+            .map_err(|e| with_context(e, "textDocument/definition"))
     }
 
     /// Hover shows the goal at the position, from `$/lean/plainGoal`.
@@ -411,6 +437,46 @@ fn hash_text(text: &str) -> u64 {
 
 /// Local path of a `file://` URI. Percent-escapes are decoded and a Windows drive letter is
 /// kept without the leading slash. Returns `None` for other schemes.
+/// Characters that can appear in a Lean identifier or a dotted name.
+fn is_name_char(c: char) -> bool {
+    c.is_alphanumeric() || matches!(c, '_' | '\'' | '.' | '!' | '?')
+}
+
+/// The dotted identifier under an LSP position (`line` and UTF-16 `character`, both 0-based).
+/// A position just after an identifier also selects it.
+pub fn word_at(text: &str, line: usize, character: usize) -> Option<String> {
+    let line_text = text.lines().nth(line)?;
+    let chars: Vec<char> = line_text.chars().collect();
+    // Map the UTF-16 column to a char index.
+    let mut utf16 = 0;
+    let mut index = chars.len();
+    for (i, c) in chars.iter().enumerate() {
+        if utf16 >= character {
+            index = i;
+            break;
+        }
+        utf16 += c.len_utf16();
+    }
+    let probe = if index < chars.len() && is_name_char(chars[index]) {
+        index
+    } else if index > 0 && is_name_char(chars[index - 1]) {
+        index - 1
+    } else {
+        return None;
+    };
+    let mut start = probe;
+    while start > 0 && is_name_char(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = probe + 1;
+    while end < chars.len() && is_name_char(chars[end]) {
+        end += 1;
+    }
+    let word: String = chars[start..end].iter().collect();
+    let word = word.trim_matches('.').to_string();
+    (!word.is_empty()).then_some(word)
+}
+
 pub fn uri_to_path(uri: &str) -> Option<PathBuf> {
     let rest = uri.strip_prefix("file://")?;
     let bytes = rest.as_bytes();
@@ -439,6 +505,22 @@ mod tests {
     use super::*;
     use std::io::{BufReader, Cursor};
     use std::time::Duration;
+
+    #[test]
+    fn word_at_finds_dotted_names_and_handles_edges() {
+        let text = "theorem t : Nat.add_comm a b = b + a := by
+  exact «é».foo
+";
+        assert_eq!(word_at(text, 0, 12).as_deref(), Some("Nat.add_comm"));
+        assert_eq!(word_at(text, 0, 23).as_deref(), Some("Nat.add_comm"));
+        assert_eq!(word_at(text, 0, 24).as_deref(), Some("Nat.add_comm"));
+        assert_eq!(word_at(text, 0, 2).as_deref(), Some("theorem"));
+        assert_eq!(word_at(text, 0, 11).as_deref(), None);
+        assert_eq!(word_at(text, 5, 0), None);
+        assert_eq!(word_at("x := 1", 0, 0).as_deref(), Some("x"));
+        assert_eq!(word_at("a ∀ b", 0, 4).as_deref(), Some("b"));
+        assert_eq!(word_at("", 0, 0), None);
+    }
 
     #[test]
     fn uri_decoding() {

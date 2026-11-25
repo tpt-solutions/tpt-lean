@@ -33,6 +33,10 @@ Answered by the proxy:
 - `workspace/symbol`: from the project index at `.tpt-lean/index.sqlite`, when that file exists.
   The proxy only reads the index.
 - `textDocument/hover`: the goal at the position, from `$/lean/plainGoal`, as Markdown
+- `textDocument/definition`: when the project index has declarations whose full or short name is
+  the dotted word under the cursor, the locations of those declarations (`workspace.rs`
+  `definitions`). Otherwise the request is forwarded to Lean. The word is found in the editor's
+  current text, so it works on unsaved edits.
 
 Forwarded to Lean unchanged, with the document URI mapped to the one Lean knows:
 
@@ -49,6 +53,7 @@ Notifications:
 Cancellation: `$/cancelRequest` is handled on the reader thread, so it works while the proxy is
 waiting on Lean.
 
-Not done: definition and code-action responses (no local implementation), import suggestions,
-lemma-search and explain-error code actions, progress reporting, and incremental sync. Editor
-setup instructions are not written yet.
+Not done: code actions (import suggestions, lemma search, explain-error), progress reporting, and
+incremental sync. The index-backed definition answer is matched by exact name, so it does not
+resolve names through `open` or namespaces; those fall through to Lean. Editor setup is in
+[editors.md](editors.md).

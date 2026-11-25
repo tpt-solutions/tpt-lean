@@ -499,7 +499,7 @@ fn stdio_session_lists_resources_prompts_and_denies_writes() {
         .collect();
     assert_eq!(replies.len(), 4, "notifications get no reply");
     assert_eq!(replies[0]["result"]["protocolVersion"], "2024-11-05");
-    assert_eq!(replies[1]["result"]["resources"].as_array().unwrap().len(), 3);
+    assert_eq!(replies[1]["result"]["resources"].as_array().unwrap().len(), 4);
     assert!(replies[2]["result"]["messages"][0]["content"]["text"]
         .as_str()
         .unwrap()

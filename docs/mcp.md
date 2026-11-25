@@ -112,6 +112,11 @@ Notes:
 | `tpt-lean://project/diagnostics` | diagnostics cached from the latest check and build runs (empty until one runs) |
 | `tpt-lean://index/status` | same as `tpt_lean_index_status` |
 | `tpt-lean://file/{path}/symbols` | top-level declarations of one `.lean` file; `{path}` is percent-encoded and workspace-relative |
+| `tpt-lean://profiles` | ids of profile reports stored in `.tpt-lean/profiles` by the server's `profile.run` method, newest first |
+| `tpt-lean://profile/{id}` | one stored profile report; ids are validated, so no other file can be read |
+
+The MCP `tpt_lean_profile_file` tool is not implemented yet, so reports appear here only when
+they were produced through the API server. Build logs are not stored by any transport yet.
 
 `resources/list` and `resources/templates/list` describe them; `resources/read` returns JSON.
 

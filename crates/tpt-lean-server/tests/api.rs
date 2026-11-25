@@ -374,6 +374,42 @@ fn lifecycle_status_stop_and_second_start_refused() {
     assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::NotRunning);
 }
 
+#[cfg(unix)]
+#[test]
+fn unix_socket_lifecycle_uses_an_owner_only_socket() {
+    use std::os::unix::fs::PermissionsExt;
+    use tpt_lean_server::Transport;
+
+    let project = TempProject::new("unix-socket", None);
+    let root = project.path().to_path_buf();
+    let runner = {
+        let root = root.clone();
+        thread::spawn(move || state::run_foreground_on(&root, Transport::Unix))
+    };
+    let st = wait_for_state(&root);
+    assert_eq!(st.port, 0);
+    let socket = st.socket.clone().expect("state records the socket path");
+    assert_eq!(socket, state::socket_path(&root));
+    let mode = std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+
+    let status = state::status(&root).unwrap();
+    assert!(status.running && !status.stale);
+
+    let reply = tpt_lean_server::client::call_endpoint(
+        &st.endpoint(),
+        "project.info",
+        json!({}),
+        Duration::from_secs(5),
+    )
+    .unwrap();
+    assert!(reply.get("result").is_some());
+
+    assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
+    runner.join().unwrap().unwrap();
+    assert!(!socket.exists(), "socket file is removed on exit");
+}
+
 #[test]
 fn stale_state_file_is_reported_and_cleaned_up() {
     let project = TempProject::new("stale", None);

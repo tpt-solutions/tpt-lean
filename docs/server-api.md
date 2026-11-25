@@ -1,20 +1,32 @@
 # tpt-lean API server (`tpt-lean-server`)
 
-JSON-RPC 2.0 over TCP. One request per line, one response per line (newline-delimited JSON).
-The server listens on `127.0.0.1` unless `server.allow_remote = true`.
+JSON-RPC 2.0, one request per line, one response per line (newline-delimited JSON).
+
+Transports:
+
+- **Unix domain socket** (Linux and macOS, the default there): `.tpt-lean/server.sock`. The socket
+  file is created with mode 0600, so only the owning user can connect. A leftover socket file from
+  a crashed server is replaced at start.
+- **Loopback TCP** on `127.0.0.1` (every platform, the default on Windows, port 7373). Chosen with
+  `tpt-lean server start --port N` (0 picks a free port). Unless `server.allow_remote = true`, the
+  server does not bind other addresses.
 
 Schemas for every method's params and result are in `crates/tpt-lean-server/schemas/`
 (`error.json` for the error envelope). Tests in `tests/schemas.rs` validate real responses.
 
 ## Lifecycle
 
-The server writes `.tpt-lean/server.json` (`pid`, `port`, `project`, `version`) after it binds,
-and removes it on exit. Port 0 picks a free port; the file records the real one.
+The server writes `.tpt-lean/server.json` (`pid`, `port`, `project`, `version`, and `socket` when
+it listens on a Unix socket; `port` is then 0) after it binds, and removes it on exit. Port 0 picks
+a free port; the file records the real one. `tpt-lean server start` writes the same file, so
+`server status` and `server stop` work with either transport.
 
 Public functions for the CLI:
 
-- `run_foreground(root, port) -> Result<()>`: serve until `server.shutdown`. Refuses to start if
-  a live server already answers for the project.
+- `run_foreground(root, port) -> Result<()>`: serve on TCP until `server.shutdown`. Refuses to
+  start if a live server already answers for the project.
+- `run_foreground_on(root, Transport) -> Result<()>`: the same, on `Transport::Tcp(port)` or
+  (Unix only) `Transport::Unix`.
 - `status(root) -> Result<StatusReport>`: probes with `project.info`. `StatusReport::to_json()`
   gives `running`, `stale`, `pid`, `port`, `project`.
 - `stop(root) -> Result<StopReport>`: sends `server.shutdown` and waits up to 10 s for the state
@@ -95,7 +107,7 @@ message naming `lean`.
 - Methods: `project.doctor`, `search.goal`, `check.project`, `diagnostics.explain`,
   `imports.suggest`, `imports.unused` (out of scope for this phase), `context.pack`,
   `build.*`, `profile.*`.
-- Transports: Unix domain sockets and named pipes. Only TCP is implemented.
+- Transports: named pipes (Windows). Windows uses loopback TCP instead.
 - Streaming (`GET /v1/events`, SSE or notifications).
 - HTTP (`POST /v1/rpc`).
 - Authentication. Any local process that can connect to the port can call the methods allowed

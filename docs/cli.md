@@ -66,6 +66,8 @@ Source:
 - `imports --minimize FILE`: prints the proposed removal as a diff. The file is never written.
 - `imports --cost`: direct import counts per module (structural estimate, not compile time)
 - `search <query> [--namespace NS] [--near TERM]... [--limit N]`, or `search --goal-at FILE:LINE:COL` to search for lemmas about the goal at a position (the goal's target words are the query; it starts the Lean language server, and it cannot be combined with a query)
+- `search <query> --from FILE`: symbols from modules that FILE imports rank higher.
+- `search --type PATTERN`: declarations whose type contains every identifier in PATTERN (for example `Nat → Nat` or `List Nat`), as whole tokens. Types come from `tpt-lean index sidecar`, so this needs Lean. Arrows and punctuation are ignored; token order raises the score.
 - `index scan | refresh | status | clear`
 
 Lean (needs `lean` and `lake` on PATH or in `~/.elan/bin`):

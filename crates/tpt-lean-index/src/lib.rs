@@ -470,6 +470,53 @@ impl Index {
     }
 
     /// Declarations whose name equals `query` or starts with it, exact matches first.
+    /// Declarations whose pretty-printed type contains every term as a substring. Used by
+    /// type-shaped search, which re-checks whole-token matches in Rust. Returns at most
+    /// `limit` rows, in name order.
+    pub fn declarations_with_type_terms(&self, terms: &[String], limit: usize) -> Result<Vec<DeclRow>> {
+        if terms.is_empty() {
+            return Ok(Vec::new());
+        }
+        let clauses: Vec<String> = (0..terms.len())
+            .map(|i| format!("d.type_text LIKE ?{} ESCAPE '\\'", i + 1))
+            .collect();
+        let sql = format!(
+            "SELECT d.module, p.name, f.rel_path, d.name, d.kind, d.type_text, d.docstring
+             FROM declarations d
+             JOIN module_sources m ON m.module = d.module
+             JOIN files f ON f.id = m.file_id
+             JOIN packages p ON p.id = m.package_id
+             WHERE {}
+             ORDER BY length(d.name), d.name
+             LIMIT ?{}",
+            clauses.join(" AND "),
+            terms.len() + 1
+        );
+        let mut stmt = self.conn.prepare(&sql).map_err(|e| db_err(e, &self.path))?;
+        let patterns: Vec<String> = terms
+            .iter()
+            .map(|t| format!("%{}%", escape_like(t)))
+            .collect();
+        let mut bind: Vec<&dyn rusqlite::ToSql> = patterns.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let limit = limit as i64;
+        bind.push(&limit);
+        let rows = stmt
+            .query_map(bind.as_slice(), |r| {
+                Ok(DeclRow {
+                    module: r.get(0)?,
+                    package: r.get(1)?,
+                    file: r.get(2)?,
+                    name: r.get(3)?,
+                    kind: r.get(4)?,
+                    type_text: r.get(5)?,
+                    docstring: r.get(6)?,
+                })
+            })
+            .map_err(|e| db_err(e, &self.path))?;
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(|e| db_err(e, &self.path))
+    }
+
     pub fn declarations_named(&self, query: &str, limit: usize) -> Result<Vec<DeclRow>> {
         let pattern = format!("{}%", escape_like(query));
         let mut stmt = self

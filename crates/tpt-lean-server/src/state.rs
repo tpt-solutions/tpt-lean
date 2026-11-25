@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Server lifecycle: `.tpt-lean/server.json` records the running server's pid and port. `status`
-//! and `stop` read it and talk to the server over its TCP transport.
+//! Server lifecycle: `.tpt-lean/server.json` records the running server's pid and endpoint (a
+//! TCP port, or a Unix socket path). `status` and `stop` read it and talk to the server over that
+//! endpoint.
 
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -11,40 +12,75 @@ use std::time::{Duration, Instant};
 use serde_json::{json, Value};
 use tpt_lean_core::{Error, ErrorCode, Result};
 
-use crate::client::{call, is_ok_response};
+use crate::client::{call_endpoint, is_ok_response, Endpoint};
 use crate::{serve_listener, Server};
+#[cfg(unix)]
+use crate::{bind_unix, serve_unix_listener};
 
 /// Directory (relative to the project root) that holds the state file.
 pub const DATA_DIR: &str = ".tpt-lean";
 /// State file name inside [`DATA_DIR`].
 pub const STATE_FILE: &str = "server.json";
+/// Unix socket file name inside [`DATA_DIR`].
+pub const SOCKET_FILE: &str = "server.sock";
+/// Longest socket path the kernel accepts (`sun_path`), with some margin for the terminator.
+#[cfg(unix)]
+const MAX_SOCKET_PATH: usize = 100;
+
+/// Where the server listens when it starts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Transport {
+    /// Loopback TCP on this port; 0 picks a free port.
+    Tcp(u16),
+    /// Unix domain socket at `.tpt-lean/server.sock` (Linux and macOS).
+    #[cfg(unix)]
+    Unix,
+}
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 const STOP_WAIT: Duration = Duration::from_secs(10);
 
-/// Contents of `.tpt-lean/server.json` while a server is running.
+/// Contents of `.tpt-lean/server.json` while a server is running. `socket` is set when the server
+/// listens on a Unix socket; then `port` is 0.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerState {
     pub pid: u32,
     pub port: u16,
+    pub socket: Option<PathBuf>,
     pub project: String,
     pub version: String,
 }
 
 impl ServerState {
     pub fn to_json(&self) -> Value {
-        json!({
+        let mut v = json!({
             "pid": self.pid,
             "port": self.port,
             "project": self.project,
             "version": self.version,
-        })
+        });
+        if let Some(socket) = &self.socket {
+            v["socket"] = json!(socket.display().to_string());
+        }
+        v
+    }
+
+    /// Where a client should connect.
+    pub fn endpoint(&self) -> Endpoint {
+        #[cfg(unix)]
+        {
+            if let Some(socket) = &self.socket {
+                return Endpoint::Unix(socket.clone());
+            }
+        }
+        Endpoint::localhost(self.port)
     }
 
     fn from_json(v: &Value) -> Option<Self> {
         Some(Self {
             pid: u32::try_from(v.get("pid")?.as_u64()?).ok()?,
             port: u16::try_from(v.get("port")?.as_u64()?).ok()?,
+            socket: v.get("socket").and_then(|s| s.as_str()).map(PathBuf::from),
             project: v.get("project")?.as_str()?.to_string(),
             version: v.get("version")?.as_str()?.to_string(),
         })
@@ -53,6 +89,11 @@ impl ServerState {
 
 pub fn state_path(root: &Path) -> PathBuf {
     root.join(DATA_DIR).join(STATE_FILE)
+}
+
+/// Unix socket path for a project.
+pub fn socket_path(root: &Path) -> PathBuf {
+    root.join(DATA_DIR).join(SOCKET_FILE)
 }
 
 pub fn read_state(root: &Path) -> Result<Option<ServerState>> {
@@ -87,38 +128,89 @@ fn remove_state(root: &Path) -> Result<()> {
     }
 }
 
-/// Run the server in the foreground for `root` until a `server.shutdown` request arrives.
-/// `port` 0 picks a free port. Writes the state file after binding and removes it on exit.
+/// Run the server in the foreground for `root` on loopback TCP until a `server.shutdown` request
+/// arrives. `port` 0 picks a free port. Writes the state file after binding and removes it on
+/// exit.
 pub fn run_foreground(root: &Path, port: u16) -> Result<()> {
+    run_foreground_on(root, Transport::Tcp(port))
+}
+
+/// Run the server in the foreground on `transport`. See [`run_foreground`].
+pub fn run_foreground_on(root: &Path, transport: Transport) -> Result<()> {
     let server = Server::new(root)?;
     let project = server.root().to_path_buf();
     if let Some(existing) = read_state(&project)? {
-        if is_alive(existing.port) {
+        if is_alive(&existing.endpoint()) {
             return Err(Error::new(
                 ErrorCode::InvalidArgument,
                 format!(
-                    "a server is already running for this project (pid {}, port {})",
-                    existing.pid, existing.port
+                    "a server is already running for this project (pid {}, {})",
+                    existing.pid,
+                    describe(&existing.endpoint())
                 ),
             ));
         }
     }
-    let listener = TcpListener::bind((server.bind_host(), port))?;
-    let state = ServerState {
-        pid: std::process::id(),
-        port: listener.local_addr()?.port(),
-        project: project.display().to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    };
-    write_state(&project, &state)?;
-    let result = serve_listener(Arc::new(server), listener);
-    let cleanup = remove_state(&project);
-    result?;
-    cleanup
+    match transport {
+        Transport::Tcp(port) => {
+            let listener = TcpListener::bind((server.bind_host(), port))?;
+            let state = ServerState {
+                pid: std::process::id(),
+                port: listener.local_addr()?.port(),
+                socket: None,
+                project: project.display().to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            write_state(&project, &state)?;
+            let result = serve_listener(Arc::new(server), listener);
+            let cleanup = remove_state(&project);
+            result?;
+            cleanup
+        }
+        #[cfg(unix)]
+        Transport::Unix => {
+            let path = socket_path(&project);
+            if path.as_os_str().len() > MAX_SOCKET_PATH {
+                return Err(Error::new(
+                    ErrorCode::InvalidArgument,
+                    "project path is too long for a Unix socket; start the server with --port",
+                )
+                .with_path(&path));
+            }
+            if let Some(dir) = path.parent() {
+                std::fs::create_dir_all(dir).map_err(|e| Error::from(e).with_path(dir))?;
+            }
+            let listener = bind_unix(&path)?;
+            let state = ServerState {
+                pid: std::process::id(),
+                port: 0,
+                socket: Some(path.clone()),
+                project: project.display().to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            write_state(&project, &state)?;
+            let result = serve_unix_listener(Arc::new(server), listener);
+            let cleanup = remove_state(&project);
+            let _ = std::fs::remove_file(&path);
+            result?;
+            cleanup
+        }
+    }
 }
 
-fn is_alive(port: u16) -> bool {
-    matches!(call(port, "project.info", json!({}), PROBE_TIMEOUT), Ok(r) if is_ok_response(&r))
+fn describe(endpoint: &Endpoint) -> String {
+    match endpoint {
+        Endpoint::Tcp(addr) => format!("port {}", addr.port()),
+        #[cfg(unix)]
+        Endpoint::Unix(path) => format!("socket {}", path.display()),
+    }
+}
+
+fn is_alive(endpoint: &Endpoint) -> bool {
+    matches!(
+        call_endpoint(endpoint, "project.info", json!({}), PROBE_TIMEOUT),
+        Ok(r) if is_ok_response(&r)
+    )
 }
 
 /// Whether a server is running for `root`, and its recorded pid and port.
@@ -137,6 +229,7 @@ impl StatusReport {
             "stale": self.stale,
             "pid": self.state.as_ref().map(|s| s.pid),
             "port": self.state.as_ref().map(|s| s.port),
+            "socket": self.state.as_ref().and_then(|s| s.socket.as_ref()).map(|p| p.display().to_string()),
             "project": self.state.as_ref().map(|s| s.project.clone()),
         })
     }
@@ -151,7 +244,7 @@ pub fn status(root: &Path) -> Result<StatusReport> {
             state: None,
         }),
         Some(state) => {
-            let alive = is_alive(state.port);
+            let alive = is_alive(&state.endpoint());
             Ok(StatusReport {
                 running: alive,
                 stale: !alive,
@@ -200,7 +293,7 @@ pub fn stop(root: &Path) -> Result<StopReport> {
         });
     };
     let pid = Some(state.pid);
-    match call(state.port, "server.shutdown", json!({}), PROBE_TIMEOUT) {
+    match call_endpoint(&state.endpoint(), "server.shutdown", json!({}), PROBE_TIMEOUT) {
         Ok(r) if is_ok_response(&r) => {
             let deadline = Instant::now() + STOP_WAIT;
             while state_path(root).exists() {

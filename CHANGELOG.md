@@ -12,6 +12,14 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - `docs/security.md`, `docs/versioning.md`, `docs/editors.md`, and a Claude Desktop setup in `docs/mcp.md`.
 - `tpt-lean init --template mathlib` as an alias for `--mathlib`.
 - `tpt-lean init` no longer leaves an empty directory behind when the template name is unknown.
+- `tpt-lean search --type PATTERN`: type-shaped search over sidecar declaration types.
+- `tpt-lean search --from FILE`: symbols from modules that FILE imports rank higher.
+- Server transport: Unix domain socket by default on Linux and macOS (owner-only, 0600), with
+  `--port` for loopback TCP. `server start` now records its state, so `status` and `stop` work
+  with either transport.
+- LSP proxy answers `textDocument/definition` from the project index when the word under the
+  cursor names a declaration exactly; otherwise it forwards to Lean.
+- MCP resources `tpt-lean://profiles` and `tpt-lean://profile/{id}` for stored profile reports.
 - Cargo workspace with crates for core config and discovery, syntax, indexing,
   search, formatting, the Lean CLI/LSP adapter, FFI, JSON-RPC server, MCP server,
   docgen, profiling, build orchestration, LSP proxy, WASM bindings, and the

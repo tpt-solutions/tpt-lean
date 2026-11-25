@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
-//! Local JSON-RPC 2.0 API server. Transport: newline-delimited JSON over TCP on 127.0.0.1.
+//! Local JSON-RPC 2.0 API server. Transport: newline-delimited JSON over a Unix domain socket
+//! (Linux and macOS, the default there) or over TCP on 127.0.0.1 (every platform, the default on
+//! Windows).
 //!
 //! - Remote access is off by default (`server.allow_remote`).
 //! - Each request is checked against its method's permission class (see [`permission`]).
@@ -7,7 +9,8 @@
 //! - Method parameters and results are described by JSON Schemas in `schemas/`.
 //! - Lifecycle: [`run_foreground`] writes `.tpt-lean/server.json`; [`status`] and [`stop`] read it.
 //!
-//! Not implemented here: Unix domain sockets, named pipes, SSE event streams, `imports.unused`.
+//! Not implemented here: named pipes, SSE event streams. A Unix socket file is created with
+//! owner-only permissions (0600), so other local users cannot connect.
 
 mod builds;
 pub mod client;
@@ -23,6 +26,10 @@ pub mod state;
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -38,7 +45,11 @@ use tpt_lean_core::{Error, ErrorCode, Result};
 
 pub use client::call;
 pub use permission::Permission;
-pub use state::{run_foreground, status, stop, ServerState, StatusReport, StopOutcome, StopReport};
+pub use client::Endpoint;
+pub use state::{
+    run_foreground, run_foreground_on, status, stop, ServerState, StatusReport, StopOutcome,
+    StopReport, Transport,
+};
 
 pub const PARSE_ERROR: i64 = -32700;
 pub const INVALID_REQUEST: i64 = -32600;
@@ -85,8 +96,8 @@ pub struct Server {
     /// Builds started by `build.run`, for this process only.
     builds: Mutex<builds::Builds>,
     shutdown: AtomicBool,
-    /// Address the listener is bound to, used to wake the accept loop on shutdown.
-    listen_addr: Mutex<Option<SocketAddr>>,
+    /// Endpoint the listener is bound to, used to wake the accept loop on shutdown.
+    listen_addr: Mutex<Option<Endpoint>>,
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -319,8 +330,8 @@ fn error_reply(id: Value, e: &RpcError) -> Value {
 
 /// Serve one connection: one JSON-RPC request per line, one response per line.
 /// Returns when the peer closes the connection or the server is asked to shut down.
-pub fn serve_connection(server: &Server, stream: TcpStream) -> io::Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+pub fn serve_connection<S: Stream>(server: &Server, stream: S) -> io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone_stream()?);
     let mut writer = stream;
     let mut buf = String::new();
     loop {
@@ -358,39 +369,104 @@ pub fn serve_connection(server: &Server, stream: TcpStream) -> io::Result<()> {
     Ok(())
 }
 
-/// Connect once to the listener so a blocked `accept` returns and sees the shutdown flag.
-fn wake_listener(server: &Server) {
-    let addr = *lock(&server.listen_addr);
-    if let Some(addr) = addr {
-        let target = if addr.ip().is_unspecified() {
-            SocketAddr::from(([127, 0, 0, 1], addr.port()))
-        } else {
-            addr
-        };
-        let _ = TcpStream::connect_timeout(&target, Duration::from_secs(1));
+/// A connected byte stream that the server can read and write from two handles.
+pub trait Stream: Read + Write + Send + Sized + 'static {
+    fn try_clone_stream(&self) -> io::Result<Self>;
+}
+
+impl Stream for TcpStream {
+    fn try_clone_stream(&self) -> io::Result<Self> {
+        self.try_clone()
     }
 }
 
-/// Bind and serve until shutdown, one thread per connection. `port` 0 picks a free port.
+#[cfg(unix)]
+impl Stream for UnixStream {
+    fn try_clone_stream(&self) -> io::Result<Self> {
+        self.try_clone()
+    }
+}
+
+/// Connect once to the listener so a blocked `accept` returns and sees the shutdown flag.
+fn wake_listener(server: &Server) {
+    let endpoint = lock(&server.listen_addr).clone();
+    match endpoint {
+        Some(Endpoint::Tcp(addr)) => {
+            let target = if addr.ip().is_unspecified() {
+                SocketAddr::from(([127, 0, 0, 1], addr.port()))
+            } else {
+                addr
+            };
+            let _ = TcpStream::connect_timeout(&target, Duration::from_secs(1));
+        }
+        #[cfg(unix)]
+        Some(Endpoint::Unix(path)) => {
+            let _ = UnixStream::connect(path);
+        }
+        None => {}
+    }
+}
+
+/// Bind and serve on TCP until shutdown, one thread per connection. `port` 0 picks a free port.
 pub fn serve(server: Server, port: u16) -> io::Result<()> {
     let listener = TcpListener::bind((server.bind_host(), port))?;
     serve_listener(Arc::new(server), listener)
 }
 
-/// Serve on an already-bound listener until a `server.shutdown` request is handled.
+/// Bind a Unix domain socket at `path` and serve until shutdown. A leftover socket file at
+/// `path` is removed first; the new socket is made owner-only (0600).
+#[cfg(unix)]
+pub fn serve_unix(server: Server, path: &Path) -> io::Result<()> {
+    let listener = bind_unix(path)?;
+    serve_unix_listener(Arc::new(server), listener)
+}
+
+/// Bind a Unix socket at `path` with owner-only permissions.
+#[cfg(unix)]
+pub fn bind_unix(path: &Path) -> io::Result<UnixListener> {
+    if path.exists() {
+        std::fs::remove_file(path)?;
+    }
+    let listener = UnixListener::bind(path)?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(listener)
+}
+
+/// Serve on an already-bound TCP listener until a `server.shutdown` request is handled.
 pub fn serve_listener(server: Arc<Server>, listener: TcpListener) -> io::Result<()> {
-    *lock(&server.listen_addr) = Some(listener.local_addr()?);
+    *lock(&server.listen_addr) = Some(Endpoint::Tcp(listener.local_addr()?));
     for stream in listener.incoming() {
         if server.is_shutdown_requested() {
             break;
         }
-        let stream = stream?;
-        let server = Arc::clone(&server);
-        thread::spawn(move || {
-            let _ = serve_connection(&server, stream);
-        });
+        spawn_connection(&server, stream?);
     }
     Ok(())
+}
+
+/// Serve on an already-bound Unix listener until a `server.shutdown` request is handled.
+#[cfg(unix)]
+pub fn serve_unix_listener(server: Arc<Server>, listener: UnixListener) -> io::Result<()> {
+    let addr = listener.local_addr()?;
+    let path = addr
+        .as_pathname()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unix listener has no path"))?
+        .to_path_buf();
+    *lock(&server.listen_addr) = Some(Endpoint::Unix(path));
+    for stream in listener.incoming() {
+        if server.is_shutdown_requested() {
+            break;
+        }
+        spawn_connection(&server, stream?);
+    }
+    Ok(())
+}
+
+fn spawn_connection<S: Stream>(server: &Arc<Server>, stream: S) {
+    let server = Arc::clone(server);
+    thread::spawn(move || {
+        let _ = serve_connection(&server, stream);
+    });
 }
 
 #[cfg(test)]

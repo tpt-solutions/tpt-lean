@@ -10,6 +10,9 @@ use std::collections::{HashMap, HashSet};
 use tpt_lean_core::Result;
 use tpt_lean_index::{fts_query, Index, SymbolRow};
 
+pub mod types;
+pub use types::{search_by_type, type_terms, TypeHit};
+
 #[derive(Debug, Clone, Default)]
 pub struct SearchOptions {
     pub limit: usize,

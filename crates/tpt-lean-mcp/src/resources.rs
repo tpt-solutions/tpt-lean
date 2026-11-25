@@ -2,7 +2,8 @@
 //! Read-only resources (specification section 11.5).
 //!
 //! Static: `tpt-lean://project/info`, `tpt-lean://project/diagnostics`,
-//! `tpt-lean://index/status`. Template: `tpt-lean://file/{path}/symbols`.
+//! `tpt-lean://index/status`, `tpt-lean://profiles`. Templates: `tpt-lean://file/{path}/symbols`,
+//! `tpt-lean://profile/{id}`.
 
 use crate::{RpcError, Server, INTERNAL_ERROR, RESOURCE_NOT_FOUND};
 use serde_json::{json, Value};
@@ -14,6 +15,8 @@ const PROJECT_DIAGNOSTICS: &str = "tpt-lean://project/diagnostics";
 const INDEX_STATUS: &str = "tpt-lean://index/status";
 const FILE_PREFIX: &str = "tpt-lean://file/";
 const FILE_SUFFIX: &str = "/symbols";
+const PROFILES: &str = "tpt-lean://profiles";
+const PROFILE_PREFIX: &str = "tpt-lean://profile/";
 
 /// `resources/list`.
 pub(crate) fn list() -> Value {
@@ -36,6 +39,12 @@ pub(crate) fn list() -> Value {
                 "name": "Index status",
                 "description": "Index schema version, sizes, packages, and integrity.",
                 "mimeType": "application/json"
+            },
+            {
+                "uri": PROFILES,
+                "name": "Stored profiles",
+                "description": "Ids of profile reports stored under .tpt-lean/profiles (newest first).",
+                "mimeType": "application/json"
             }
         ]
     })
@@ -50,6 +59,12 @@ pub(crate) fn templates() -> Value {
                 "name": "File symbols",
                 "description": "Top-level declarations in one .lean file. The path is percent-encoded and workspace-relative.",
                 "mimeType": "application/json"
+            },
+            {
+                "uriTemplate": "tpt-lean://profile/{id}",
+                "name": "Stored profile",
+                "description": "One stored profile report, by id from tpt-lean://profiles.",
+                "mimeType": "application/json"
             }
         ]
     })
@@ -61,10 +76,16 @@ pub(crate) fn read(server: &Server, uri: &str) -> Result<Value, RpcError> {
         PROJECT_INFO => project_info(server),
         PROJECT_DIAGNOSTICS => Ok(project_diagnostics(server)),
         INDEX_STATUS => server.index_status().map_err(|e| (INTERNAL_ERROR, e)),
-        _ => match file_symbols_path(uri) {
-            Some(path) => file_symbols(server, &path),
-            None => return Err((RESOURCE_NOT_FOUND, format!("unknown resource {uri}"))),
-        },
+        PROFILES => Ok(profile_ids(server)),
+        _ => {
+            if let Some(path) = file_symbols_path(uri) {
+                file_symbols(server, &path)
+            } else if let Some(id) = uri.strip_prefix(PROFILE_PREFIX) {
+                stored_profile(server, id)
+            } else {
+                return Err((RESOURCE_NOT_FOUND, format!("unknown resource {uri}")));
+            }
+        }
     }?;
     Ok(json!({
         "contents": [{ "uri": uri, "mimeType": "application/json", "text": body.to_string() }]
@@ -101,6 +122,45 @@ fn project_diagnostics(server: &Server) -> Value {
         .map(|(file, diagnostics)| json!({ "file": file, "diagnostics": diagnostics }))
         .collect();
     json!({ "files": files })
+}
+
+/// Ids of the profile reports stored in `.tpt-lean/profiles`, newest first.
+fn profile_ids(server: &Server) -> Value {
+    let dir = ProjectDirs::new(server.root()).profiles();
+    let mut ids: Vec<String> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(|e| e.ok())
+                .filter_map(|e| {
+                    let name = e.file_name().to_string_lossy().into_owned();
+                    name.strip_suffix(".json").map(str::to_string)
+                })
+                .filter(|id| valid_profile_id(id))
+                .collect()
+        })
+        .unwrap_or_default();
+    ids.sort();
+    ids.reverse();
+    json!({ "ids": ids })
+}
+
+/// One stored profile report. The id is validated before any path is built, so it can name only
+/// a file directly inside the profiles directory.
+fn stored_profile(server: &Server, id: &str) -> Result<Value, RpcError> {
+    if !valid_profile_id(id) {
+        return Err((RESOURCE_NOT_FOUND, format!("no stored profile {id:?}")));
+    }
+    let path = ProjectDirs::new(server.root()).profiles().join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&path)
+        .map_err(|_| (RESOURCE_NOT_FOUND, format!("no stored profile {id:?}")))?;
+    serde_json::from_str(&text).map_err(|e| (INTERNAL_ERROR, e.to_string()))
+}
+
+/// Ids made of ASCII letters, digits, `-` and `_`, up to 80 characters.
+fn valid_profile_id(id: &str) -> bool {
+    !id.is_empty()
+        && id.len() <= 80
+        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// The `{path}` of a `tpt-lean://file/{path}/symbols` URI, percent-decoded.
@@ -178,7 +238,7 @@ mod tests {
     }
 
     #[test]
-    fn list_names_the_three_static_resources() {
+    fn list_names_the_static_resources() {
         let l = list();
         let uris: Vec<&str> = l["resources"]
             .as_array()
@@ -186,11 +246,37 @@ mod tests {
             .iter()
             .map(|r| r["uri"].as_str().unwrap())
             .collect();
-        assert_eq!(uris, vec![PROJECT_INFO, PROJECT_DIAGNOSTICS, INDEX_STATUS]);
+        assert_eq!(uris, vec![PROJECT_INFO, PROJECT_DIAGNOSTICS, INDEX_STATUS, PROFILES]);
         assert_eq!(
             templates()["resourceTemplates"][0]["uriTemplate"],
             "tpt-lean://file/{path}/symbols"
         );
+        assert_eq!(
+            templates()["resourceTemplates"][1]["uriTemplate"],
+            "tpt-lean://profile/{id}"
+        );
+    }
+
+    #[test]
+    fn stored_profiles_are_listed_and_read_by_id() {
+        let dir = temp_project("profiles");
+        let s = Server::new(&dir).unwrap();
+        let profiles = ProjectDirs::new(&dir).profiles();
+        std::fs::create_dir_all(&profiles).unwrap();
+        std::fs::write(profiles.join("0001-a.json"), r#"{"total_ms": 5}"#).unwrap();
+        std::fs::write(profiles.join("0002-b.json"), r#"{"total_ms": 7}"#).unwrap();
+        std::fs::write(profiles.join("bad.id.json"), "{}").unwrap();
+
+        let r = read(&s, PROFILES).unwrap();
+        let body: Value = serde_json::from_str(r["contents"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["ids"], json!(["0002-b", "0001-a"]));
+
+        let r = read(&s, "tpt-lean://profile/0001-a").unwrap();
+        let body: Value = serde_json::from_str(r["contents"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["total_ms"], 5);
+
+        assert_eq!(read(&s, "tpt-lean://profile/..%2Fx").unwrap_err().0, RESOURCE_NOT_FOUND);
+        assert_eq!(read(&s, "tpt-lean://profile/missing").unwrap_err().0, RESOURCE_NOT_FOUND);
     }
 
     fn temp_project(name: &str) -> std::path::PathBuf {

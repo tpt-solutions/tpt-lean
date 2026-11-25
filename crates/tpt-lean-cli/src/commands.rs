@@ -81,7 +81,8 @@ Implemented:
   doctor                        check the local Lean environment
   config show                   print the effective configuration
   fmt [--check|--diff] [paths]  conservative formatter
-  search <query> [--namespace NS] [--near TERM]... [--limit N]
+  search <query> [--from FILE] [--namespace NS] [--near TERM]... [--limit N]
+  search --type PATTERN [--namespace NS] [--limit N]
   index scan|refresh|status|clear
   build [target]                run `lake build` (typed options only)
   check [file]                  run `lake build` (no file) or `lean <file>`
@@ -443,25 +444,51 @@ fn goal_query_at(args: &Args, root: &Path, spec: &str) -> Result<String> {
     Ok(query)
 }
 
+#[derive(Serialize)]
+struct TypeSearchItem {
+    name: String,
+    kind: String,
+    package: String,
+    file: String,
+    type_text: String,
+    score: f64,
+}
+
 fn search(ctx: &Ctx, args: &Args) -> Result<i32> {
-    args.reject_unknown(
-        &["--limit", "--namespace", "--near", "--project", "--goal-at"],
-        &["--limit", "--namespace", "--near", "--project", "--goal-at"],
-    )?;
-    let positional = args.positionals(&["--limit", "--namespace", "--near", "--project", "--goal-at"]);
+    const VALUED: &[&str] = &[
+        "--limit",
+        "--namespace",
+        "--near",
+        "--project",
+        "--goal-at",
+        "--type",
+        "--from",
+    ];
+    args.reject_unknown(VALUED, VALUED)?;
+    let positional = args.positionals(VALUED);
     let root = project_root(args)?;
+    let type_pattern = args.value("--type")?;
     let goal_at = args.value("--goal-at")?;
-    let query = match goal_at {
-        Some(spec) => {
+    if type_pattern.is_some() && goal_at.is_some() {
+        return Err(Error::invalid("give either --type or --goal-at, not both"));
+    }
+    let query = match (&type_pattern, goal_at) {
+        (Some(pattern), _) => {
+            if !positional.is_empty() {
+                return Err(Error::invalid("give either a query or --type, not both"));
+            }
+            pattern.clone()
+        }
+        (None, Some(spec)) => {
             if !positional.is_empty() {
                 return Err(Error::invalid("give either a query or --goal-at, not both"));
             }
             goal_query_at(args, &root, &spec)?
         }
-        None => {
+        (None, None) => {
             if positional.is_empty() {
                 return Err(Error::invalid(
-                    "usage: tpt-lean search <query> | --goal-at FILE:LINE:COL [--namespace NS] [--near TERM]... [--limit N]",
+                    "usage: tpt-lean search <query> | --type PATTERN | --goal-at FILE:LINE:COL [--from FILE] [--namespace NS] [--near TERM]... [--limit N]",
                 ));
             }
             positional.join(" ")
@@ -482,11 +509,56 @@ fn search(ctx: &Ctx, args: &Args) -> Result<i32> {
         .with_path(dirs.index_db()));
     }
     let index = Index::open(&dirs.index_db())?;
+    if type_pattern.is_some() {
+        let opts = SearchOptions {
+            limit,
+            namespace: args.value("--namespace")?,
+            ..Default::default()
+        };
+        let hits = tpt_lean_search::search_by_type(&index, &query, &opts)?;
+        let items: Vec<TypeSearchItem> = hits
+            .into_iter()
+            .map(|h| TypeSearchItem {
+                name: h.name,
+                kind: h.kind,
+                package: h.package,
+                file: h.file,
+                type_text: h.type_text,
+                score: (h.score * 1000.0).round() / 1000.0,
+            })
+            .collect();
+        let human: Vec<String> = if items.is_empty() {
+            vec![format!(
+                "no declarations with type matching {query:?} (types come from `tpt-lean index sidecar`)"
+            )]
+        } else {
+            items
+                .iter()
+                .map(|i| format!("{:.3}  {:<9} {}  : {}", i.score, i.kind, i.name, i.type_text))
+                .collect()
+        };
+        ctx.emit_items("search", &human, &items)?;
+        return Ok(OK);
+    }
+    // `--from FILE`: symbols from modules the file imports rank higher.
+    let imported_modules = match args.value("--from")? {
+        Some(file) => {
+            let ws = WorkspaceRoot::new(&root)?;
+            let path = ws.resolve(&file)?;
+            let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
+            tpt_lean_syntax::parse(&text)
+                .imports
+                .into_iter()
+                .map(|i| i.module)
+                .collect()
+        }
+        None => Vec::new(),
+    };
     let opts = SearchOptions {
         limit,
         namespace: args.value("--namespace")?,
         near: args.values("--near"),
-        imported_modules: Vec::new(),
+        imported_modules,
     };
     let hits = tpt_lean_search::search(&index, &query, &opts)?;
     let items: Vec<SearchItem> = hits
@@ -778,22 +850,37 @@ fn mcp_stdio(_ctx: &Ctx, args: &Args) -> Result<i32> {
     Ok(OK)
 }
 
-/// `tpt-lean server start [--port N]`: serve the JSON-RPC API in the foreground.
-/// Binds 127.0.0.1 unless `server.allow_remote` is set.
+/// `tpt-lean server start [--port N]`: serve the JSON-RPC API in the foreground and record it in
+/// `.tpt-lean/server.json` so `server status` and `server stop` can find it. On Linux and macOS
+/// the default is a Unix socket at `.tpt-lean/server.sock`; `--port N` selects loopback TCP, and
+/// Windows always uses loopback TCP (default port 7373).
 fn server_start(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&["--project", "--port"], &["--project", "--port"])?;
     let root = project_root(args)?;
-    let port: u16 = match args.value("--port")? {
-        Some(p) => p.parse().map_err(|_| Error::invalid("--port must be 0-65535"))?,
-        None => 7373,
+    let transport = match args.value("--port")? {
+        Some(p) => tpt_lean_server::Transport::Tcp(
+            p.parse().map_err(|_| Error::invalid("--port must be 0-65535"))?,
+        ),
+        None => default_transport(),
     };
-    let server = tpt_lean_server::Server::new(&root)?;
-    ctx.note(&format!(
-        "serving JSON-RPC on {}:{port} (Ctrl+C to stop)",
-        server.bind_host()
-    ));
-    tpt_lean_server::serve(server, port).map_err(Error::from)?;
+    let described = match transport {
+        tpt_lean_server::Transport::Tcp(port) => format!("127.0.0.1:{port}"),
+        #[cfg(unix)]
+        tpt_lean_server::Transport::Unix => "a Unix socket in .tpt-lean".to_string(),
+    };
+    ctx.note(&format!("serving JSON-RPC on {described} (Ctrl+C to stop)"));
+    tpt_lean_server::run_foreground_on(&root, transport)?;
     Ok(OK)
+}
+
+#[cfg(unix)]
+fn default_transport() -> tpt_lean_server::Transport {
+    tpt_lean_server::Transport::Unix
+}
+
+#[cfg(not(unix))]
+fn default_transport() -> tpt_lean_server::Transport {
+    tpt_lean_server::Transport::Tcp(7373)
 }
 
 #[derive(Serialize)]

@@ -107,11 +107,11 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 - [x] Name search (exact, prefix, namespace-aware)
 - [x] Docstring search (FTS5)
 - [x] `--namespace` filter and `--near` mode
-- [ ] Ranking factors (exact name, namespace proximity, docstring relevance, imported modules first, kind, dependency distance; recency later) (done: exact name, namespace, docstring, kind, package; imported-module ranking not wired in CLI; no recency or dependency distance)
+- [ ] Ranking factors (exact name, namespace proximity, docstring relevance, imported modules first, kind, dependency distance; recency later) (done: exact name, namespace, docstring, kind, package; imported modules first via `search --from FILE`; no recency or dependency distance)
 - [x] Output: table, JSON, NDJSON
 - [x] `tpt-lean search` CLI wiring
 - [ ] Benchmarks vs targets (warm p50 < 10 ms, p95 < 50 ms) (not run)
-- [ ] Type-shaped search placeholder (completed in Phase 2) (not started)
+- [x] Type-shaped search placeholder (completed in Phase 2) (see `search --type` below)
 
 ### tpt-lean-fmt
 - [x] Trailing whitespace and final newline normalization
@@ -151,7 +151,7 @@ Crate: `tpt-lean-adapter`
 - [x] JSON-RPC LSP client over stdio to `lake serve` / `lean --server`
 - [x] Document sync, diagnostics
 - [x] Goals query (`$/lean/plainGoal`, `plainTermGoal`)
-- [ ] Document / workspace symbols
+- [x] Document / workspace symbols (answered by the LSP proxy: `textDocument/documentSymbol` from syntax, `workspace/symbol` from the index)
 - [x] Request cancellation, restarts, crash recovery
 - [ ] Version compatibility handling across Lean versions (partial: `doctor` reports the tested-version set and pin mismatches; language-server answers carry the Lean version and whether it is tested, and `explain` warns when it is not; features are deliberately not blocked; only 4.36.0 is tested)
 
@@ -169,9 +169,9 @@ Crate: `tpt-lean-adapter`
 - [x] `tpt-lean goals <file>:<line>:<col>`
 - [x] `tpt-lean explain <file>:<line>:<col>` and `--last-error` (JSON schema per spec 8.3)
 - [x] `tpt-lean context-pack <file>:<line>:<col> [--json] [--max-tokens]`
-- [ ] Context pack content: snippet, goal, hypotheses, diagnostics, imported symbols, nearby defs, relevant lemmas, recent build errors, project constraints
-- [ ] Token budgeting for context pack
-- [ ] Type-shaped search (`--type`) (goal-based search `--goal-at` is done: the goal's target words are searched in the index)
+- [x] Context pack content: snippet, goal, hypotheses, diagnostics, imported symbols, nearby defs, relevant lemmas, recent build errors, project constraints (all in the JSON pack; the human output shows snippet, goal and diagnostics)
+- [x] Token budgeting for context pack (`--max-tokens`, with a `truncated` flag)
+- [x] Type-shaped search (`--type`): declarations whose sidecar type contains every identifier of the pattern as a whole token; verified end to end with Lean 4.36.0 (goal-based search `--goal-at` is also done)
 - [x] `fmt --verify`
 - [ ] Cached diagnostics / safe cached goals in index
 - [ ] Integration tests against current + previous stable Lean (nightly optional)
@@ -206,7 +206,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 
 ### tpt-lean-server
 - [x] JSON-RPC 2.0 core (shared crate/module reused by MCP)
-- [ ] Transports: Unix domain socket (Linux/macOS), named pipe or localhost TCP (Windows)
+- [x] Transports: Unix domain socket (Linux/macOS, owner-only file) and localhost TCP (Windows; named pipe not implemented)
 - [ ] Optional localhost HTTP: `POST /v1/rpc`
 - [x] Remote access disabled by default
 - [x] Methods: `project.info`, `project.doctor`
@@ -247,7 +247,7 @@ Crate: `tpt-lean-mcp` (hand-written over serde_json)
 - [x] Tool `tpt_lean_imports_suggest`
 - [x] Tool `tpt_lean_index_status`
 - [x] Tool input/output JSON schemas
-- [ ] Resources: project info, diagnostics, index status, file symbols/ast/goals, build log, profile
+- [ ] Resources: project info, diagnostics, index status, file symbols/ast/goals, build log, profile (done: project info, diagnostics, index status, file symbols, stored profiles; missing: ast/goals, build log)
 - [x] Optional prompts: explain_lean_error, find_lemma_for_goal, reduce_proof_timeout, suggest_imports, summarize_proof_state
 - [x] Local HTTP/SSE transport
 - [x] Permission model (default read-only, explicit write/build/profile)
@@ -267,7 +267,7 @@ Crate: `tpt-lean-build`
 - [x] Build event stream (`file_started`, `file_finished`, etc.) as structured events
 - [x] `tpt-lean build` (human progress)
 - [x] `tpt-lean build --json`
-- [ ] `tpt-lean build --watch` (cross-platform file watcher; license check)
+- [x] `tpt-lean build --watch` (polling watcher with no file-watcher crate, so no new license to check)
 - [x] `tpt-lean build --explain-slow`
 - [x] `tpt-lean clean`
 - [x] `tpt-lean cache status`

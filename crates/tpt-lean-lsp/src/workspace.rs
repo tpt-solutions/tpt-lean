@@ -27,7 +27,29 @@ pub fn workspace_symbols(
         .collect())
 }
 
-fn symbol_information(project_root: &Path, row: &SymbolRow) -> Value {
+/// Declarations whose full name or short name is exactly `name`, as LSP `Location`s. Used for
+/// go-to-definition. Empty when no index exists or nothing matches.
+pub fn definitions(
+    project_root: &Path,
+    index_path: &Path,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<Value>> {
+    if !index_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let index = Index::open(index_path)?;
+    let rows = index.symbols_named(name, limit.max(1) * 10)?;
+    Ok(rows
+        .iter()
+        .filter(|row| row.name == name || row.short_name.as_deref() == Some(name))
+        .take(limit)
+        .map(|row| location(project_root, row))
+        .collect())
+}
+
+/// The file and line of a declaration, as an LSP `Location` with an empty range there.
+fn location(project_root: &Path, row: &SymbolRow) -> Value {
     let root = if row.package == "project" {
         project_root.to_path_buf()
     } else {
@@ -37,13 +59,17 @@ fn symbol_information(project_root: &Path, row: &SymbolRow) -> Value {
     let line = (row.line.max(1) - 1) as u32;
     let position = json!({ "line": line, "character": 0 });
     json!({
+        "uri": path_to_uri(&path),
+        "range": { "start": position, "end": position }
+    })
+}
+
+fn symbol_information(project_root: &Path, row: &SymbolRow) -> Value {
+    json!({
         "name": row.short_name.clone().unwrap_or_else(|| row.name.clone()),
         "kind": symbol_kind(&row.kind),
         "containerName": row.namespace,
-        "location": {
-            "uri": path_to_uri(&path),
-            "range": { "start": position, "end": position }
-        }
+        "location": location(project_root, row),
     })
 }
 
@@ -56,6 +82,29 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tpt-lsp-ws-none-{}", std::process::id()));
         let symbols = workspace_symbols(&dir, &dir.join("index.sqlite"), "anything", 10).unwrap();
         assert!(symbols.is_empty());
+    }
+
+    #[test]
+    fn definitions_match_the_exact_name_only() {
+        let dir = std::env::temp_dir().join(format!("tpt-lsp-def-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("Lib.lean"), "namespace Geo
+theorem compact_ok : True := trivial
+end Geo
+").unwrap();
+        let db = dir.join("index.sqlite");
+        let mut index = Index::open(&db).unwrap();
+        index.refresh(&tpt_lean_index::default_scan_roots(&dir, false)).unwrap();
+        drop(index);
+        let by_full = definitions(&dir, &db, "Geo.compact_ok", 5).unwrap();
+        let by_short = definitions(&dir, &db, "compact_ok", 5).unwrap();
+        let partial = definitions(&dir, &db, "compact", 5).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(by_full.len(), 1, "{by_full:?}");
+        assert_eq!(by_short.len(), 1);
+        assert_eq!(by_full[0]["range"]["start"]["line"], 1);
+        assert!(partial.is_empty());
     }
 
     #[test]
