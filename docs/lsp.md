@@ -43,6 +43,22 @@ Forwarded to Lean unchanged, with the document URI mapped to the one Lean knows:
 - Any other request, for example `$/lean/plainTermGoal` or `textDocument/definition`. These are
   not tested through the proxy.
 
+Code actions (`textDocument/codeAction`), answered by the proxy:
+
+- Quick fix `Import M`: for an `unknown identifier 'x'` or `unknown constant 'x'` diagnostic, up to
+  three project or dependency modules that declare `x` exactly, inserted after the last `import`
+  line. Modules the file already imports are not offered.
+- `Search lemmas for this goal` (command `tpt-lean.searchLemmas`): lemma candidates from the index
+  for the goal at the position.
+- `Explain this error` (command `tpt-lean.explainError`), offered when the request has
+  diagnostics: the error at the position and the goals there.
+- Lean's own code actions are forwarded and appended. If Lean does not answer, the local actions
+  are still returned.
+
+`workspace/executeCommand` runs the two commands. Each takes one argument, `{uri, line, character}`.
+Results are returned as the command result. Clients that show nothing for command results will not
+show them; the lemma search also logs its count.
+
 Notifications:
 
 - `didOpen`, `didChange` (full text), `didClose` update the session. `didOpen` re-publishes the
@@ -53,7 +69,6 @@ Notifications:
 Cancellation: `$/cancelRequest` is handled on the reader thread, so it works while the proxy is
 waiting on Lean.
 
-Not done: code actions (import suggestions, lemma search, explain-error), progress reporting, and
-incremental sync. The index-backed definition answer is matched by exact name, so it does not
+Not done: formatting code actions, progress reporting, and incremental sync. The index-backed definition answer is matched by exact name, so it does not
 resolve names through `open` or namespaces; those fall through to Lean. Editor setup is in
 [editors.md](editors.md).

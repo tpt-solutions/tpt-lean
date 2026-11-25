@@ -6,7 +6,7 @@
 
 use crate::framing::{read_message, write_message};
 use crate::symbols::document_symbols;
-use crate::workspace::{definitions, workspace_symbols};
+use crate::workspace::{definitions, import_modules, workspace_symbols};
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -17,6 +17,7 @@ use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use tpt_lean_adapter::explain::{error_at, lemma_candidates, split_goal};
 use tpt_lean_adapter::lsp::{is_cancelled, parse_plain_goals, path_to_uri};
 use tpt_lean_adapter::LspSession;
 use tpt_lean_core::dirs::ProjectDirs;
@@ -169,6 +170,8 @@ impl<W: Write> Proxy<W> {
             }
             "textDocument/hover" => self.hover(params, cancel),
             "textDocument/definition" => self.definition(params, cancel),
+            "textDocument/codeAction" => Ok(self.code_actions(params, cancel)),
+            "workspace/executeCommand" => self.execute_command(params, cancel),
             _ => {
                 let upstream = self.upstream_params(params);
                 self.session
@@ -316,6 +319,114 @@ impl<W: Write> Proxy<W> {
             .map_err(|e| with_context(e, "textDocument/definition"))
     }
 
+    /// Quick fixes (an import for an unknown identifier) and the commands for the lemma search and
+    /// the error explanation. Lean's own code actions are forwarded and appended; if Lean does not
+    /// answer, only the local actions are returned.
+    fn code_actions(&mut self, params: &Value, cancel: &CancelToken) -> Value {
+        let uri = params["textDocument"]["uri"].as_str().unwrap_or_default().to_string();
+        let range = params["range"].clone();
+        let diagnostics: Vec<Value> = params["context"]["diagnostics"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let mut actions: Vec<Value> = Vec::new();
+        let Some(doc) = self.documents.get(&uri) else {
+            return Value::Array(actions);
+        };
+        let text = doc.text.clone();
+        let line = import_insert_line(&text);
+        for d in &diagnostics {
+            let Some(name) = d["message"].as_str().and_then(unknown_name) else {
+                continue;
+            };
+            let modules = import_modules(&self.project_root, &self.index_path, &name, 3).unwrap_or_default();
+            for module in modules {
+                if already_imports(&text, &module) {
+                    continue;
+                }
+                let at = json!({ "line": line, "character": 0 });
+                actions.push(json!({
+                    "title": format!("Import {module}"),
+                    "kind": "quickfix",
+                    "diagnostics": [d],
+                    "edit": { "changes": { uri.clone(): [
+                        { "range": { "start": at, "end": at }, "newText": format!("import {module}\n") }
+                    ] } }
+                }));
+            }
+        }
+        let position = json!({ "uri": uri, "line": range["start"]["line"], "character": range["start"]["character"] });
+        actions.push(json!({
+            "title": "Search lemmas for this goal",
+            "kind": "source",
+            "command": { "title": "Search lemmas for this goal", "command": SEARCH_LEMMAS, "arguments": [position.clone()] }
+        }));
+        if !diagnostics.is_empty() {
+            actions.push(json!({
+                "title": "Explain this error",
+                "kind": "source",
+                "command": { "title": "Explain this error", "command": EXPLAIN_ERROR, "arguments": [position] }
+            }));
+        }
+        if let Ok(upstream) = self.session.request_cancellable(
+            "textDocument/codeAction",
+            self.upstream_params(params),
+            cancel,
+        ) {
+            if let Some(lean_actions) = upstream.as_array() {
+                actions.extend(lean_actions.iter().cloned());
+            }
+        }
+        Value::Array(actions)
+    }
+
+    /// Run one of this server's commands. The argument is `{uri, line, character}`.
+    fn execute_command(&mut self, params: &Value, cancel: &CancelToken) -> Result<Value> {
+        let command = params["command"].as_str().unwrap_or_default().to_string();
+        let arg = params["arguments"][0].clone();
+        let uri = arg["uri"].as_str().unwrap_or_default().to_string();
+        let line = arg["line"].as_u64().unwrap_or(0);
+        let character = arg["character"].as_u64().unwrap_or(0);
+        let position_params = json!({
+            "textDocument": { "uri": uri },
+            "position": { "line": line, "character": character }
+        });
+        match command.as_str() {
+            SEARCH_LEMMAS => {
+                let goals = self.goals_at(&position_params, cancel)?;
+                let target = goals.iter().find_map(|g| split_goal(g).1).unwrap_or_default();
+                let lemmas = lemma_candidates(&self.project_root, &target, 10);
+                self.log(&format!("tpt-lean: {} lemma candidate(s) for the goal", lemmas.len()))?;
+                Ok(Value::Array(lemmas))
+            }
+            EXPLAIN_ERROR => {
+                let diagnostics = self.published.get(&uri).cloned().unwrap_or_default();
+                let file = uri_to_path(&uri).map(|p| p.display().to_string()).unwrap_or_default();
+                let error = error_at(&diagnostics, &file, line, character);
+                // The explanation is still useful without goals (for example when Lean is down).
+                let goals = self.goals_at(&position_params, cancel).unwrap_or_default();
+                Ok(json!({
+                    "error": error.map(|e| json!({ "message": e.message, "line": e.line, "column": e.column })),
+                    "goals": goals,
+                }))
+            }
+            other => Err(Error::new(
+                ErrorCode::InvalidArgument,
+                format!("unknown command {other:?}"),
+            )),
+        }
+    }
+
+    /// Plain goals at a position, from Lean.
+    fn goals_at(&mut self, position_params: &Value, cancel: &CancelToken) -> Result<Vec<String>> {
+        let upstream = self.upstream_params(position_params);
+        let result = self
+            .session
+            .request_cancellable("$/lean/plainGoal", upstream, cancel)
+            .map_err(|e| with_context(e, "$/lean/plainGoal"))?;
+        Ok(parse_plain_goals(&result))
+    }
+
     /// Hover shows the goal at the position, from `$/lean/plainGoal`.
     fn hover(&mut self, params: &Value, cancel: &CancelToken) -> Result<Value> {
         let upstream = self.upstream_params(params);
@@ -410,13 +521,48 @@ fn reader_loop<R: BufRead>(mut input: R, tx: Sender<Value>, cancels: CancelTable
     }
 }
 
+/// Command that searches the index for lemmas about the goal at a position.
+pub const SEARCH_LEMMAS: &str = "tpt-lean.searchLemmas";
+/// Command that explains the error at a position, with the goal there.
+pub const EXPLAIN_ERROR: &str = "tpt-lean.explainError";
+
+/// The name in a Lean "unknown identifier 'x'" or "unknown constant 'x'" message.
+pub fn unknown_name(message: &str) -> Option<String> {
+    for prefix in ["unknown identifier '", "unknown constant '"] {
+        if let Some(rest) = message.split(prefix).nth(1) {
+            let name = rest.split('\'').next()?;
+            if !name.is_empty() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// Line where a new `import` can go: after the last existing import, or the first line.
+pub fn import_insert_line(text: &str) -> u64 {
+    text.lines()
+        .enumerate()
+        .filter(|(_, l)| l.trim_start().starts_with("import "))
+        .map(|(i, _)| i as u64 + 1)
+        .last()
+        .unwrap_or(0)
+}
+
+/// Whether the document already imports `module`.
+pub fn already_imports(text: &str, module: &str) -> bool {
+    text.lines().any(|l| l.trim() == format!("import {module}"))
+}
+
 fn initialize_result() -> Value {
     json!({
         "capabilities": {
             "textDocumentSync": { "openClose": true, "change": 1 },
             "documentSymbolProvider": true,
             "workspaceSymbolProvider": true,
-            "hoverProvider": true
+            "hoverProvider": true,
+            "codeActionProvider": { "codeActionKinds": ["quickfix", "source"] },
+            "executeCommandProvider": { "commands": [SEARCH_LEMMAS, EXPLAIN_ERROR] }
         },
         "serverInfo": { "name": "tpt-lean-lsp", "version": env!("CARGO_PKG_VERSION") }
     })
@@ -505,6 +651,89 @@ mod tests {
     use super::*;
     use std::io::{BufReader, Cursor};
     use std::time::Duration;
+
+    #[test]
+    fn code_actions_offer_imports_and_commands_without_lean() {
+        let dir = std::env::temp_dir().join(format!("tpt-lsp-actions-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join(".tpt-lean")).unwrap();
+        std::fs::write(dir.join("Lib.lean"), "theorem widget_size_ok : True := trivial
+").unwrap();
+        let mut index = tpt_lean_index::Index::open(&ProjectDirs::new(&dir).index_db()).unwrap();
+        index.refresh(&tpt_lean_index::default_scan_roots(&dir, false)).unwrap();
+        drop(index);
+        let session = LspSession::new(
+            Path::new("/nonexistent/tpt-lean-test-server"),
+            &[],
+            &dir,
+            Duration::from_secs(5),
+        );
+        let uri = "file:///tmp/tpt-proxy-test/Main.lean";
+        let text = "import Std
+
+#check widget_size_ok
+";
+        let range = json!({"start": {"line": 2, "character": 7}, "end": {"line": 2, "character": 21}});
+        let diagnostic = json!({
+            "range": range, "severity": 1,
+            "message": "unknown identifier 'widget_size_ok'"
+        });
+        let input = frames(&[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}),
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": uri, "languageId": "lean4", "version": 1, "text": text}}}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/codeAction", "params": {
+                "textDocument": {"uri": uri}, "range": range,
+                "context": {"diagnostics": [diagnostic]}}}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "workspace/executeCommand", "params": {
+                "command": EXPLAIN_ERROR,
+                "arguments": [{"uri": uri, "line": 2, "character": 7}]}}),
+            json!({"jsonrpc": "2.0", "id": 4, "method": "shutdown"}),
+            json!({"jsonrpc": "2.0", "method": "exit"}),
+        ]);
+        let mut proxy = Proxy::new(&dir, session, Vec::new());
+        proxy.serve(BufReader::new(Cursor::new(input))).unwrap();
+        let out = read_back(proxy.output());
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let init = out.iter().find(|m| m["id"] == 1).expect("initialize");
+        assert!(init["result"]["capabilities"]["codeActionProvider"].is_object());
+        assert_eq!(init["result"]["capabilities"]["executeCommandProvider"]["commands"][1], EXPLAIN_ERROR);
+
+        let actions = out.iter().find(|m| m["id"] == 2).expect("codeAction")["result"]
+            .as_array()
+            .unwrap()
+            .clone();
+        let import = actions
+            .iter()
+            .find(|a| a["title"] == "Import Lib")
+            .expect("import quick fix");
+        assert_eq!(import["kind"], "quickfix");
+        let edit = &import["edit"]["changes"][uri][0];
+        assert_eq!(edit["range"]["start"]["line"], 1);
+        assert_eq!(edit["newText"], "import Lib
+");
+        let titles: Vec<&str> = actions.iter().filter_map(|a| a["title"].as_str()).collect();
+        assert!(titles.contains(&"Search lemmas for this goal"), "{titles:?}");
+        assert!(titles.contains(&"Explain this error"), "{titles:?}");
+
+        let explained = out.iter().find(|m| m["id"] == 3).expect("explain");
+        assert!(explained["result"]["goals"].is_array(), "{explained}");
+    }
+
+    #[test]
+    fn unknown_names_and_import_lines() {
+        assert_eq!(unknown_name("unknown identifier 'Nat.foo'").as_deref(), Some("Nat.foo"));
+        assert_eq!(unknown_name("unknown constant 'bar'").as_deref(), Some("bar"));
+        assert_eq!(unknown_name("type mismatch"), None);
+        assert_eq!(unknown_name("unknown identifier ''"), None);
+        let text = "import Std\nimport Lake.Util\n\ndef x := 1\n";
+        assert_eq!(import_insert_line(text), 2);
+        assert_eq!(import_insert_line("def x := 1\n"), 0);
+        assert!(already_imports(text, "Std"));
+        assert!(!already_imports(text, "Geo"));
+    }
 
     #[test]
     fn word_at_finds_dotted_names_and_handles_edges() {

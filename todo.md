@@ -305,7 +305,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [x] Request cancellation
 - [x] Lightweight syntax features before elaboration finishes
 - [ ] Features: go-to-definition, hover, document/workspace symbols, diagnostics, goal display, proof-state panel support
-- [ ] Code actions: import suggestions, lemma search, formatting, explain-error
+- [ ] Code actions: import suggestions, lemma search, formatting, explain-error (done: import quick fix, lemma search and explain-error as commands; formatting not done)
 - [x] `tpt-lean lsp`
 - [x] Editor setup docs (VS Code, Neovim, Emacs, Helix) (`docs/editors.md`; settings not yet tried in each editor)
 

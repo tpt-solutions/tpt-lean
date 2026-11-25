@@ -48,6 +48,35 @@ pub fn definitions(
         .collect())
 }
 
+/// Modules that declare `name` exactly (full or short name), for import quick fixes. Project
+/// modules come first, then dependencies; each module appears once. Empty without an index.
+pub fn import_modules(
+    _project_root: &Path,
+    index_path: &Path,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<String>> {
+    if !index_path.is_file() {
+        return Ok(Vec::new());
+    }
+    let index = Index::open(index_path)?;
+    let mut rows = index.symbols_named(name, limit.max(1) * 20)?;
+    rows.retain(|row| row.name == name || row.short_name.as_deref() == Some(name));
+    rows.sort_by_key(|row| (row.package != "project", row.package.clone(), row.file.clone()));
+    let mut modules: Vec<String> = Vec::new();
+    for row in rows {
+        if let Some(module) = tpt_lean_index::module_name_of(&row.file) {
+            if !modules.contains(&module) {
+                modules.push(module);
+            }
+        }
+        if modules.len() >= limit {
+            break;
+        }
+    }
+    Ok(modules)
+}
+
 /// The file and line of a declaration, as an LSP `Location` with an empty range there.
 fn location(project_root: &Path, row: &SymbolRow) -> Value {
     let root = if row.package == "project" {
