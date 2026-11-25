@@ -29,7 +29,7 @@ pub use last_diagnostics::{
     last_diagnostics_path, load_last_diagnostics, save_last_diagnostics, LastDiagnostics,
 };
 pub use lemmas::suggest_lemmas;
-pub use runner::{run, ProcessOutput};
+pub use runner::{run, run_streaming, LineSink, ProcessOutput};
 pub use session::LspSession;
 
 /// Locations of the Lean toolchain executables.
@@ -150,8 +150,20 @@ pub fn execute(
     policy: &ProcessPolicy,
     cancel: &CancelToken,
 ) -> Result<CommandResult> {
+    execute_streaming(toolchain, command, cwd, policy, cancel, None)
+}
+
+/// Like [`execute`], and also passes each output line to `lines` while the command runs.
+pub fn execute_streaming(
+    toolchain: &Toolchain,
+    command: &Command,
+    cwd: Option<&Path>,
+    policy: &ProcessPolicy,
+    cancel: &CancelToken,
+    lines: Option<runner::LineSink>,
+) -> Result<CommandResult> {
     let (program, args) = command.to_invocation(toolchain)?;
-    let output = run(&program, &args, cwd, policy, cancel)?;
+    let output = runner::run_streaming(&program, &args, cwd, policy, cancel, lines)?;
     let diagnostics = parse_lean_output(&format!("{}\n{}", output.stdout, output.stderr));
     Ok(CommandResult { output, diagnostics })
 }

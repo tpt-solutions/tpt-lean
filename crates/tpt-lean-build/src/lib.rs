@@ -6,9 +6,8 @@
 //! Lake remains the authority on what to rebuild. The cache reports hits and misses and lets
 //! watch mode skip rebuilds whose inputs are unchanged; it never serves outputs on its own.
 //!
-//! Not implemented: live streaming of Lake output (the adapter captures output until Lake exits,
-//! so file events are replayed afterwards), parallel orchestration beyond Lake's own scheduler (see docs/build.md, Parallel orchestration),
-//! shared team and CI caches, and deep build graphs.
+//! Not implemented: parallel orchestration beyond Lake's own scheduler (see docs/build.md,
+//! Parallel orchestration), shared team and CI caches, and deep build graphs.
 
 pub mod cache;
 pub mod events;
@@ -22,7 +21,9 @@ use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-use tpt_lean_adapter::{discover_toolchain, execute, lean_policy, Command, Diagnostic};
+use std::sync::Arc;
+use tpt_lean_adapter::{discover_toolchain, execute_streaming, lean_policy, Command, Diagnostic, LineSink};
+use tpt_lean_core::{Error, ErrorCode};
 use tpt_lean_core::policy::CancelToken;
 use tpt_lean_core::Result;
 
@@ -53,8 +54,8 @@ pub(crate) fn new_run_id() -> String {
 ///
 /// Events are delivered to `sink` in order: `build_started`, `cache_hit` or `cache_miss`, one or
 /// more `file_started` / `file_finished` / `file_failed` groups, `diagnostic`s, and finally
-/// `build_finished`. Lake's output is captured by the adapter, so the file events are replayed
-/// after Lake exits. A successful build is recorded in the disk cache.
+/// `build_finished`. Lake's output is read line by line while it runs, so file events arrive as Lake
+/// reports them. A successful build is recorded in the disk cache.
 ///
 /// `timeout_secs` bounds the Lake process; on timeout the outcome has `timed_out: true`.
 pub fn build(
@@ -117,7 +118,57 @@ pub fn build_cancellable(
         target: target.map(str::to_string),
     };
     let policy = lean_policy(timeout_secs);
-    let result = execute(&tc, &lake, Some(project_root), &policy, cancel);
+    // Lake's output is read on another thread and sent here line by line, so progress events reach
+    // the sink while the build runs. The worker's result is collected once the lines are drained.
+    let (tx, rx) = std::sync::mpsc::channel::<progress::Progress>();
+    let line_sink: LineSink = Arc::new(move |line: &str| {
+        if let Some(p) = progress::parse_line(line) {
+            let _ = tx.send(p);
+        }
+    });
+    let mut built = 0usize;
+    let mut failed = 0usize;
+    let result = std::thread::scope(|scope| {
+        let worker = scope.spawn(|| execute_streaming(&tc, &lake, Some(project_root), &policy, cancel, Some(line_sink)));
+        for p in rx {
+            let t = now_ms();
+            match p {
+                progress::Progress::Started { module } => {
+                    sink(&BuildEvent::FileStarted {
+                        run_id: run_id.clone(),
+                        file: display_file(&scan, &module),
+                        timestamp_ms: t,
+                    });
+                }
+                progress::Progress::Finished { module, duration_ms } => {
+                    built += 1;
+                    let file = display_file(&scan, &module);
+                    emit_started_from_duration(sink, &run_id, &file, t0, t, duration_ms);
+                    sink(&BuildEvent::FileFinished {
+                        run_id: run_id.clone(),
+                        file,
+                        timestamp_ms: t,
+                        duration_ms,
+                    });
+                }
+                progress::Progress::Failed { module, duration_ms } => {
+                    failed += 1;
+                    let file = display_file(&scan, &module);
+                    emit_started_from_duration(sink, &run_id, &file, t0, t, duration_ms);
+                    sink(&BuildEvent::FileFailed {
+                        run_id: run_id.clone(),
+                        file,
+                        timestamp_ms: t,
+                        duration_ms,
+                    });
+                }
+                progress::Progress::Artifact { .. } | progress::Progress::Summary { .. } => {}
+            }
+        }
+        worker
+            .join()
+            .unwrap_or_else(|_| Err(Error::new(ErrorCode::Internal, "the Lake worker thread panicked")))
+    });
     let t1 = now_ms();
     let res = match result {
         Ok(r) => r,
@@ -126,47 +177,6 @@ pub fn build_cancellable(
             return Err(e);
         }
     };
-
-    // Lake prints progress on stdout; parse stderr too in case a Lake version differs.
-    let mut lines = progress::parse_output(&res.output.stdout);
-    lines.extend(progress::parse_output(&res.output.stderr));
-
-    let mut built = 0usize;
-    let mut failed = 0usize;
-    for p in &lines {
-        match p {
-            progress::Progress::Started { module } => {
-                sink(&BuildEvent::FileStarted {
-                    run_id: run_id.clone(),
-                    file: display_file(&scan, module),
-                    timestamp_ms: t1,
-                });
-            }
-            progress::Progress::Finished { module, duration_ms } => {
-                built += 1;
-                let file = display_file(&scan, module);
-                emit_started_from_duration(sink, &run_id, &file, t0, t1, *duration_ms);
-                sink(&BuildEvent::FileFinished {
-                    run_id: run_id.clone(),
-                    file,
-                    timestamp_ms: t1,
-                    duration_ms: *duration_ms,
-                });
-            }
-            progress::Progress::Failed { module, duration_ms } => {
-                failed += 1;
-                let file = display_file(&scan, module);
-                emit_started_from_duration(sink, &run_id, &file, t0, t1, *duration_ms);
-                sink(&BuildEvent::FileFailed {
-                    run_id: run_id.clone(),
-                    file,
-                    timestamp_ms: t1,
-                    duration_ms: *duration_ms,
-                });
-            }
-            progress::Progress::Artifact { .. } | progress::Progress::Summary { .. } => {}
-        }
-    }
 
     for d in &res.diagnostics {
         sink(&diagnostic_event(&run_id, t1, d));

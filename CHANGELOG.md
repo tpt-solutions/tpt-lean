@@ -36,6 +36,12 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - Measured: incremental index refresh after one edit in a 500-file project, p50 27 ms (full refresh 372 ms).
 - Server: optional loopback HTTP transport, `tpt-lean server start --http PORT`, serving
   `POST /v1/rpc` with a Host check that refuses non-loopback names.
+- `tpt-lean build` reports Lake's progress as it runs: file and diagnostic events are emitted live
+  (`tpt-lean-adapter::run_streaming` passes output lines to the build as they are read).
+- Known: a full `tpt-lean build` of a 41-module project took 14-21 s, and `lake build` run
+  directly from the same shell took 6.5 s. A bare Rust program started from the same shell showed the
+  same slowdown, so the cause is in how Lake runs under a Rust parent started from bash, not in
+  tpt-lean's code. Started from PowerShell the same harness took about 10 s. Not explained yet.
 - Known: a cache-hit `tpt-lean build` took about 2.6 s on a small project, against about 1.1 s for a
   direct `lake build` that does nothing. The cache key is about 1 ms. The extra time is in the Lake
   process that tpt-lean starts (about 2.4 s when started from Rust, 1.1 s from a shell); the cause

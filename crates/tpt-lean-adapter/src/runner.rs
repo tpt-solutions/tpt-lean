@@ -63,6 +63,23 @@ pub fn run(
     policy: &ProcessPolicy,
     cancel: &CancelToken,
 ) -> Result<ProcessOutput> {
+    run_streaming(program, args, cwd, policy, cancel, None)
+}
+
+/// Receives each complete line of a process's stdout and stderr as it is read. Called from the
+/// reader threads, so it must be cheap and thread-safe.
+pub type LineSink = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// Like [`run`], and also passes each complete output line to `lines` while the process runs.
+/// Lines are split on `\n` and `\r`; the output is still collected as in [`run`].
+pub fn run_streaming(
+    program: &Path,
+    args: &[String],
+    cwd: Option<&Path>,
+    policy: &ProcessPolicy,
+    cancel: &CancelToken,
+    lines: Option<LineSink>,
+) -> Result<ProcessOutput> {
     let mut cmd = Command::new(program);
     cmd.args(args)
         .stdin(Stdio::null())
@@ -96,8 +113,9 @@ pub fn run(
     let stdout = child.stdout.take().expect("stdout is piped");
     let stderr = child.stderr.take().expect("stderr is piped");
     let (b1, b2) = (budget.clone(), budget.clone());
-    let out_handle = thread::spawn(move || read_limited(stdout, &b1));
-    let err_handle = thread::spawn(move || read_limited(stderr, &b2));
+    let (l1, l2) = (lines.clone(), lines);
+    let out_handle = thread::spawn(move || read_limited(stdout, &b1, l1.as_ref()));
+    let err_handle = thread::spawn(move || read_limited(stderr, &b2, l2.as_ref()));
 
     let mut timed_out = false;
     let mut cancelled = false;
@@ -218,8 +236,9 @@ fn kill_tree(pid: u32) {
 
 /// Read `reader` to EOF, keeping at most the remaining shared budget. Once the budget is gone,
 /// keep draining (so the child never blocks on a full pipe) but store nothing more.
-fn read_limited<R: Read>(mut reader: R, budget: &Budget) -> (String, bool) {
+fn read_limited<R: Read>(mut reader: R, budget: &Budget, lines: Option<&LineSink>) -> (String, bool) {
     let mut kept: Vec<u8> = Vec::new();
+    let mut pending: Vec<u8> = Vec::new();
     let mut buf = [0u8; 8192];
     let mut truncated = false;
     loop {
@@ -229,12 +248,36 @@ fn read_limited<R: Read>(mut reader: R, budget: &Budget) -> (String, bool) {
         };
         let granted = take_budget(&budget.remaining, n);
         kept.extend_from_slice(&buf[..granted]);
+        if let Some(sink) = lines {
+            emit_lines(&mut pending, &buf[..granted], sink);
+        }
         if granted < n {
             truncated = true;
             budget.exceeded.store(true, Ordering::SeqCst);
         }
     }
+    if let Some(sink) = lines {
+        // A last line without a line ending is still a line.
+        if !pending.is_empty() {
+            sink(&String::from_utf8_lossy(&pending));
+        }
+    }
     (String::from_utf8_lossy(&kept).into_owned(), truncated)
+}
+
+/// Pass each complete line in `pending + chunk` to `sink`, keeping the unfinished tail in
+/// `pending`. Empty lines are skipped (Lake prints progress with carriage returns).
+fn emit_lines(pending: &mut Vec<u8>, chunk: &[u8], sink: &LineSink) {
+    for &byte in chunk {
+        if byte == b'\n' || byte == b'\r' {
+            if !pending.is_empty() {
+                sink(&String::from_utf8_lossy(pending));
+                pending.clear();
+            }
+        } else {
+            pending.push(byte);
+        }
+    }
 }
 
 /// Atomically take up to `want` bytes from the shared budget; returns how many were granted.
@@ -263,6 +306,26 @@ pub fn policy_with_timeout(seconds: u64) -> ProcessPolicy {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[test]
+    fn emit_lines_splits_on_newlines_and_carriage_returns() {
+        use std::sync::Mutex;
+        let seen: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink: LineSink = {
+            let seen = Arc::clone(&seen);
+            Arc::new(move |line: &str| seen.lock().unwrap().push(line.to_string()))
+        };
+        let mut pending = Vec::new();
+        emit_lines(&mut pending, b"[1/3] Built A\r[2/3] Bui", &sink);
+        emit_lines(&mut pending, b"lt B
+
+[3/3] Done", &sink);
+        assert_eq!(pending, b"[3/3] Done");
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec!["[1/3] Built A", "[2/3] Built B"]
+        );
+    }
 
     #[test]
     fn captures_stdout() {

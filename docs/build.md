@@ -23,7 +23,8 @@ otherwise the module name. `duration_ms` is present when Lake reports one.
 
 Known limits:
 
-- The adapter captures Lake's output until Lake exits, so file events are replayed after the build.
+- Lake's output is read line by line while it runs (`tpt-lean-adapter::run_streaming`), so file and
+  diagnostic events are emitted as Lake reports them. The full output is still kept for the result.
   Live progress needs a streaming option in the adapter.
 - Lake prints no start line for successful modules. `file_started` is derived from the reported
   duration, so its `timestamp_ms` is approximate.
