@@ -65,7 +65,7 @@ Source:
 - `imports --suggest "QUERY" [--limit N]`: modules whose declarations match the query (needs an index)
 - `imports --minimize FILE`: prints the proposed removal as a diff. The file is never written.
 - `imports --cost`: direct import counts per module (structural estimate, not compile time)
-- `search <query> [--namespace NS] [--near TERM]... [--limit N]`
+- `search <query> [--namespace NS] [--near TERM]... [--limit N]`, or `search --goal-at FILE:LINE:COL` to search for lemmas about the goal at a position (the goal's target words are the query; it starts the Lean language server, and it cannot be combined with a query)
 - `index scan | refresh | status | clear`
 
 Lean (needs `lean` and `lake` on PATH or in `~/.elan/bin`):

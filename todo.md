@@ -171,7 +171,7 @@ Crate: `tpt-lean-adapter`
 - [x] `tpt-lean context-pack <file>:<line>:<col> [--json] [--max-tokens]`
 - [ ] Context pack content: snippet, goal, hypotheses, diagnostics, imported symbols, nearby defs, relevant lemmas, recent build errors, project constraints
 - [ ] Token budgeting for context pack
-- [ ] Type-shaped search (`--type`) and goal-based search (`--goal-at`)
+- [ ] Type-shaped search (`--type`) (goal-based search `--goal-at` is done: the goal's target words are searched in the index)
 - [x] `fmt --verify`
 - [ ] Cached diagnostics / safe cached goals in index
 - [ ] Integration tests against current + previous stable Lean (nightly optional)

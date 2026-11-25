@@ -131,6 +131,16 @@ pub fn split_goal(goal: &str) -> (Vec<String>, Option<String>) {
     (hyps, target)
 }
 
+/// A search query from a goal target: identifier characters are kept and everything else
+/// becomes a space, so symbols and operators in the target do not disturb the search.
+pub fn goal_query(target: &str) -> String {
+    let cleaned: String = target
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { ' ' })
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// Lemma candidates for a goal from the project index, as JSON objects. Empty when the project
 /// has no index yet.
 pub fn lemma_candidates(root: &Path, goal: &str, limit: usize) -> Vec<Value> {
@@ -157,6 +167,14 @@ mod tests {
         assert_eq!(hyps, vec!["a b : Nat".to_string(), "h : a = b".to_string()]);
         assert_eq!(target.as_deref(), Some("b = a"));
         assert_eq!(split_goal(""), (Vec::new(), None));
+    }
+
+    #[test]
+    fn goal_query_keeps_identifiers_only() {
+        assert_eq!(goal_query("a + b = b + a"), "a b b a");
+        assert_eq!(goal_query("Nat.add_comm x"), "Nat add_comm x");
+        assert_eq!(goal_query("⊢ ∀ n, 0 ≤ n"), "n 0 n");
+        assert_eq!(goal_query("+ = "), "");
     }
 
     #[test]

@@ -411,25 +411,67 @@ struct SearchItem {
     docstring: Option<String>,
 }
 
+/// The query for `search --goal-at`: the goal target at a position, as the language server
+/// reports it. Fails when there is no goal there.
+fn goal_query_at(args: &Args, root: &Path, spec: &str) -> Result<String> {
+    let (file, line, column) = parse_position(spec)?;
+    let cfg = load_config(args, root)?;
+    let ws = WorkspaceRoot::new(root)?;
+    let path = ws.resolve(&file)?;
+    let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
+    let snap = adapter::explain::snapshot_at(
+        root,
+        &path,
+        &file,
+        &text,
+        line,
+        column,
+        std::time::Duration::from_secs(cfg.security.command_timeout_seconds),
+    )?;
+    let target = snap
+        .goals
+        .first()
+        .and_then(|g| split_goal(g).1)
+        .ok_or_else(|| Error::invalid(format!("no goal at {spec}")))?;
+    let query = adapter::explain::goal_query(&target);
+    if query.is_empty() {
+        return Err(Error::invalid(format!(
+            "the goal at {spec} has no searchable terms"
+        )));
+    }
+    Ok(query)
+}
+
 fn search(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(
-        &["--limit", "--namespace", "--near", "--project"],
-        &["--limit", "--namespace", "--near", "--project"],
+        &["--limit", "--namespace", "--near", "--project", "--goal-at"],
+        &["--limit", "--namespace", "--near", "--project", "--goal-at"],
     )?;
-    let positional = args.positionals(&["--limit", "--namespace", "--near", "--project"]);
-    if positional.is_empty() {
-        return Err(Error::invalid(
-            "usage: tpt-lean search <query> [--namespace NS] [--near TERM]... [--limit N]",
-        ));
-    }
-    let query = positional.join(" ");
+    let positional = args.positionals(&["--limit", "--namespace", "--near", "--project", "--goal-at"]);
+    let root = project_root(args)?;
+    let goal_at = args.value("--goal-at")?;
+    let query = match goal_at {
+        Some(spec) => {
+            if !positional.is_empty() {
+                return Err(Error::invalid("give either a query or --goal-at, not both"));
+            }
+            goal_query_at(args, &root, &spec)?
+        }
+        None => {
+            if positional.is_empty() {
+                return Err(Error::invalid(
+                    "usage: tpt-lean search <query> | --goal-at FILE:LINE:COL [--namespace NS] [--near TERM]... [--limit N]",
+                ));
+            }
+            positional.join(" ")
+        }
+    };
     let limit = match args.value("--limit")? {
         Some(v) => v
             .parse::<usize>()
             .map_err(|_| Error::invalid("--limit must be a number"))?,
         None => 10,
     };
-    let root = project_root(args)?;
     let dirs = ProjectDirs::new(&root);
     if !dirs.index_db().exists() {
         return Err(Error::new(
