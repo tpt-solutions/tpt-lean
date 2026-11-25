@@ -15,6 +15,8 @@ use crate::{app_error, lock, MethodResult, RpcError, Server, APP_ERROR, INVALID_
 
 /// Builds kept for `build.status`. Older finished builds are dropped.
 const MAX_KEPT: usize = 20;
+/// Events kept per build for the event stream. Later events of a very long build are dropped.
+const MAX_EVENTS: usize = 10_000;
 
 static NEXT_BUILD: AtomicU64 = AtomicU64::new(1);
 
@@ -30,6 +32,14 @@ pub(crate) enum BuildState {
 pub(crate) struct BuildJob {
     pub(crate) id: String,
     pub(crate) cancel: CancelToken,
+    pub(crate) state: Arc<Mutex<BuildState>>,
+    /// Build events as JSON, in the order they happened (see `GET /v1/events`).
+    pub(crate) events: Arc<Mutex<Vec<Value>>>,
+}
+
+/// What the event stream needs from a build.
+pub(crate) struct BuildStream {
+    pub(crate) events: Arc<Mutex<Vec<Value>>>,
     pub(crate) state: Arc<Mutex<BuildState>>,
 }
 
@@ -80,6 +90,7 @@ impl Server {
             id: id.clone(),
             cancel: CancelToken::new(),
             state: Arc::new(Mutex::new(BuildState::Running)),
+            events: Arc::new(Mutex::new(Vec::new())),
         };
         builds.jobs.push(job.clone());
         while builds.jobs.len() > MAX_KEPT {
@@ -92,12 +103,20 @@ impl Server {
         let timeout = self.config().security.command_timeout_seconds;
         let thread_job = job.clone();
         std::thread::spawn(move || {
+            let events = Arc::clone(&thread_job.events);
             let outcome = tpt_lean_build::build_cancellable(
                 &root,
                 target.as_deref(),
                 timeout,
                 &thread_job.cancel,
-                &mut |_| {},
+                &mut |e| {
+                    if let Ok(value) = serde_json::to_value(e) {
+                        let mut kept = lock(&events);
+                        if kept.len() < MAX_EVENTS {
+                            kept.push(value);
+                        }
+                    }
+                },
             );
             let cancelled = thread_job.cancel.is_cancelled();
             let summary = match outcome {
@@ -128,6 +147,19 @@ impl Server {
         });
 
         Ok(json!({ "run_id": id, "status": "running" }))
+    }
+
+    /// The event stream of the build with `run_id`, or of the latest build when `run_id` is `None`.
+    pub(crate) fn build_stream(&self, run_id: Option<&str>) -> Option<BuildStream> {
+        let builds = lock(&self.builds);
+        let job = match run_id {
+            Some(id) => builds.jobs.iter().find(|j| j.id == id)?,
+            None => builds.jobs.last()?,
+        };
+        Some(BuildStream {
+            events: Arc::clone(&job.events),
+            state: Arc::clone(&job.state),
+        })
     }
 
     /// The latest build, or the build with `run_id`. `status` is `none` when no build was started.

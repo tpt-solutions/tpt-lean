@@ -2,7 +2,9 @@
 //! Loopback HTTP transport: `POST /v1/rpc` carries one JSON-RPC message per request.
 //!
 //! - The body is a single JSON-RPC request or notification. A notification gets `204 No Content`.
-//! - Only `POST /v1/rpc` is served. Other paths get `404`, other methods `405`.
+//! - `GET /v1/events?run_id=ID` streams the events of a build as Server-Sent Events (the latest
+//!   build when `run_id` is omitted). The stream ends with an `event: done` carrying the summary.
+//! - Other paths get `404`, other methods `405`.
 //! - The `Host` header must name the loopback address (`127.0.0.1` or `localhost`), which blocks
 //!   DNS-rebinding attacks from a browser on another site.
 //! - Each connection carries one request and is then closed.
@@ -17,10 +19,15 @@ use std::thread;
 
 use serde_json::{json, Value};
 
-use crate::{Server, MAX_REQUEST_BYTES};
+use std::time::Duration;
+
+use crate::builds::BuildState;
+use crate::{lock, Server, MAX_REQUEST_BYTES};
 
 /// Path of the JSON-RPC endpoint.
 pub const RPC_PATH: &str = "/v1/rpc";
+/// Path of the build event stream.
+pub const EVENTS_PATH: &str = "/v1/events";
 
 /// Serve HTTP on `listener` until the server shuts down. Each connection gets its own thread.
 pub fn serve_http(server: Arc<Server>, listener: TcpListener) -> io::Result<()> {
@@ -72,7 +79,11 @@ pub fn serve_http_connection(server: &Server, mut stream: TcpStream) -> io::Resu
     if !host.as_deref().is_some_and(is_loopback_host) {
         return respond(&mut stream, 403, "Forbidden", None, &json!({"error": "host must be loopback"}));
     }
-    if target != RPC_PATH {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    if method == "GET" && path == EVENTS_PATH {
+        return serve_events(server, &mut stream, query);
+    }
+    if path != RPC_PATH {
         return respond(&mut stream, 404, "Not Found", None, &json!({"error": "unknown path"}));
     }
     if method != "POST" {
@@ -113,6 +124,61 @@ pub fn is_loopback_host(host: &str) -> bool {
         _ => host,
     };
     matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+/// Stream the events of one build as Server-Sent Events, then a `done` event with its summary.
+/// Events are read from the build as they are recorded, so the stream follows a running build.
+fn serve_events(server: &Server, stream: &mut TcpStream, query: &str) -> io::Result<()> {
+    let run_id = query
+        .split('&')
+        .filter_map(|pair| pair.split_once('='))
+        .find(|(key, _)| *key == "run_id")
+        .map(|(_, value)| value.to_string());
+    let Some(build) = server.build_stream(run_id.as_deref()) else {
+        return respond(stream, 404, "Not Found", None, &json!({"error": "no such build"}));
+    };
+    stream.write_all(
+        b"HTTP/1.1 200 OK
+Content-Type: text/event-stream
+Cache-Control: no-cache
+Connection: close
+
+",
+    )?;
+    let mut sent = 0usize;
+    loop {
+        // Read the state first: once a build is finished, all its events are already recorded.
+        let finished = match &*lock(&build.state) {
+            BuildState::Finished(summary) => Some(summary.clone()),
+            BuildState::Running => None,
+        };
+        let batch: Vec<Value> = {
+            let events = lock(&build.events);
+            events[sent.min(events.len())..].to_vec()
+        };
+        for event in &batch {
+            let name = event["event"].as_str().unwrap_or("message");
+            write!(stream, "event: {name}
+data: {event}
+
+")?;
+            sent += 1;
+        }
+        if let Some(summary) = finished {
+            write!(stream, "event: done
+data: {summary}
+
+")?;
+            stream.flush()?;
+            break;
+        }
+        stream.flush()?;
+        if server.is_shutdown_requested() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    Ok(())
 }
 
 fn respond(

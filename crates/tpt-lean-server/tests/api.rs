@@ -924,3 +924,50 @@ fn http_transport_serves_rpc_and_refuses_other_hosts_and_methods() {
     assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
     runner.join().unwrap().unwrap();
 }
+
+#[test]
+fn build_events_stream_as_server_sent_events_and_end_with_done() {
+    let project = TempProject::new("events", None);
+    let root = project.path().to_path_buf();
+    let runner = {
+        let root = root.clone();
+        thread::spawn(move || state::run_foreground_with_http(&root, tpt_lean_server::Transport::Tcp(0), Some(0)))
+    };
+    let st = wait_for_state(&root);
+    let http_port = st.http_port.expect("HTTP port recorded");
+    let run = format!(
+        "POST /v1/rpc HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: {}\r\n\r\n{}",
+        r#"{"jsonrpc":"2.0","id":1,"method":"build.run","params":{}}"#.len(),
+        r#"{"jsonrpc":"2.0","id":1,"method":"build.run","params":{}}"#
+    );
+    let (status, body) = http_exchange(http_port, &run);
+    assert_eq!(status, 200, "{body}");
+
+    // The stream follows the build and ends with `event: done`, which the server sends only after
+    // the build has finished.
+    let stream = "GET /v1/events HTTP/1.1
+Host: 127.0.0.1
+
+".to_string();
+    let mut raw = String::new();
+    {
+        use std::io::Read as _;
+        let mut conn = TcpStream::connect((Ipv4Addr::LOCALHOST, http_port)).unwrap();
+        conn.set_read_timeout(Some(Duration::from_secs(120))).unwrap();
+        conn.write_all(stream.as_bytes()).unwrap();
+        conn.read_to_string(&mut raw).unwrap();
+    }
+    assert!(raw.starts_with("HTTP/1.1 200 OK"), "{raw}");
+    assert!(raw.contains("Content-Type: text/event-stream"), "{raw}");
+    assert!(raw.contains("event: build_started"), "{raw}");
+    assert!(raw.contains("event: done"), "{raw}");
+    assert!(raw.contains("event: done
+data: {"), "{raw}");
+
+    let unknown = "GET /v1/events?run_id=nope HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+    let (status, _) = http_exchange(http_port, unknown);
+    assert_eq!(status, 404);
+
+    assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
+    runner.join().unwrap().unwrap();
+}

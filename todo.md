@@ -218,7 +218,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [x] Methods: `imports.suggest`, `imports.unused` (wired in Phase 7)
 - [x] Methods: `context.pack`
 - [x] Methods: `build.run/cancel/status`, `profile.run/get` (wired in Phases 5–6; all five done; builds run one at a time and are kept in memory per server process)
-- [ ] Streaming: `GET /v1/events` (SSE) or JSON-RPC notifications
+- [x] Streaming: `GET /v1/events` (SSE) for build events (general JSON-RPC notifications are not implemented)
 - [x] API request/response JSON schemas
 - [ ] Permission enforcement per request (read/write/build/profile/network)
 - [x] Path safety checks on every path param

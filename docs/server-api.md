@@ -52,6 +52,21 @@ port; the state file records `http_port`).
 curl -s http://127.0.0.1:7373/v1/rpc -H 'Content-Type: application/json'   -d '{"jsonrpc":"2.0","id":1,"method":"project.info","params":{}}'
 ```
 
+## Build event stream
+
+`build.run` starts a build in the background. Its events are available over HTTP while it runs:
+
+- `GET /v1/events?run_id=ID` (the latest build when `run_id` is omitted) answers with
+  `text/event-stream`. Each Lake event is one `event: <name>` with its JSON as `data:`, in order
+  (`build_started`, `cache_hit` or `cache_miss`, `file_started`, `file_finished`, `file_failed`,
+  `diagnostic`, `build_finished`).
+- The stream ends with `event: done`, whose data is the build's summary. The server sends it only
+  after the build has finished, so a client can stop reading there.
+- Events are kept for the most recent builds only, up to 10,000 per build. An unknown `run_id` is
+  404.
+- Lake's output is read as it is produced (see `docs/build.md`), so file events arrive while the
+  build runs.
+
 ## Warm Lean session
 
 `context.pack` and `diagnostics.explain` need Lean's language server. The server keeps one session
@@ -144,6 +159,6 @@ message naming `lean`.
   `imports.suggest`, `imports.unused` (out of scope for this phase), `context.pack`,
   `build.*`, `profile.*`.
 - Transports: named pipes (Windows). Windows uses loopback TCP instead.
-- Streaming (`GET /v1/events`, SSE or notifications).
+- General streaming (notifications for any method). Build events are streamed; see below.
 - Authentication. Any local process that can connect to the port can call the methods allowed
   by the configuration. Keep write and build permissions off unless you need them.
