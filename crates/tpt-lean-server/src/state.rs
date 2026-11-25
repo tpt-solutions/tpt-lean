@@ -47,6 +47,8 @@ pub struct ServerState {
     pub pid: u32,
     pub port: u16,
     pub socket: Option<PathBuf>,
+    /// Port of the HTTP transport (`POST /v1/rpc`), when it is enabled.
+    pub http_port: Option<u16>,
     pub project: String,
     pub version: String,
 }
@@ -61,6 +63,9 @@ impl ServerState {
         });
         if let Some(socket) = &self.socket {
             v["socket"] = json!(socket.display().to_string());
+        }
+        if let Some(port) = self.http_port {
+            v["http_port"] = json!(port);
         }
         v
     }
@@ -81,6 +86,10 @@ impl ServerState {
             pid: u32::try_from(v.get("pid")?.as_u64()?).ok()?,
             port: u16::try_from(v.get("port")?.as_u64()?).ok()?,
             socket: v.get("socket").and_then(|s| s.as_str()).map(PathBuf::from),
+            http_port: v
+                .get("http_port")
+                .and_then(|p| p.as_u64())
+                .and_then(|p| u16::try_from(p).ok()),
             project: v.get("project")?.as_str()?.to_string(),
             version: v.get("version")?.as_str()?.to_string(),
         })
@@ -137,8 +146,23 @@ pub fn run_foreground(root: &Path, port: u16) -> Result<()> {
 
 /// Run the server in the foreground on `transport`. See [`run_foreground`].
 pub fn run_foreground_on(root: &Path, transport: Transport) -> Result<()> {
+    run_foreground_with_http(root, transport, None)
+}
+
+/// Run the server in the foreground on `transport`, and also serve HTTP (`POST /v1/rpc`) on
+/// loopback when `http_port` is given (0 picks a free port).
+pub fn run_foreground_with_http(root: &Path, transport: Transport, http_port: Option<u16>) -> Result<()> {
     let server = Server::new(root)?;
     let project = server.root().to_path_buf();
+    let http_port = match http_port {
+        Some(port) => {
+            let listener = TcpListener::bind((server.bind_host(), port))?;
+            let bound = listener.local_addr()?.port();
+            server.attach_http(listener)?;
+            Some(bound)
+        }
+        None => None,
+    };
     if let Some(existing) = read_state(&project)? {
         if is_alive(&existing.endpoint()) {
             return Err(Error::new(
@@ -158,6 +182,7 @@ pub fn run_foreground_on(root: &Path, transport: Transport) -> Result<()> {
                 pid: std::process::id(),
                 port: listener.local_addr()?.port(),
                 socket: None,
+                http_port,
                 project: project.display().to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             };
@@ -185,6 +210,7 @@ pub fn run_foreground_on(root: &Path, transport: Transport) -> Result<()> {
                 pid: std::process::id(),
                 port: 0,
                 socket: Some(path.clone()),
+                http_port,
                 project: project.display().to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             };
@@ -229,6 +255,7 @@ impl StatusReport {
             "stale": self.stale,
             "pid": self.state.as_ref().map(|s| s.pid),
             "port": self.state.as_ref().map(|s| s.port),
+            "http_port": self.state.as_ref().and_then(|s| s.http_port),
             "socket": self.state.as_ref().and_then(|s| s.socket.as_ref()).map(|p| p.display().to_string()),
             "project": self.state.as_ref().map(|s| s.project.clone()),
         })

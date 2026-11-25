@@ -33,6 +33,25 @@ Public functions for the CLI:
   file to disappear. `StopReport::to_json()` gives `outcome` (`not_running`, `stopped`,
   `stale_removed`, `timed_out`) and `pid`.
 
+## HTTP transport
+
+`tpt-lean server start --http PORT` also serves JSON-RPC over HTTP on `127.0.0.1:PORT` (0 picks a
+port; the state file records `http_port`).
+
+- `POST /v1/rpc` with a JSON-RPC request in the body. The reply is the JSON-RPC response, with
+  status 200. A notification gets 204. A body that is not JSON gets 400 with a parse error.
+- Other paths get 404; other methods get 405 with `Allow: POST`. A missing `Content-Length` gets
+  411, and a body over 1 MiB gets 413.
+- The `Host` header must be `127.0.0.1`, `localhost` or `[::1]` (optionally with a port). Any other
+  host gets 403, which blocks DNS-rebinding attacks from a browser on another site.
+- Each connection carries one request and is closed after the reply.
+- Methods, permissions and path checks are the same as on the TCP transport, because both call the
+  same handler. Shutdown through either transport stops both listeners.
+
+```sh
+curl -s http://127.0.0.1:7373/v1/rpc -H 'Content-Type: application/json'   -d '{"jsonrpc":"2.0","id":1,"method":"project.info","params":{}}'
+```
+
 ## Warm Lean session
 
 `context.pack` and `diagnostics.explain` need Lean's language server. The server keeps one session
@@ -126,6 +145,5 @@ message naming `lean`.
   `build.*`, `profile.*`.
 - Transports: named pipes (Windows). Windows uses loopback TCP instead.
 - Streaming (`GET /v1/events`, SSE or notifications).
-- HTTP (`POST /v1/rpc`).
 - Authentication. Any local process that can connect to the port can call the methods allowed
   by the configuration. Keep write and build permissions off unless you need them.

@@ -34,6 +34,8 @@ Initial development version `0.1.0`. Nothing has been published yet.
   shutdown. Measured through the server: warm repeated text p50 1 ms; after an edit p50 231 ms,
   p95 234 ms; the first call (starts Lean) 4.7-6.0 s.
 - Measured: incremental index refresh after one edit in a 500-file project, p50 27 ms (full refresh 372 ms).
+- Server: optional loopback HTTP transport, `tpt-lean server start --http PORT`, serving
+  `POST /v1/rpc` with a Host check that refuses non-loopback names.
 - Known: a cache-hit `tpt-lean build` took about 2.6 s on a small project, against about 1.1 s for a
   direct `lake build` that does nothing. The cache key is about 1 ms. The extra time is in the Lake
   process that tpt-lean starts (about 2.4 s when started from Rust, 1.1 s from a shell); the cause

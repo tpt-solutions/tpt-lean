@@ -207,7 +207,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 ### tpt-lean-server
 - [x] JSON-RPC 2.0 core (shared crate/module reused by MCP)
 - [x] Transports: Unix domain socket (Linux/macOS, owner-only file) and localhost TCP (Windows; named pipe not implemented)
-- [ ] Optional localhost HTTP: `POST /v1/rpc`
+- [x] Optional localhost HTTP: `POST /v1/rpc` (`server start --http PORT`; loopback Host check; one request per connection)
 - [x] Remote access disabled by default
 - [x] Methods: `project.info`, `project.doctor`
 - [x] Methods: `search.query`, `search.symbol`, `search.goal` (goal search returns index lemma candidates for the goal target; the CLI `--goal-at` flag is not wired)

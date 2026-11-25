@@ -17,6 +17,7 @@ pub mod client;
 mod context_api;
 mod doctor_api;
 mod explain_api;
+pub mod http;
 mod imports_api;
 mod methods;
 pub mod permission;
@@ -48,7 +49,7 @@ pub use client::call;
 pub use permission::Permission;
 pub use client::Endpoint;
 pub use state::{
-    run_foreground, run_foreground_on, status, stop, ServerState, StatusReport, StopOutcome,
+    run_foreground, run_foreground_on, run_foreground_with_http, status, stop, ServerState, StatusReport, StopOutcome,
     StopReport, Transport,
 };
 
@@ -101,6 +102,10 @@ pub struct Server {
     listen_addr: Mutex<Option<Endpoint>>,
     /// The Lean language server kept warm between requests (see [`warm`]).
     warm: Mutex<warm::WarmState>,
+    /// HTTP listener attached before serving; started with the JSON-RPC listener.
+    pending_http: Mutex<Option<TcpListener>>,
+    /// Address of the HTTP listener, used to wake it on shutdown.
+    http_addr: Mutex<Option<SocketAddr>>,
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -108,6 +113,19 @@ pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl Server {
+    /// Serve HTTP (`POST /v1/rpc`) from `listener` alongside the JSON-RPC transport. Call before
+    /// the server starts serving; the HTTP thread starts with it and stops at shutdown.
+    pub fn attach_http(&self, listener: TcpListener) -> io::Result<()> {
+        *lock(&self.http_addr) = Some(listener.local_addr()?);
+        *lock(&self.pending_http) = Some(listener);
+        Ok(())
+    }
+
+    /// Address of the attached HTTP listener, if any.
+    pub fn http_addr(&self) -> Option<SocketAddr> {
+        *lock(&self.http_addr)
+    }
+
     pub fn new(root: &Path) -> Result<Self> {
         let workspace = WorkspaceRoot::new(root)?;
         let (config, _) = config::load_config(workspace.path(), &[])?;
@@ -120,6 +138,8 @@ impl Server {
             shutdown: AtomicBool::new(false),
             listen_addr: Mutex::new(None),
             warm: Mutex::new(warm::WarmState::default()),
+            pending_http: Mutex::new(None),
+            http_addr: Mutex::new(None),
         })
     }
 
@@ -391,17 +411,24 @@ impl Stream for UnixStream {
     }
 }
 
+/// The address to connect to in order to reach a listener bound to `addr`.
+fn loopback(addr: SocketAddr) -> SocketAddr {
+    if addr.ip().is_unspecified() {
+        SocketAddr::from(([127, 0, 0, 1], addr.port()))
+    } else {
+        addr
+    }
+}
+
 /// Connect once to the listener so a blocked `accept` returns and sees the shutdown flag.
 fn wake_listener(server: &Server) {
+    if let Some(addr) = *lock(&server.http_addr) {
+        let _ = TcpStream::connect_timeout(&loopback(addr), Duration::from_secs(1));
+    }
     let endpoint = lock(&server.listen_addr).clone();
     match endpoint {
         Some(Endpoint::Tcp(addr)) => {
-            let target = if addr.ip().is_unspecified() {
-                SocketAddr::from(([127, 0, 0, 1], addr.port()))
-            } else {
-                addr
-            };
-            let _ = TcpStream::connect_timeout(&target, Duration::from_secs(1));
+            let _ = TcpStream::connect_timeout(&loopback(addr), Duration::from_secs(1));
         }
         #[cfg(unix)]
         Some(Endpoint::Unix(path)) => {
@@ -440,6 +467,7 @@ pub fn bind_unix(path: &Path) -> io::Result<UnixListener> {
 pub fn serve_listener(server: Arc<Server>, listener: TcpListener) -> io::Result<()> {
     *lock(&server.listen_addr) = Some(Endpoint::Tcp(listener.local_addr()?));
     warm::spawn_reaper(Arc::clone(&server));
+    start_pending_http(&server);
     for stream in listener.incoming() {
         if server.is_shutdown_requested() {
             break;
@@ -460,6 +488,7 @@ pub fn serve_unix_listener(server: Arc<Server>, listener: UnixListener) -> io::R
         .to_path_buf();
     *lock(&server.listen_addr) = Some(Endpoint::Unix(path));
     warm::spawn_reaper(Arc::clone(&server));
+    start_pending_http(&server);
     for stream in listener.incoming() {
         if server.is_shutdown_requested() {
             break;
@@ -468,6 +497,16 @@ pub fn serve_unix_listener(server: Arc<Server>, listener: UnixListener) -> io::R
     }
     server.release_warm_session();
     Ok(())
+}
+
+/// Start the HTTP listener attached with [`Server::attach_http`], if any.
+fn start_pending_http(server: &Arc<Server>) {
+    if let Some(listener) = lock(&server.pending_http).take() {
+        let server = Arc::clone(server);
+        thread::spawn(move || {
+            let _ = http::serve_http(server, listener);
+        });
+    }
 }
 
 fn spawn_connection<S: Stream>(server: &Arc<Server>, stream: S) {

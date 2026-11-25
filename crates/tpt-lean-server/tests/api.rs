@@ -864,3 +864,63 @@ fn idle_warm_session_is_reaped() {
     assert_eq!(server.warm_session_starts(), 2);
     server.release_warm_session();
 }
+
+/// One raw HTTP exchange with the server; returns the status code and the body.
+fn http_exchange(port: u16, request: &str) -> (u16, String) {
+    use std::io::Read as _;
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+    stream.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut raw = String::new();
+    stream.read_to_string(&mut raw).unwrap();
+    let status: u16 = raw.split_whitespace().nth(1).unwrap().parse().unwrap();
+    let body = raw.split("\r\n\r\n").nth(1).unwrap_or("").to_string();
+    (status, body)
+}
+
+fn post(path: &str, host: &str, body: &str) -> String {
+    format!(
+        "POST {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    )
+}
+
+#[test]
+fn http_transport_serves_rpc_and_refuses_other_hosts_and_methods() {
+    let project = TempProject::new("http", None);
+    let root = project.path().to_path_buf();
+    let runner = {
+        let root = root.clone();
+        thread::spawn(move || state::run_foreground_with_http(&root, tpt_lean_server::Transport::Tcp(0), Some(0)))
+    };
+    let st = wait_for_state(&root);
+    let http_port = st.http_port.expect("state records the HTTP port");
+    let info = r#"{"jsonrpc":"2.0","id":7,"method":"project.info","params":{}}"#;
+
+    let (status, body) = http_exchange(http_port, &post("/v1/rpc", "127.0.0.1", info));
+    assert_eq!(status, 200, "{body}");
+    let reply: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(reply["id"], 7);
+    assert!(reply.get("result").is_some(), "{body}");
+
+    let (status, _) = http_exchange(http_port, &post("/v1/rpc", "localhost", info));
+    assert_eq!(status, 200);
+    let (status, _) = http_exchange(http_port, &post("/v1/rpc", "evil.example", info));
+    assert_eq!(status, 403, "a non-loopback Host is refused");
+
+    let (status, _) = http_exchange(http_port, &post("/v1/other", "127.0.0.1", info));
+    assert_eq!(status, 404);
+    let get = format!("GET /v1/rpc HTTP/1.1\r\nHost: 127.0.0.1:{http_port}\r\n\r\n");
+    let (status, _) = http_exchange(http_port, &get);
+    assert_eq!(status, 405);
+
+    let note = r#"{"jsonrpc":"2.0","method":"project.info","params":{}}"#;
+    let (status, body) = http_exchange(http_port, &post("/v1/rpc", "127.0.0.1", note));
+    assert_eq!(status, 204, "{body}");
+    let (status, _) = http_exchange(http_port, &post("/v1/rpc", "127.0.0.1", "not json"));
+    assert_eq!(status, 400);
+
+    // Shutdown over the TCP transport also stops the HTTP listener.
+    assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
+    runner.join().unwrap().unwrap();
+}
