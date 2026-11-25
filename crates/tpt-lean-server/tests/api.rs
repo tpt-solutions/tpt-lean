@@ -567,3 +567,42 @@ fn build_cancel_is_consistent_with_the_final_status() {
         assert_eq!(status, "passed", "{finished}");
     }
 }
+
+#[test]
+fn imports_suggest_finds_declaring_modules_from_the_index() {
+    let project = TempProject::new("imports-suggest", Some(WRITE_ON));
+    project.write("Probe.lean", "theorem add_comm_probe : True := trivial\n");
+    let server = Server::new(project.path()).unwrap();
+    rpc(&server, "index.refresh", json!({}));
+
+    let r = rpc(&server, "imports.suggest", json!({ "query": "add_comm_probe" }));
+    let suggestions = result_of(&r)["suggestions"].as_array().unwrap();
+    assert!(!suggestions.is_empty(), "{r}");
+    assert_eq!(suggestions[0]["module"], "Probe", "{r}");
+
+    let none = rpc(&server, "imports.suggest", json!({ "query": "  " }));
+    assert!(none.get("error").is_some(), "{none}");
+    let missing = rpc(&server, "imports.suggest", json!({}));
+    assert_eq!(error_code(&missing), -32602, "{missing}");
+    let big = rpc(&server, "imports.suggest", json!({ "query": "x", "limit": 500 }));
+    assert_eq!(error_code(&big), -32602, "{big}");
+}
+
+#[test]
+fn imports_unused_reports_imports_nothing_uses() {
+    let project = TempProject::new("imports-unused", None);
+    project.write("Helper.lean", "def helper : Nat := 1\n");
+    project.write("Unused.lean", "import Helper\n\ndef answer : Nat := 42\n");
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(&server, "imports.unused", json!({ "path": "Unused.lean" }));
+    let findings = result_of(&r)["findings"].as_array().unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["code"] == "import_unused" && f["message"].as_str().unwrap_or("").contains("Helper")),
+        "{r}"
+    );
+
+    let missing = rpc(&server, "imports.unused", json!({ "path": "Nope.lean" }));
+    assert_eq!(error_code(&missing), -32602, "{missing}");
+}

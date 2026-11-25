@@ -27,7 +27,7 @@ Each method has a class. The check happens before dispatch.
 
 | Class | Methods | Granted when |
 | --- | --- | --- |
-| read | `project.info`, `index.status`, `search.query`, `search.symbol`, `format.text`, `diagnostics.get` | always |
+| read | `project.info`, `index.status`, `search.query`, `search.symbol`, `format.text`, `diagnostics.get`, `profile.get`, `build.status`, `imports.suggest`, `imports.unused` | always |
 | write | `format.file`, `index.refresh` | `security.allow_write = true` (default false) |
 | build | `check.file`, `goals.at` | `security.allow_build = true` (default true) |
 | profile | `profile.run` | `security.allow_build` and `security.allow_profile` (both default true) |
@@ -61,6 +61,8 @@ are rejected.
 | `build.run` | optional `target` | `run_id` and `status: "running"` at once; `lake build` runs on a background thread. One build at a time; a second `build.run` is refused while one runs |
 | `build.status` | optional `run_id` (default: latest) | `status` (`none`, `running`, `passed`, `failed`, `cancelled`) and `result` (success, exit code, digest, cache hit, files built and failed, duration, error) once finished |
 | `build.cancel` | optional `run_id` (default: newest running build) | `cancelled` true when a running build was asked to stop; the build then finishes as `cancelled` |
+| `imports.suggest` | `query`, optional `limit` (1 to 50, default 10) | `suggestions[]`: modules from the index that declare matching names (run `index.refresh` first) |
+| `imports.unused` | `path` | `findings[]` with code `import_unused` for imports the file does not use; imports from outside the project are reported as `import_unresolved` |
 | `profile.get` | optional `id` | without `id`: `ids` of stored profiles, newest first, and `report: null`; with `id`: the stored `report`. Ids are restricted to letters, digits, `-` and `_` |
 | `server.shutdown` | none | `stopping: true` |
 

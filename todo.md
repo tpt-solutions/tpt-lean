@@ -215,7 +215,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [x] Methods: `format.text`, `format.file`
 - [ ] Methods: `check.file`, `check.project`
 - [ ] Methods: `goals.at`, `diagnostics.get`, `diagnostics.explain`
-- [ ] Methods: `imports.suggest`, `imports.unused` (wired in Phase 7)
+- [x] Methods: `imports.suggest`, `imports.unused` (wired in Phase 7)
 - [ ] Methods: `context.pack`
 - [x] Methods: `build.run/cancel/status`, `profile.run/get` (wired in Phases 5–6; all five done; builds run one at a time and are kept in memory per server process)
 - [ ] Streaming: `GET /v1/events` (SSE) or JSON-RPC notifications

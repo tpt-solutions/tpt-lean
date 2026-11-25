@@ -72,6 +72,8 @@ pub const METHODS: &[(&str, Permission)] = &[
     ("build.run", Permission::Build),
     ("build.status", Permission::Read),
     ("build.cancel", Permission::Build),
+    ("imports.suggest", Permission::Read),
+    ("imports.unused", Permission::Read),
     ("server.shutdown", Permission::Control),
 ];
 

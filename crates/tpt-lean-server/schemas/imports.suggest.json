@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "imports.suggest",
+  "permission": "read",
+  "params": {
+    "type": "object",
+    "required": ["query"],
+    "properties": {
+      "query": { "type": "string", "description": "A symbol name or words to look for." },
+      "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["suggestions"],
+    "properties": {
+      "suggestions": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["module", "package", "file", "matches", "examples"],
+          "properties": {
+            "module": { "type": "string" },
+            "package": { "type": "string" },
+            "file": { "type": "string" },
+            "matches": { "type": "integer", "minimum": 0 },
+            "examples": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    }
+  }
+}

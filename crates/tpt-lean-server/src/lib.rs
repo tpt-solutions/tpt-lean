@@ -11,6 +11,7 @@
 
 mod builds;
 pub mod client;
+mod imports_api;
 mod methods;
 pub mod permission;
 pub mod state;
@@ -184,6 +185,8 @@ impl Server {
             "build.run" => self.build_run(params),
             "build.status" => self.build_status(params),
             "build.cancel" => self.build_cancel(params),
+            "imports.suggest" => self.imports_suggest(params),
+            "imports.unused" => self.imports_unused(params),
             "diagnostics.get" => self.diagnostics_get(params),
             "goals.at" => self.goals_at(params),
             "server.shutdown" => self.server_shutdown(),

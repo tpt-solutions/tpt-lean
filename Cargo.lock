@@ -767,6 +767,7 @@ dependencies = [
  "tpt-lean-profile",
  "tpt-lean-search",
  "tpt-lean-syntax",
+ "tpt-lean-tools",
 ]
 
 [[package]]
