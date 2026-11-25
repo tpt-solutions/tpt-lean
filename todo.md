@@ -272,7 +272,7 @@ Crate: `tpt-lean-build`
 - [x] `tpt-lean clean`
 - [x] `tpt-lean cache status`
 - [x] `tpt-lean cache prune`
-- [ ] Cache-hit overhead < 200 ms (tpt-lean's own key computation is about 1 ms; a cache-hit build still runs Lake, which takes about 1.1 s to do nothing in a small project, and tpt-lean's Lake child took about 2.4 s in the same case, cause not found; see the measurements in the changelog)
+- [ ] Cache-hit overhead < 200 ms (tpt-lean's own key work is about 1 ms; Lake itself takes about 1.1 s to do nothing here, so the target needs Lake skipped on a hit, which the design does not do). Separately, a full build through tpt-lean is about 2.5 times slower than `lake build` from a shell (see CHANGELOG, Known); the mechanism is not yet known.
 - [ ] Better logs and diagnostics
 - [x] Wire `build.*` into server and MCP (server `build.run`/`build.cancel`/`build.status`; MCP `tpt_lean_build_project`)
 - [x] Tests for cache correctness/invalidation

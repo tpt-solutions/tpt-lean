@@ -38,10 +38,13 @@ Initial development version `0.1.0`. Nothing has been published yet.
   `POST /v1/rpc` with a Host check that refuses non-loopback names.
 - `tpt-lean build` reports Lake's progress as it runs: file and diagnostic events are emitted live
   (`tpt-lean-adapter::run_streaming` passes output lines to the build as they are read).
-- Known: a full `tpt-lean build` of a 41-module project took 14-21 s, and `lake build` run
-  directly from the same shell took 6.5 s. A bare Rust program started from the same shell showed the
-  same slowdown, so the cause is in how Lake runs under a Rust parent started from bash, not in
-  tpt-lean's code. Started from PowerShell the same harness took about 10 s. Not explained yet.
+- Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
+  from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
+  causes: Lean's thread count, environment variables, stdio handling, process creation flags, the
+  elan proxy (the real Lake binary is as slow from a non-shell parent), and CPU affinity and priority.
+  The slowdown follows the direct parent of Lake: a shell (bash, PowerShell) or direct launch is
+  fast; Rust, Python and cmd parents are slow. Concurrent Lean processes average about half as many
+  in the slow case. The mechanism is not yet known.
 - Known: a cache-hit `tpt-lean build` took about 2.6 s on a small project, against about 1.1 s for a
   direct `lake build` that does nothing. The cache key is about 1 ms. The extra time is in the Lake
   process that tpt-lean starts (about 2.4 s when started from Rust, 1.1 s from a shell); the cause
