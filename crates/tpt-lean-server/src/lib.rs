@@ -14,6 +14,7 @@ pub mod client;
 mod imports_api;
 mod methods;
 pub mod permission;
+mod project_api;
 pub mod state;
 
 use std::collections::HashMap;
@@ -187,6 +188,7 @@ impl Server {
             "build.cancel" => self.build_cancel(params),
             "imports.suggest" => self.imports_suggest(params),
             "imports.unused" => self.imports_unused(params),
+            "check.project" => self.check_project(params),
             "diagnostics.get" => self.diagnostics_get(params),
             "goals.at" => self.goals_at(params),
             "server.shutdown" => self.server_shutdown(),

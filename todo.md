@@ -213,7 +213,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [ ] Methods: `search.query`, `search.symbol`, `search.goal`
 - [x] Methods: `index.status`, `index.refresh`
 - [x] Methods: `format.text`, `format.file`
-- [ ] Methods: `check.file`, `check.project`
+- [x] Methods: `check.file`, `check.project` (`check.project` returns the CI report; no multi-file check beyond the project build)
 - [ ] Methods: `goals.at`, `diagnostics.get`, `diagnostics.explain`
 - [x] Methods: `imports.suggest`, `imports.unused` (wired in Phase 7)
 - [ ] Methods: `context.pack`

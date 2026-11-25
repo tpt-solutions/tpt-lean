@@ -114,7 +114,7 @@ fn build_methods_are_denied_when_disabled() {
     let project = TempProject::new("deny-build", Some(BUILD_OFF));
     project.write("Foo.lean", "def x := 1\n");
     let server = Server::new(project.path()).unwrap();
-    for method in ["check.file", "goals.at"] {
+    for method in ["check.file", "goals.at", "check.project"] {
         let r = rpc(
             &server,
             method,
@@ -605,4 +605,27 @@ fn imports_unused_reports_imports_nothing_uses() {
 
     let missing = rpc(&server, "imports.unused", json!({ "path": "Nope.lean" }));
     assert_eq!(error_code(&missing), -32602, "{missing}");
+}
+
+#[test]
+fn check_project_builds_and_reports_the_ci_result() {
+    if tpt_lean_adapter::discover_toolchain().lake.is_none() {
+        eprintln!("skipping: lake not found");
+        return;
+    }
+    let project = TempProject::new("check-project", None);
+    project.write(
+        "lakefile.lean",
+        "import Lake\nopen Lake DSL\n\npackage demo\n\n@[default_target]\nlean_lib Demo\n",
+    );
+    project.write("Demo.lean", "def greeting : String := \"hi\"\n");
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(&server, "check.project", json!({ "timeout": 300 }));
+    let report = result_of(&r);
+    assert_eq!(report["ok"], true, "{r}");
+    assert_eq!(report["build"]["status"], "passed", "{r}");
+    assert!(report["diagnostics"].as_array().unwrap().is_empty(), "{r}");
+
+    let bad = rpc(&server, "check.project", json!({ "timeout": 0 }));
+    assert_eq!(error_code(&bad), -32602, "{bad}");
 }
