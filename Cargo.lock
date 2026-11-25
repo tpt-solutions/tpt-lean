@@ -624,6 +624,7 @@ dependencies = [
  "tpt-lean-core",
  "tpt-lean-index",
  "tpt-lean-search",
+ "tpt-lean-syntax",
 ]
 
 [[package]]

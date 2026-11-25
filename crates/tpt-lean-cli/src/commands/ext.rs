@@ -220,17 +220,7 @@ pub fn explain_last(ctx: &Ctx, args: &Args) -> Result<i32> {
 
 /// Lemma candidates for a goal, from the project index (used by `explain`).
 pub fn lemma_candidates(root: &Path, goal: &str, limit: usize) -> Vec<serde_json::Value> {
-    let dirs = tpt_lean_core::dirs::ProjectDirs::new(root);
-    let Ok(index) = tpt_lean_index::Index::open(&dirs.index_db()) else {
-        return Vec::new();
-    };
-    adapter::suggest_lemmas(&index, goal, limit)
-        .unwrap_or_default()
-        .into_iter()
-        .map(
-            |h| json!({ "name": h.name, "kind": h.kind, "source": h.file, "line": h.line, "score": h.score }),
-        )
-        .collect()
+    tpt_lean_adapter::explain::lemma_candidates(root, goal, limit)
 }
 
 // ---------------------------------------------------------------- profile

@@ -629,3 +629,42 @@ fn check_project_builds_and_reports_the_ci_result() {
     let bad = rpc(&server, "check.project", json!({ "timeout": 0 }));
     assert_eq!(error_code(&bad), -32602, "{bad}");
 }
+
+#[test]
+fn diagnostics_explain_reports_the_error_and_goal_at_a_position() {
+    if tpt_lean_adapter::discover_toolchain().lean.is_none() {
+        eprintln!("skipping: lean not found");
+        return;
+    }
+    let project = TempProject::new("explain", None);
+    project.write("Bad.lean", "theorem bad_eq : 1 = 2 := rfl\n");
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(
+        &server,
+        "diagnostics.explain",
+        json!({ "path": "Bad.lean", "line": 1, "column": 9 }),
+    );
+    let explained = result_of(&r);
+    assert_eq!(explained["error"]["line"], 1, "{r}");
+    assert!(
+        explained["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("definitionally"),
+        "{r}"
+    );
+    assert!(explained["suggestions"].is_array(), "{r}");
+
+    let missing = rpc(
+        &server,
+        "diagnostics.explain",
+        json!({ "path": "Nope.lean", "line": 1, "column": 1 }),
+    );
+    assert_eq!(error_code(&missing), -32602, "{missing}");
+    let zero = rpc(
+        &server,
+        "diagnostics.explain",
+        json!({ "path": "Bad.lean", "line": 0, "column": 1 }),
+    );
+    assert_eq!(error_code(&zero), -32602, "{zero}");
+}

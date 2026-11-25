@@ -7,6 +7,7 @@ use crate::args::Args;
 use crate::{Ctx, Mode};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tpt_lean_adapter::explain::split_goal;
 use tpt_lean_adapter::{self as adapter, Command as LeanCommand};
 use tpt_lean_core::config::{self, Config};
 use tpt_lean_core::dirs::{global_cache_dir, ProjectDirs};
@@ -1146,14 +1147,6 @@ fn goals(ctx: &Ctx, args: &Args) -> Result<i32> {
 }
 
 #[derive(Serialize)]
-struct ExplainError {
-    message: String,
-    file: String,
-    line: u64,
-    column: u64,
-}
-
-#[derive(Serialize)]
 struct ExplainContext {
     goal: Option<String>,
     hypotheses: Vec<String>,
@@ -1161,23 +1154,9 @@ struct ExplainContext {
 
 #[derive(Serialize)]
 struct ExplainReport {
-    error: Option<ExplainError>,
+    error: Option<adapter::explain::ExplainError>,
     context: ExplainContext,
     suggestions: Vec<serde_json::Value>,
-}
-
-/// Split a plain goal into hypotheses (lines before `⊢`) and the target.
-fn split_goal(goal: &str) -> (Vec<String>, Option<String>) {
-    let mut hyps = Vec::new();
-    let mut target = None;
-    for line in goal.lines() {
-        if let Some(t) = line.strip_prefix("⊢ ") {
-            target = Some(t.to_string());
-        } else if !line.trim().is_empty() {
-            hyps.push(line.to_string());
-        }
-    }
-    (hyps, target)
 }
 
 /// `tpt-lean explain FILE:LINE:COL`: diagnostics at a position plus the goal there.
@@ -1195,52 +1174,27 @@ fn explain(ctx: &Ctx, args: &Args) -> Result<i32> {
     let ws = WorkspaceRoot::new(&root)?;
     let path = ws.resolve(&file)?;
     let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
-    let index = tpt_lean_syntax::position::LineIndex::new(&text);
-    let offset = index
-        .offset_of(line, column)
-        .ok_or_else(|| Error::invalid(format!("{file}:{line}:{column} is outside the file")))?;
-    let utf16 = index.position(offset).column_utf16 as u32;
     let timeout = match args.value("--timeout")? {
         Some(t) => t
             .parse::<u64>()
             .map_err(|_| Error::invalid("--timeout must be seconds"))?,
         None => cfg.security.command_timeout_seconds,
     };
-    let tc = adapter::discover_toolchain();
-    let (program, server_args) = adapter::lsp::server_command(&root, tc.lake.as_ref(), tc.lean.as_ref())?;
-    let limit = std::time::Duration::from_secs(timeout);
-    let mut client = adapter::lsp::LspClient::start(&program, &server_args, &root, limit)?;
-    let uri = adapter::lsp::open_document(&mut client, &path, &text)?;
-    let goals = adapter::lsp::plain_goals(&mut client, &uri, (line - 1) as u32, utf16, limit);
-    let diags = client.diagnostics_for(&uri);
-    client.shutdown(std::time::Duration::from_secs(5));
-    let goals = goals?;
+    let snap = adapter::explain::snapshot_at(
+        &root,
+        &path,
+        &file,
+        &text,
+        line,
+        column,
+        std::time::Duration::from_secs(timeout),
+    )?;
+    let error = adapter::explain::error_at(&snap.diagnostics, &file, snap.line0, snap.utf16);
 
-    let (hypotheses, target) = match goals.first() {
+    let (hypotheses, target) = match snap.goals.first() {
         Some(g) => split_goal(g),
         None => (Vec::new(), None),
     };
-    let target_line = (line - 1) as u64;
-    let at_position = diags.iter().find(|d| {
-        let s = &d["range"]["start"];
-        let e = &d["range"]["end"];
-        let (sl, sc) = (
-            s["line"].as_u64().unwrap_or(0),
-            s["character"].as_u64().unwrap_or(0),
-        );
-        let (el, ec) = (
-            e["line"].as_u64().unwrap_or(0),
-            e["character"].as_u64().unwrap_or(0),
-        );
-        let p = (target_line, utf16 as u64);
-        (sl, sc) <= p && p <= (el, ec) && d["severity"].as_u64().unwrap_or(1) == 1
-    });
-    let error = at_position.map(|d| ExplainError {
-        message: d["message"].as_str().unwrap_or("").to_string(),
-        file: file.clone(),
-        line: d["range"]["start"]["line"].as_u64().unwrap_or(0) + 1,
-        column: d["range"]["start"]["character"].as_u64().unwrap_or(0) + 1,
-    });
     let mut human = Vec::new();
     match &error {
         Some(e) => human.push(format!(
@@ -1249,7 +1203,7 @@ fn explain(ctx: &Ctx, args: &Args) -> Result<i32> {
         )),
         None => human.push(format!("no error at {file}:{line}:{column}")),
     }
-    if let Some(g) = goals.first() {
+    if let Some(g) = snap.goals.first() {
         human.push(String::new());
         human.push(g.clone());
     }

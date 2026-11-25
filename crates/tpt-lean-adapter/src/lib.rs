@@ -9,6 +9,7 @@
 
 pub mod compat;
 pub mod diagnostics;
+pub mod explain;
 pub mod last_diagnostics;
 pub mod lemmas;
 pub mod lsp;

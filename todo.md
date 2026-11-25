@@ -214,7 +214,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [x] Methods: `index.status`, `index.refresh`
 - [x] Methods: `format.text`, `format.file`
 - [x] Methods: `check.file`, `check.project` (`check.project` returns the CI report; no multi-file check beyond the project build)
-- [ ] Methods: `goals.at`, `diagnostics.get`, `diagnostics.explain`
+- [x] Methods: `goals.at`, `diagnostics.get`, `diagnostics.explain`
 - [x] Methods: `imports.suggest`, `imports.unused` (wired in Phase 7)
 - [ ] Methods: `context.pack`
 - [x] Methods: `build.run/cancel/status`, `profile.run/get` (wired in Phases 5–6; all five done; builds run one at a time and are kept in memory per server process)

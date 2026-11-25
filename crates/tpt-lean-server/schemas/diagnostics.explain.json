@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "diagnostics.explain",
+  "permission": "build",
+  "params": {
+    "type": "object",
+    "required": ["path", "line", "column"],
+    "properties": {
+      "path": { "type": "string", "description": "Project-relative or absolute path to a .lean file inside the root." },
+      "line": { "type": "integer", "minimum": 1, "description": "1-based line." },
+      "column": { "type": "integer", "minimum": 1, "description": "1-based column, counted in characters." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["error", "context", "suggestions"],
+    "properties": {
+      "error": {
+        "type": ["object", "null"],
+        "required": ["message", "file", "line", "column"],
+        "properties": {
+          "message": { "type": "string" },
+          "file": { "type": "string" },
+          "line": { "type": "integer", "minimum": 1 },
+          "column": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "context": {
+        "type": "object",
+        "required": ["goal", "hypotheses"],
+        "properties": {
+          "goal": { "type": ["string", "null"] },
+          "hypotheses": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "suggestions": { "type": "array" }
+    }
+  }
+}
