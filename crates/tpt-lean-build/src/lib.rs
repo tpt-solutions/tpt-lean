@@ -7,7 +7,7 @@
 //! watch mode skip rebuilds whose inputs are unchanged; it never serves outputs on its own.
 //!
 //! Not implemented: live streaming of Lake output (the adapter captures output until Lake exits,
-//! so file events are replayed afterwards), parallel orchestration beyond Lake's own job pool,
+//! so file events are replayed afterwards), parallel orchestration beyond Lake's own scheduler (see docs/build.md, Parallel orchestration),
 //! shared team and CI caches, and deep build graphs.
 
 pub mod cache;
@@ -15,6 +15,7 @@ pub mod events;
 pub mod key;
 pub mod progress;
 pub mod project;
+pub mod schedule;
 pub mod watch;
 
 use std::path::Path;
@@ -31,6 +32,7 @@ pub use cache::{
 pub use events::{explain_slow, BuildEvent, BuildOutcome, CacheLayer, SlowFile};
 pub use key::{cache_key_for, key_from_parts, probe_tools, Tools};
 pub use project::{fingerprint, scan_project, Fingerprint, ProjectScan};
+pub use schedule::{plan, Plan};
 pub use watch::watch;
 
 static RUN_COUNTER: AtomicU64 = AtomicU64::new(0);

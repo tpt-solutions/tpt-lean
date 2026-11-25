@@ -74,6 +74,32 @@ create a key input (for example `lake-manifest.json` on the first build).
 `cache_hit` means the key matched a recorded success. Lake still runs, so total time is Lake's own
 no-op time; check `files_built` for what actually rebuilt.
 
+## Parallel orchestration
+
+Lake runs independent module builds concurrently inside one `lake build` process. tpt-lean keeps
+that model:
+
+- `tpt-lean build` makes a single Lake call, so Lake's scheduler sees the whole module graph.
+- `tpt-lean build --plan [--json]` shows the import waves (`tpt-lean-build::schedule`). Wave 1 holds
+  modules with no project imports; each later wave holds modules whose project imports are all in
+  earlier waves, so a wave's modules are independent. The critical path is the number of waves and
+  the widest wave bounds the parallelism the graph allows. The plan reads the sources only and does
+  not start Lake.
+
+Measured on this machine (20 cores, Lean 4.36.0, 41 small modules that each run `decide`):
+
+- one `lake build` over all 41 modules: about 8 s wall clock;
+- 40 separate `lake build Mods.Mi` processes, one per module: about 65 s, because each Lake process
+  takes about 1.6 s to start before it builds anything.
+
+So running the wave members as separate Lake processes would cost far more than Lake's own
+scheduling saves. tpt-lean therefore does not run waves in parallel itself. Concurrent Lake
+processes that share one workspace are also not known to be safe, since they may build the same
+dependency at the same time. Lake does not expose a job-count option in this version (`lake build
+-j` is rejected), so the number of workers is Lake's choice.
+
+Not implemented: running waves as separate builds, and a job-count option once Lake provides one.
+
 ## Watch mode
 
 `watch` polls every `poll_ms` (minimum 50 ms) and compares content hashes of the sources, lakefile,

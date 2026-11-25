@@ -35,7 +35,7 @@ fn timeout_arg(args: &Args, default: u64) -> Result<u64> {
 
 // ---------------------------------------------------------------- build
 
-/// `tpt-lean build [target] [--json] [--watch] [--explain-slow] [--timeout S]`.
+/// `tpt-lean build [target] [--json] [--watch] [--explain-slow] [--plan] [--timeout S]`.
 pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(
         &[
@@ -44,6 +44,7 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--json",
             "--watch",
             "--explain-slow",
+            "--plan",
             "--poll-ms",
         ],
         &["--project", "--timeout", "--poll-ms"],
@@ -55,6 +56,29 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             ErrorCode::InvalidArgument,
             "building is disabled by security.allow_build",
         ));
+    }
+    if args.flag("--plan") {
+        // The plan reads the sources only; it does not start Lake.
+        let scan = tpt_lean_build::scan_project(&root)?;
+        let plan = tpt_lean_build::plan(&scan)?;
+        let mut human = vec![format!(
+            "{} module(s) in {} wave(s); critical path {}, widest wave {}",
+            plan.modules,
+            plan.waves.len(),
+            plan.critical_path,
+            plan.widest_wave
+        )];
+        for (i, wave) in plan.waves.iter().enumerate() {
+            const SHOWN: usize = 8;
+            let mut names: Vec<&str> = wave.iter().take(SHOWN).map(String::as_str).collect();
+            if wave.len() > SHOWN {
+                names.push("...");
+            }
+            human.push(format!("wave {}: {}", i + 1, names.join(", ")));
+        }
+        ctx.emit("build.plan", &human.join("
+"), &plan)?;
+        return Ok(OK);
     }
     let target = args
         .positionals(&["--project", "--timeout", "--poll-ms"])

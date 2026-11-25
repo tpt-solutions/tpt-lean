@@ -261,7 +261,7 @@ Crate: `tpt-lean-build`
 
 - [x] Project understanding (module graph from imports)
 - [x] Safe Lake invocation via adapter
-- [ ] Parallel orchestration where possible
+- [x] Parallel orchestration where possible (Lake's in-process scheduler runs independent modules concurrently; `build --plan` shows the import waves; running waves as separate Lake processes was measured to be slower, so it is not done; see docs/build.md)
 - [x] Cache key: lean version, package versions, lakefile hash, lock hash, source hash, import hashes, flags, env vars, target triple
 - [ ] Cache layers: memory, local disk, optional shared team cache, optional CI cache
 - [x] Build event stream (`file_started`, `file_finished`, etc.) as structured events
