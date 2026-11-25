@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "context.pack",
+  "permission": "build",
+  "params": {
+    "type": "object",
+    "required": ["path", "line", "column"],
+    "properties": {
+      "path": { "type": "string", "description": "Project-relative or absolute path to a .lean file inside the root." },
+      "line": { "type": "integer", "minimum": 1 },
+      "column": { "type": "integer", "minimum": 1 },
+      "max_tokens": { "type": "integer", "minimum": 1, "maximum": 100000, "description": "Token budget; default 6000." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": [
+      "file", "position", "snippet", "goal", "hypotheses", "diagnostics", "imports",
+      "nearby_definitions", "relevant_lemmas", "constraints", "truncated", "approx_tokens"
+    ],
+    "properties": {
+      "file": { "type": "string" },
+      "position": {
+        "type": "object",
+        "required": ["line", "column"],
+        "properties": { "line": { "type": "integer", "minimum": 1 }, "column": { "type": "integer", "minimum": 1 } }
+      },
+      "snippet": { "type": "string" },
+      "goal": { "type": ["string", "null"] },
+      "hypotheses": { "type": "array", "items": { "type": "string" } },
+      "diagnostics": { "type": "array" },
+      "imports": { "type": "array", "items": { "type": "string" } },
+      "nearby_definitions": { "type": "array" },
+      "relevant_lemmas": { "type": "array" },
+      "constraints": { "type": "array", "items": { "type": "string" } },
+      "truncated": { "type": "boolean" },
+      "approx_tokens": { "type": "integer", "minimum": 0 }
+    }
+  }
+}

@@ -1223,58 +1223,9 @@ fn explain(ctx: &Ctx, args: &Args) -> Result<i32> {
     Ok(OK)
 }
 
-#[derive(Serialize)]
-struct PackPosition {
-    line: usize,
-    column: usize,
-}
-
-#[derive(Serialize)]
-struct PackDiagnostic {
-    severity: String,
-    line: u64,
-    column: u64,
-    message: String,
-}
-
-#[derive(Serialize)]
-struct PackSymbol {
-    name: String,
-    kind: String,
-    line: usize,
-}
-
-#[derive(Serialize)]
-struct PackLemma {
-    name: String,
-    source: String,
-    line: i64,
-    score: f64,
-}
-
-#[derive(Serialize)]
-struct ContextPack {
-    file: String,
-    position: PackPosition,
-    snippet: String,
-    goal: Option<String>,
-    hypotheses: Vec<String>,
-    diagnostics: Vec<PackDiagnostic>,
-    imports: Vec<String>,
-    nearby_definitions: Vec<PackSymbol>,
-    relevant_lemmas: Vec<PackLemma>,
-    constraints: Vec<String>,
-    truncated: bool,
-    approx_tokens: usize,
-}
-
-/// Rough token estimate: about four characters per token.
-fn approx_tokens(text: &str) -> usize {
-    text.chars().count().div_ceil(4)
-}
-
 /// `tpt-lean context-pack FILE:LINE:COL [--max-tokens N]`: a compact bundle for AI agents.
-/// Lean supplies the goal and diagnostics; the index supplies lemma candidates.
+/// Lean supplies the goal and diagnostics; the index supplies lemma candidates. The bundle is
+/// built by the adapter, which the JSON-RPC server also uses.
 fn context_pack(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(
         &["--project", "--timeout", "--max-tokens"],
@@ -1297,144 +1248,23 @@ fn context_pack(ctx: &Ctx, args: &Args) -> Result<i32> {
     let ws = WorkspaceRoot::new(&root)?;
     let path = ws.resolve(&file)?;
     let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
-    let index = tpt_lean_syntax::position::LineIndex::new(&text);
-    let offset = index
-        .offset_of(line, column)
-        .ok_or_else(|| Error::invalid(format!("{file}:{line}:{column} is outside the file")))?;
-    let utf16 = index.position(offset).column_utf16 as u32;
     let timeout = match args.value("--timeout")? {
         Some(t) => t
             .parse::<u64>()
             .map_err(|_| Error::invalid("--timeout must be seconds"))?,
         None => cfg.security.command_timeout_seconds,
     };
-
-    // Lean: goal and diagnostics.
-    let tc = adapter::discover_toolchain();
-    let (program, server_args) = adapter::lsp::server_command(&root, tc.lake.as_ref(), tc.lean.as_ref())?;
-    let limit = std::time::Duration::from_secs(timeout);
-    let mut client = adapter::lsp::LspClient::start(&program, &server_args, &root, limit)?;
-    let uri = adapter::lsp::open_document(&mut client, &path, &text)?;
-    let goals = adapter::lsp::plain_goals(&mut client, &uri, (line - 1) as u32, utf16, limit);
-    let diags = client.diagnostics_for(&uri);
-    client.shutdown(std::time::Duration::from_secs(5));
-    let goals = goals?;
-    let goal = goals.first().cloned();
-    let (hypotheses, target) = match &goal {
-        Some(g) => split_goal(g),
-        None => (Vec::new(), None),
-    };
-
-    // Source: a window of lines around the position.
-    let parse = tpt_lean_syntax::parse(&text);
-    let total = index.line_count();
-    let from = line.saturating_sub(6).max(1);
-    let to = (line + 6).min(total);
-    let mut snippet_lines = Vec::new();
-    for n in from..=to {
-        let start = index.line_start(n).unwrap_or(0);
-        let end = index.line_start(n + 1).unwrap_or(text.len());
-        let content = text[start..end].trim_end_matches(['\r', '\n']);
-        snippet_lines.push(format!("{n:>5} | {content}"));
-    }
-    let snippet = snippet_lines.join("\n");
-
-    let diagnostics: Vec<PackDiagnostic> = diags
-        .iter()
-        .map(|d| PackDiagnostic {
-            severity: match d["severity"].as_u64().unwrap_or(1) {
-                1 => "error",
-                2 => "warning",
-                3 => "info",
-                _ => "hint",
-            }
-            .to_string(),
-            line: d["range"]["start"]["line"].as_u64().unwrap_or(0) + 1,
-            column: d["range"]["start"]["character"].as_u64().unwrap_or(0) + 1,
-            message: d["message"].as_str().unwrap_or("").to_string(),
-        })
-        .collect();
-
-    // Nearby definitions: the closest declarations above the position in this file.
-    let mut nearby: Vec<PackSymbol> = parse
-        .symbols
-        .iter()
-        .filter(|s| s.line < line)
-        .map(|s| PackSymbol {
-            name: s.name.clone(),
-            kind: s.kind.clone(),
-            line: s.line,
-        })
-        .collect();
-    let keep_from = nearby.len().saturating_sub(5);
-    nearby.drain(..keep_from);
-
-    // Relevant lemmas: index search on the goal target, when an index exists.
-    let mut lemmas = Vec::new();
-    let mut constraints = vec![format!(
-        "security.workspace_only=true, command_timeout={}s",
-        cfg.security.command_timeout_seconds
-    )];
-    let dirs = ProjectDirs::new(&root);
-    if dirs.index_db().exists() {
-        if let (Some(t), Ok(idx)) = (&target, tpt_lean_index::Index::open(&dirs.index_db())) {
-            let opts = tpt_lean_search::SearchOptions {
-                limit: 5,
-                ..Default::default()
-            };
-            let query: String = t
-                .chars()
-                .map(|c| if c.is_alphanumeric() || c == '_' { c } else { ' ' })
-                .collect();
-            if let Ok(hits) = tpt_lean_search::search(&idx, query.trim(), &opts) {
-                lemmas = hits
-                    .into_iter()
-                    .map(|h| PackLemma {
-                        name: h.name,
-                        source: h.file,
-                        line: h.line,
-                        score: (h.score * 1000.0).round() / 1000.0,
-                    })
-                    .collect();
-            }
-        }
-    } else {
-        constraints.push("no index: run the index scan command to get lemma candidates".into());
-    }
-
-    let imports: Vec<String> = parse.imports.iter().map(|i| i.module.clone()).collect();
-
-    // Budget: drop the least important parts until the estimate fits.
-    let mut pack = ContextPack {
-        file: file.clone(),
-        position: PackPosition { line, column },
-        snippet,
-        goal,
-        hypotheses,
-        diagnostics,
-        imports,
-        nearby_definitions: nearby,
-        relevant_lemmas: lemmas,
-        constraints,
-        truncated: false,
-        approx_tokens: 0,
-    };
-    let estimate = |p: &ContextPack| serde_json::to_string(p).map(|s| approx_tokens(&s)).unwrap_or(0);
-    let mut truncated = false;
-    while estimate(&pack) > max_tokens {
-        truncated = true;
-        if pack.relevant_lemmas.pop().is_none()
-            && (pack.nearby_definitions.is_empty() || {
-                pack.nearby_definitions.remove(0);
-                false
-            })
-        {
-            // Nothing left to drop except the snippet, which is kept whole.
-            break;
-        }
-    }
-    pack.truncated = truncated;
-    pack.approx_tokens = estimate(&pack);
+    let pack = adapter::context::build_pack(&adapter::context::PackRequest {
+        root: &root,
+        path: &path,
+        label: &file,
+        text: &text,
+        line,
+        column,
+        max_tokens,
+        timeout: std::time::Duration::from_secs(timeout),
+        command_timeout_seconds: cfg.security.command_timeout_seconds,
+    })?;
 
     let mut human = vec![format!(
         "context for {file}:{line}:{column} (~{} tokens)",
@@ -1475,7 +1305,10 @@ mod tests {
 
     #[test]
     fn token_estimate_is_monotonic() {
-        assert_eq!(approx_tokens(""), 0);
-        assert!(approx_tokens("abcdefgh") < approx_tokens("abcdefghijklmnop"));
+        assert_eq!(tpt_lean_adapter::context::approx_tokens(""), 0);
+        assert!(
+            tpt_lean_adapter::context::approx_tokens("abcdefgh")
+                < tpt_lean_adapter::context::approx_tokens("abcdefghijklmnop")
+        );
     }
 }

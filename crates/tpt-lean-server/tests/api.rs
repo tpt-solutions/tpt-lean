@@ -668,3 +668,49 @@ fn diagnostics_explain_reports_the_error_and_goal_at_a_position() {
     );
     assert_eq!(error_code(&zero), -32602, "{zero}");
 }
+
+#[test]
+fn context_pack_bundles_the_snippet_and_error_and_respects_the_budget() {
+    if tpt_lean_adapter::discover_toolchain().lean.is_none() {
+        eprintln!("skipping: lean not found");
+        return;
+    }
+    let project = TempProject::new("context-pack", None);
+    project.write("Bad.lean", "theorem bad_eq : 1 = 2 := rfl\n");
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(
+        &server,
+        "context.pack",
+        json!({ "path": "Bad.lean", "line": 1, "column": 9 }),
+    );
+    let pack = result_of(&r);
+    assert!(
+        pack["snippet"].as_str().unwrap_or("").contains("theorem bad_eq"),
+        "{r}"
+    );
+    assert!(!pack["diagnostics"].as_array().unwrap().is_empty(), "{r}");
+    assert_eq!(pack["truncated"], false, "{r}");
+
+    // A tiny budget trims optional parts, but the snippet is always kept.
+    let tiny = rpc(
+        &server,
+        "context.pack",
+        json!({ "path": "Bad.lean", "line": 1, "column": 9, "max_tokens": 1 }),
+    );
+    let trimmed = result_of(&tiny);
+    assert_eq!(trimmed["truncated"], true, "{tiny}");
+    assert!(
+        trimmed["snippet"]
+            .as_str()
+            .unwrap_or("")
+            .contains("theorem bad_eq"),
+        "{tiny}"
+    );
+
+    let bad = rpc(
+        &server,
+        "context.pack",
+        json!({ "path": "Bad.lean", "line": 1, "column": 9, "max_tokens": 0 }),
+    );
+    assert_eq!(error_code(&bad), -32602, "{bad}");
+}

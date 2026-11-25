@@ -8,6 +8,7 @@
 //! Level 2 (LSP client, with restart and cancellation) is in `lsp` and `session`. Level 3 (the Lean sidecar, in `lean/tpt-lean-sidecar`) is in `sidecar`.
 
 pub mod compat;
+pub mod context;
 pub mod diagnostics;
 pub mod explain;
 pub mod last_diagnostics;
