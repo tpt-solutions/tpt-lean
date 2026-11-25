@@ -124,11 +124,13 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     };
     if !json_events {
         let human = format!(
-            "build {}: {} file(s) built, {} failed, {} ms",
+            "build {}: {} file(s) built, {} failed, {} ms (cache key {} ms{})",
             if outcome.success { "succeeded" } else { "failed" },
             outcome.files_built,
             outcome.files_failed,
-            outcome.duration_ms
+            outcome.duration_ms,
+            outcome.key_ms,
+            if outcome.cache_hit { ", cache hit" } else { "" }
         );
         let data = json!({
             "success": outcome.success,
@@ -137,6 +139,7 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "files_built": outcome.files_built,
             "files_failed": outcome.files_failed,
             "duration_ms": outcome.duration_ms,
+            "key_ms": outcome.key_ms,
             "digest": outcome.digest,
         });
         ctx.emit("build", &human, &data)?;

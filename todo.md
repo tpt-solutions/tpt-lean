@@ -110,7 +110,7 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 - [ ] Ranking factors (exact name, namespace proximity, docstring relevance, imported modules first, kind, dependency distance; recency later) (done: exact name, namespace, docstring, kind, package; imported modules first via `search --from FILE`; no recency or dependency distance)
 - [x] Output: table, JSON, NDJSON
 - [x] `tpt-lean search` CLI wiring
-- [ ] Benchmarks vs targets (warm p50 < 10 ms, p95 < 50 ms) (not run)
+- [x] Benchmarks vs targets (warm p50 < 10 ms, p95 < 50 ms) (measured: p50 0.99 ms, p95 4.0 ms over 300 queries on 5,000 symbols, in-memory index, release; `crates/tpt-lean-search/tests/bench.rs`, run with `--ignored`)
 - [x] Type-shaped search placeholder (completed in Phase 2) (see `search --type` below)
 
 ### tpt-lean-fmt
@@ -125,7 +125,7 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 - [x] `tpt-lean fmt`, `fmt --check`, `fmt <file>`, `fmt --diff`
 - [x] `fmt --verify` (done in Phase 2: formatted text is written only if Lean reports no new errors)
 - [x] Golden tests: `input.lean` → `expected_formatted.lean`
-- [ ] Benchmark: 5,000-line file < 100 ms (not run)
+- [x] Benchmark: 5,000-line file < 100 ms (measured: 6,255 lines, median 76 ms over 10 release runs; `crates/tpt-lean-fmt/tests/bench.rs`; the margin is small)
 
 ### doctor (initial)
 - [x] `tpt-lean doctor`: Lean, Lake, toolchain compat, project config, dependency cache, Mathlib availability, write permissions, SQLite index health (partial: toolchain pin shown but no compatibility check; Mathlib presence only)
@@ -272,7 +272,7 @@ Crate: `tpt-lean-build`
 - [x] `tpt-lean clean`
 - [x] `tpt-lean cache status`
 - [x] `tpt-lean cache prune`
-- [ ] Cache-hit overhead < 200 ms
+- [ ] Cache-hit overhead < 200 ms (tpt-lean's own key computation is about 1 ms; a cache-hit build still runs Lake, which takes about 1.1 s to do nothing in a small project, and tpt-lean's Lake child took about 2.4 s in the same case, cause not found; see the measurements in the changelog)
 - [ ] Better logs and diagnostics
 - [ ] Wire `build.*` into server and MCP
 - [x] Tests for cache correctness/invalidation
@@ -357,7 +357,7 @@ Crate: `tpt-lean-wasm`
 ---
 
 ## Phase 9 — Release, packaging, docs
-- [ ] Verify performance targets (search, context pack, fmt, cache-hit build, incremental index)
+- [ ] Verify performance targets (search and fmt done; context pack, cache-hit build and incremental index not yet)
 - [ ] Benchmark suite in CI
 - [ ] Per-release dependency license report
 - [x] Per-release `cargo deny` / `cargo audit` gate

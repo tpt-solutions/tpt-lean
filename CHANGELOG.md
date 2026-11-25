@@ -24,6 +24,15 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - LSP proxy code actions: an `Import M` quick fix for unknown identifiers, and the commands
   `tpt-lean.searchLemmas` and `tpt-lean.explainError` through `workspace/executeCommand`.
 - LSP `textDocument/formatting` and a `Format document` action, using `tpt-lean fmt`.
+- `tpt-lean build` prints the cache key time and whether the build was a cache hit, and the JSON
+  output carries `key_ms`.
+- Measurements (not tests): search p50 0.99 ms, p95 4.0 ms on 5,000 symbols; `fmt` median 76 ms on
+  a 6,255-line file. Run them with `cargo test -p tpt-lean-search --release --test bench -- --ignored`
+  and `cargo test -p tpt-lean-fmt --release --test bench -- --ignored`.
+- Known: a cache-hit `tpt-lean build` took about 2.6 s on a small project, against about 1.1 s for a
+  direct `lake build` that does nothing. The cache key is about 1 ms. The extra time is in the Lake
+  process that tpt-lean starts (about 2.4 s when started from Rust, 1.1 s from a shell); the cause
+  is not yet known.
 - Cargo workspace with crates for core config and discovery, syntax, indexing,
   search, formatting, the Lean CLI/LSP adapter, FFI, JSON-RPC server, MCP server,
   docgen, profiling, build orchestration, LSP proxy, WASM bindings, and the
