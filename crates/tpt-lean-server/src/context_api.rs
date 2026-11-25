@@ -6,7 +6,8 @@
 use std::time::Duration;
 
 use serde_json::Value;
-use tpt_lean_adapter::context::{build_pack, PackRequest};
+use tpt_lean_adapter::context::{assemble_pack, PackRequest};
+use tpt_lean_adapter::explain::snapshot_in_session;
 
 use crate::{app_error, position_param, str_param, MethodResult, RpcError, Server, INVALID_PARAMS};
 
@@ -31,7 +32,7 @@ impl Server {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| app_error(tpt_lean_core::Error::from(e).with_path(&path)))?;
         let timeout = self.config().security.command_timeout_seconds;
-        let pack = build_pack(&PackRequest {
+        let req = PackRequest {
             root: self.root(),
             path: &path,
             label: &rel,
@@ -41,8 +42,13 @@ impl Server {
             max_tokens,
             timeout: Duration::from_secs(timeout),
             command_timeout_seconds: timeout,
-        })
-        .map_err(app_error)?;
+        };
+        let snap = self
+            .with_warm_session(|session, version| {
+                snapshot_in_session(session, &path, &text, line, column, version, req.timeout)
+            })
+            .map_err(app_error)?;
+        let pack = assemble_pack(snap, &req).map_err(app_error)?;
         serde_json::to_value(&pack).map_err(|e| {
             app_error(tpt_lean_core::Error::new(
                 tpt_lean_core::ErrorCode::Internal,

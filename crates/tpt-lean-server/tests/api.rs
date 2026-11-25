@@ -805,3 +805,62 @@ fn search_goal_reads_the_goal_at_a_tactic_position() {
     );
     assert_eq!(error_code(&bad), -32602, "{bad}");
 }
+
+#[test]
+fn warm_session_is_reused_and_follows_edits() {
+    if tpt_lean_adapter::discover_toolchain().lean.is_none() {
+        eprintln!("skipping: lean not found");
+        return;
+    }
+    let project = TempProject::new("warm-session", None);
+    project.write("Warm.lean", "theorem warm_eq : 1 = 2 := rfl\n");
+    let server = Server::new(project.path()).unwrap();
+    let params = json!({ "path": "Warm.lean", "line": 1, "column": 9 });
+
+    let first = rpc(&server, "context.pack", params.clone());
+    assert!(!result_of(&first)["diagnostics"].as_array().unwrap().is_empty(), "{first}");
+    assert_eq!(server.warm_session_starts(), 1);
+
+    // The same text again reuses the running server and gives the same answer.
+    let second = rpc(&server, "context.pack", params.clone());
+    assert!(!result_of(&second)["diagnostics"].as_array().unwrap().is_empty(), "{second}");
+    assert_eq!(server.warm_session_starts(), 1, "the session is reused");
+
+    // An edit that fixes the error must not report the old error.
+    project.write("Warm.lean", "theorem warm_eq : 1 = 1 := rfl\n");
+    let fixed = rpc(&server, "context.pack", params.clone());
+    let diagnostics = result_of(&fixed)["diagnostics"].as_array().unwrap().clone();
+    assert!(
+        diagnostics.iter().all(|d| d["severity"] != "error"),
+        "stale error after the edit: {fixed}"
+    );
+    assert_eq!(server.warm_session_starts(), 1);
+
+    // Releasing the session stops the server; the next request starts another.
+    server.release_warm_session();
+    let again = rpc(&server, "context.pack", params);
+    assert!(again.get("result").is_some(), "{again}");
+    assert_eq!(server.warm_session_starts(), 2);
+    server.release_warm_session();
+}
+
+#[test]
+fn idle_warm_session_is_reaped() {
+    if tpt_lean_adapter::discover_toolchain().lean.is_none() {
+        eprintln!("skipping: lean not found");
+        return;
+    }
+    let project = TempProject::new("warm-idle", None);
+    project.write("Idle.lean", "theorem idle_ok : True := trivial\n");
+    let server = Server::new(project.path()).unwrap();
+    let params = json!({ "path": "Idle.lean", "line": 1, "column": 9 });
+    let _ = rpc(&server, "context.pack", params.clone());
+    assert_eq!(server.warm_session_starts(), 1);
+    // Not idle yet: a long idle limit keeps it.
+    assert!(!server.reap_idle_session(std::time::Duration::from_secs(3600)));
+    // Idle for zero seconds: it is stopped, and the next request starts a fresh one.
+    assert!(server.reap_idle_session(std::time::Duration::ZERO));
+    let _ = rpc(&server, "context.pack", params);
+    assert_eq!(server.warm_session_starts(), 2);
+    server.release_warm_session();
+}

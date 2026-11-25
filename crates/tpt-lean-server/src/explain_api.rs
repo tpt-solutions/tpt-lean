@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tpt_lean_adapter::explain::{error_at, lean_json, lemma_candidates, snapshot_at, split_goal};
+use tpt_lean_adapter::explain::{error_at, lean_json, lemma_candidates, snapshot_in_session, split_goal};
 use tpt_lean_core::dirs::ProjectDirs;
 
 use crate::{app_error, position_param, str_param, MethodResult, RpcError, Server, INVALID_PARAMS};
@@ -23,16 +23,11 @@ impl Server {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| app_error(tpt_lean_core::Error::from(e).with_path(&path)))?;
         let timeout = self.config().security.command_timeout_seconds;
-        let snap = snapshot_at(
-            self.root(),
-            &path,
-            &rel,
-            &text,
-            line,
-            column,
-            Duration::from_secs(timeout),
-        )
-        .map_err(app_error)?;
+        let snap = self
+            .with_warm_session(|session, version| {
+                snapshot_in_session(session, &path, &text, line, column, version, Duration::from_secs(timeout))
+            })
+            .map_err(app_error)?;
         let error = error_at(&snap.diagnostics, &rel, snap.line0, snap.utf16);
         let (hypotheses, target) = match snap.goals.first() {
             Some(g) => split_goal(g),
@@ -73,16 +68,11 @@ impl Server {
         let text = std::fs::read_to_string(&path)
             .map_err(|e| app_error(tpt_lean_core::Error::from(e).with_path(&path)))?;
         let timeout = self.config().security.command_timeout_seconds;
-        let snap = snapshot_at(
-            self.root(),
-            &path,
-            &rel,
-            &text,
-            line,
-            column,
-            Duration::from_secs(timeout),
-        )
-        .map_err(app_error)?;
+        let snap = self
+            .with_warm_session(|session, version| {
+                snapshot_in_session(session, &path, &text, line, column, version, Duration::from_secs(timeout))
+            })
+            .map_err(app_error)?;
         let (hypotheses, target) = match snap.goals.first() {
             Some(g) => split_goal(g),
             None => (Vec::new(), None),

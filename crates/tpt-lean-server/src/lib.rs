@@ -22,6 +22,7 @@ mod methods;
 pub mod permission;
 mod project_api;
 pub mod state;
+mod warm;
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -98,6 +99,8 @@ pub struct Server {
     shutdown: AtomicBool,
     /// Endpoint the listener is bound to, used to wake the accept loop on shutdown.
     listen_addr: Mutex<Option<Endpoint>>,
+    /// The Lean language server kept warm between requests (see [`warm`]).
+    warm: Mutex<warm::WarmState>,
 }
 
 pub(crate) fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -116,6 +119,7 @@ impl Server {
             builds: Mutex::new(builds::Builds::default()),
             shutdown: AtomicBool::new(false),
             listen_addr: Mutex::new(None),
+            warm: Mutex::new(warm::WarmState::default()),
         })
     }
 
@@ -435,12 +439,14 @@ pub fn bind_unix(path: &Path) -> io::Result<UnixListener> {
 /// Serve on an already-bound TCP listener until a `server.shutdown` request is handled.
 pub fn serve_listener(server: Arc<Server>, listener: TcpListener) -> io::Result<()> {
     *lock(&server.listen_addr) = Some(Endpoint::Tcp(listener.local_addr()?));
+    warm::spawn_reaper(Arc::clone(&server));
     for stream in listener.incoming() {
         if server.is_shutdown_requested() {
             break;
         }
         spawn_connection(&server, stream?);
     }
+    server.release_warm_session();
     Ok(())
 }
 
@@ -453,12 +459,14 @@ pub fn serve_unix_listener(server: Arc<Server>, listener: UnixListener) -> io::R
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "unix listener has no path"))?
         .to_path_buf();
     *lock(&server.listen_addr) = Some(Endpoint::Unix(path));
+    warm::spawn_reaper(Arc::clone(&server));
     for stream in listener.incoming() {
         if server.is_shutdown_requested() {
             break;
         }
         spawn_connection(&server, stream?);
     }
+    server.release_warm_session();
     Ok(())
 }
 

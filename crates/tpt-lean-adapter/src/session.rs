@@ -79,6 +79,7 @@ impl LspSession {
     pub fn sync_document(&mut self, path: &Path, text: &str) -> Result<String> {
         let uri = path_to_uri(path);
         let next = match self.docs.get(&uri) {
+            Some(d) if d.text == text => return Ok(uri),
             Some(d) => d.version + 1,
             None => 1,
         };
@@ -90,6 +91,9 @@ impl LspSession {
                 c.change_with_version(&uri, next, text)
             }
         })?;
+        if let Some(client) = self.client.as_mut() {
+            client.forget_document(&uri);
+        }
         self.docs.insert(
             uri.clone(),
             Doc {
@@ -135,6 +139,20 @@ impl LspSession {
     /// Latest diagnostics published for `uri`, or `None` when the server has not published yet.
     pub fn published_diagnostics(&mut self, uri: &str) -> Option<Vec<Value>> {
         self.client.as_mut().and_then(|c| c.published_diagnostics(uri))
+    }
+
+    /// Work items Lean still reports for `uri`; `Some(0)` when it has finished. `None` before any
+    /// progress is reported, or when the server is not running.
+    pub fn file_progress(&mut self, uri: &str) -> Option<usize> {
+        self.client.as_mut().and_then(|c| c.file_progress(uri))
+    }
+
+    /// The goals at a 0-based line and UTF-16 column of `uri`, from `$/lean/plainGoal`.
+    pub fn plain_goals(&mut self, uri: &str, line: u32, character_utf16: u32) -> Result<Vec<String>> {
+        let timeout = self.timeout;
+        let params = crate::lsp::plain_goal_params(uri, line, character_utf16);
+        let result = self.with_recovery(|c| c.request("$/lean/plainGoal", params.clone(), timeout))?;
+        Ok(crate::lsp::parse_plain_goals(&result))
     }
 
     /// Stop the server cleanly. The session can still be used; the next call starts a new server.

@@ -12,7 +12,7 @@ use tpt_lean_core::dirs::ProjectDirs;
 use tpt_lean_core::Result;
 use tpt_lean_syntax::position::LineIndex;
 
-use crate::explain::{snapshot_at, split_goal};
+use crate::explain::{snapshot_at, split_goal, PositionSnapshot};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PackPosition {
@@ -93,6 +93,12 @@ pub fn build_pack(req: &PackRequest) -> Result<ContextPack> {
         req.column,
         req.timeout,
     )?;
+    assemble_pack(snap, req)
+}
+
+/// The pack for a request whose language-server snapshot is already taken (see
+/// [`crate::explain::snapshot_in_session`]).
+pub fn assemble_pack(snap: PositionSnapshot, req: &PackRequest) -> Result<ContextPack> {
     let goal = snap.goals.first().cloned();
     let (hypotheses, target) = match &goal {
         Some(g) => split_goal(g),

@@ -33,6 +33,23 @@ Public functions for the CLI:
   file to disappear. `StopReport::to_json()` gives `outcome` (`not_running`, `stopped`,
   `stale_removed`, `timed_out`) and `pid`.
 
+## Warm Lean session
+
+`context.pack` and `diagnostics.explain` need Lean's language server. The server keeps one session
+per project (`crates/tpt-lean-server/src/warm.rs`):
+
+- It starts on the first request that needs it, which takes several seconds (`lake serve` loads the
+  project). Later requests reuse it.
+- A document whose text has not changed is not resent to Lean. A changed document is re-elaborated,
+  and the answer waits for Lean's diagnostics for the new text, not for an earlier version.
+- It is stopped after 10 minutes without a request, when the server shuts down, or by
+  `Server::release_warm_session`. A background thread checks for idleness once a second.
+- `Server::warm_session_starts` counts starts, so a client or test can see whether the session was
+  reused.
+
+The CLI does not use the warm session: each `tpt-lean context-pack` or `explain` is its own process
+and starts Lean.
+
 ## Permissions
 
 Each method has a class. The check happens before dispatch.

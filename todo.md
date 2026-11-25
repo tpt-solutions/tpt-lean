@@ -175,7 +175,7 @@ Crate: `tpt-lean-adapter`
 - [x] `fmt --verify`
 - [ ] Cached diagnostics / safe cached goals in index
 - [ ] Integration tests against current + previous stable Lean (nightly optional)
-- [ ] Context pack perf target (p50 < 100 ms, p95 < 500 ms excl. elaboration)
+- [x] Context pack perf target (p50 < 100 ms, p95 < 500 ms excl. elaboration): through the server's warm session, p50 1 ms for repeated text and p50 231 ms / p95 234 ms after an edit (10 edits). The first call starts Lean and took 4.7-6.0 s; the CLI starts Lean on every call (7-9 s). Measured by `crates/tpt-lean-server/tests/bench.rs`.
 
 ---
 
@@ -223,7 +223,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [ ] Permission enforcement per request (read/write/build/profile/network)
 - [x] Path safety checks on every path param
 - [x] `tpt-lean server start|stop|status`
-- [ ] Persistent daemon behavior (warm index/LSP, idle shutdown)
+- [x] Persistent daemon behavior (warm index/LSP, idle shutdown): the server keeps one Lean session per project for context.pack and explain, stops it after 10 minutes idle or on shutdown, and reuses it while the text is unchanged. The index is opened per request, which is cheap.
 - [x] Schema-based request/response tests, permission tests
 
 ---

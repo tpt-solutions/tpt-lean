@@ -231,6 +231,13 @@ impl LspClient {
         }
     }
 
+    /// Drop the diagnostics and progress recorded for `uri`, so that the next wait sees only what
+    /// the server reports for the text it has now. Used when a document changes.
+    pub fn forget_document(&mut self, uri: &str) {
+        self.diagnostics.remove(uri);
+        self.progress.remove(uri);
+    }
+
     /// Work items Lean still reports as processing for `uri`, or `None` when no progress has
     /// been reported yet. Zero means the server has finished elaborating the document.
     /// Drains queued messages first.

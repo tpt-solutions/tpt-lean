@@ -16,6 +16,7 @@ use tpt_lean_syntax::position::LineIndex;
 
 use crate::compat::Compatibility;
 use crate::lsp::{self, LspClient};
+use crate::session::LspSession;
 
 /// An error Lean reports at a position. Lines and columns are 1-based.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -79,6 +80,64 @@ pub fn snapshot_at(
         lean_version,
         compatibility,
     })
+}
+
+/// The installed Lean version and its compatibility. Reading it runs `lean --version`, so a warm
+/// session reads it once and passes it to [`snapshot_in_session`].
+pub fn installed_version(timeout: Duration) -> (Option<String>, Compatibility) {
+    let tc = crate::discover_toolchain();
+    crate::compat::installed(
+        &tc,
+        &crate::lean_policy(timeout.as_secs().max(1)),
+        &tpt_lean_core::policy::CancelToken::new(),
+    )
+}
+
+/// Like [`snapshot_at`], but through a session that stays open between calls: the server is not
+/// started or stopped here, and a document whose text has not changed is not resent. Diagnostics
+/// are awaited only for the text the session has now.
+pub fn snapshot_in_session(
+    session: &mut LspSession,
+    file: &Path,
+    text: &str,
+    line: usize,
+    column: usize,
+    version: &(Option<String>, Compatibility),
+    timeout: Duration,
+) -> Result<PositionSnapshot> {
+    let index = LineIndex::new(text);
+    let offset = index
+        .offset_of(line, column)
+        .ok_or_else(|| Error::invalid(format!("{}:{line}:{column} is outside the file", file.display())))?;
+    let utf16 = index.position(offset).column_utf16 as u64;
+    let uri = session.sync_document(file, text)?;
+    let goals = session.plain_goals(&uri, (line - 1) as u32, utf16 as u32)?;
+    let diagnostics = await_session_diagnostics(session, &uri, timeout.min(DIAGNOSTICS_WAIT));
+    Ok(PositionSnapshot {
+        line0: (line - 1) as u64,
+        utf16,
+        goals,
+        diagnostics,
+        lean_version: version.0.clone(),
+        compatibility: version.1,
+    })
+}
+
+/// [`await_diagnostics`] for a session: waits until the server reports no work left for `uri`
+/// and has published diagnostics for the current text.
+fn await_session_diagnostics(session: &mut LspSession, uri: &str, wait: Duration) -> Vec<Value> {
+    let deadline = Instant::now() + wait;
+    loop {
+        if session.file_progress(uri) == Some(0) {
+            if let Some(published) = session.published_diagnostics(uri) {
+                return published;
+            }
+        }
+        if Instant::now() >= deadline {
+            return session.published_diagnostics(uri).unwrap_or_default();
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// Longest time to wait for the server to publish diagnostics for a document.
