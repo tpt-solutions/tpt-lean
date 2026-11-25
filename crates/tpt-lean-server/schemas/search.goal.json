@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "search.goal",
+  "permission": "build",
+  "params": {
+    "type": "object",
+    "required": ["path", "line", "column"],
+    "properties": {
+      "path": { "type": "string" },
+      "line": { "type": "integer", "minimum": 1 },
+      "column": { "type": "integer", "minimum": 1 },
+      "limit": { "type": "integer", "minimum": 1, "maximum": 50 }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["goal", "hypotheses", "indexed", "results"],
+    "properties": {
+      "goal": { "type": ["string", "null"] },
+      "hypotheses": { "type": "array", "items": { "type": "string" } },
+      "indexed": { "type": "boolean" },
+      "results": { "type": "array" }
+    }
+  }
+}

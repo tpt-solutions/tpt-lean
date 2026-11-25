@@ -42,6 +42,8 @@ pub struct LspClient {
     diagnostics: HashMap<String, Value>,
     /// Document versions this client has opened or changed.
     versions: HashMap<String, i64>,
+    /// Number of work items Lean still reports as processing, per document (`$/lean/fileProgress`).
+    progress: HashMap<String, usize>,
     server_version: Option<String>,
 }
 
@@ -98,6 +100,7 @@ impl LspClient {
             abandoned: HashSet::new(),
             diagnostics: Default::default(),
             versions: Default::default(),
+            progress: HashMap::new(),
             server_version: None,
         };
         let root_uri = path_to_uri(cwd);
@@ -210,11 +213,37 @@ impl LspClient {
     }
 
     fn keep_notification(&mut self, msg: &Value) {
-        if msg.get("method").and_then(Value::as_str) == Some("textDocument/publishDiagnostics") {
-            if let (Some(uri), Some(params)) = (msg["params"]["uri"].as_str(), msg.get("params")) {
-                self.diagnostics.insert(uri.to_string(), params.clone());
+        match msg.get("method").and_then(Value::as_str) {
+            Some("textDocument/publishDiagnostics") => {
+                if let (Some(uri), Some(params)) = (msg["params"]["uri"].as_str(), msg.get("params")) {
+                    self.diagnostics.insert(uri.to_string(), params.clone());
+                }
+            }
+            Some("$/lean/fileProgress") => {
+                if let (Some(uri), Some(items)) = (
+                    msg["params"]["textDocument"]["uri"].as_str(),
+                    msg["params"]["processing"].as_array(),
+                ) {
+                    self.progress.insert(uri.to_string(), items.len());
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Work items Lean still reports as processing for `uri`, or `None` when no progress has
+    /// been reported yet. Zero means the server has finished elaborating the document.
+    /// Drains queued messages first.
+    pub fn file_progress(&mut self, uri: &str) -> Option<usize> {
+        while let Ok(msg) = self.messages.try_recv() {
+            if msg.get("id").is_some() && msg.get("method").is_some() {
+                let reply = json!({ "jsonrpc": "2.0", "id": msg["id"].clone(), "result": Value::Null });
+                let _ = self.send(&reply);
+            } else {
+                self.keep_notification(&msg);
             }
         }
+        self.progress.get(uri).copied()
     }
 
     /// Diagnostics the server has published for `uri` so far (drains queued messages first).

@@ -210,7 +210,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [ ] Optional localhost HTTP: `POST /v1/rpc`
 - [x] Remote access disabled by default
 - [x] Methods: `project.info`, `project.doctor`
-- [ ] Methods: `search.query`, `search.symbol`, `search.goal`
+- [x] Methods: `search.query`, `search.symbol`, `search.goal` (goal search returns index lemma candidates for the goal target; the CLI `--goal-at` flag is not wired)
 - [x] Methods: `index.status`, `index.refresh`
 - [x] Methods: `format.text`, `format.file`
 - [x] Methods: `check.file`, `check.project` (`check.project` returns the CI report; no multi-file check beyond the project build)

@@ -738,3 +738,33 @@ fn project_doctor_reports_the_same_checks_as_the_cli() {
         .unwrap();
     assert_eq!(config["status"], "ok", "{r}");
 }
+
+#[test]
+fn search_goal_reads_the_goal_at_a_tactic_position() {
+    if tpt_lean_adapter::discover_toolchain().lean.is_none() {
+        eprintln!("skipping: lean not found");
+        return;
+    }
+    let project = TempProject::new("search-goal", None);
+    project.write(
+        "Goal.lean",
+        "theorem add_swap (a b : Nat) : a + b = b + a := by\n  skip\n",
+    );
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(
+        &server,
+        "search.goal",
+        json!({ "path": "Goal.lean", "line": 2, "column": 3 }),
+    );
+    let found = result_of(&r);
+    assert!(found["goal"].as_str().unwrap_or("").contains("a + b"), "{r}");
+    assert_eq!(found["indexed"], false, "{r}");
+    assert!(found["results"].as_array().unwrap().is_empty(), "{r}");
+
+    let bad = rpc(
+        &server,
+        "search.goal",
+        json!({ "path": "Goal.lean", "line": 2, "column": 3, "limit": 0 }),
+    );
+    assert_eq!(error_code(&bad), -32602, "{bad}");
+}

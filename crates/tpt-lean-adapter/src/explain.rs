@@ -72,18 +72,21 @@ pub fn snapshot_at(
 /// Longest time to wait for the server to publish diagnostics for a document.
 const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(30);
 
-/// Diagnostics for `uri` once the server has published them. Lean publishes after it finishes
-/// elaborating, which can be after the goal request has already been answered, so this polls
-/// until a publication arrives or `wait` runs out. A document that never publishes yields an
-/// empty list rather than an error.
+/// Diagnostics for `uri` once the server has finished elaborating it. Lean publishes an empty
+/// list when a document opens, and reports processing progress as it works, so a publication
+/// alone is not enough: this polls until progress reports no work left and a publication has
+/// arrived. If `wait` runs out first, whatever has been published so far is returned.
 fn await_diagnostics(client: &mut LspClient, uri: &str, wait: Duration) -> Vec<Value> {
     let deadline = Instant::now() + wait;
     loop {
-        if let Some(published) = client.published_diagnostics(uri) {
-            return published;
+        let done = client.file_progress(uri) == Some(0);
+        if done {
+            if let Some(published) = client.published_diagnostics(uri) {
+                return published;
+            }
         }
         if Instant::now() >= deadline {
-            return Vec::new();
+            return client.diagnostics_for(uri);
         }
         thread::sleep(Duration::from_millis(20));
     }

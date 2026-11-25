@@ -195,6 +195,7 @@ impl Server {
             "diagnostics.explain" => self.diagnostics_explain(params),
             "context.pack" => self.context_pack(params),
             "project.doctor" => self.project_doctor(params),
+            "search.goal" => self.search_goal(params),
             "diagnostics.get" => self.diagnostics_get(params),
             "goals.at" => self.goals_at(params),
             "server.shutdown" => self.server_shutdown(),
