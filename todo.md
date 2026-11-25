@@ -220,7 +220,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [x] Methods: `build.run/cancel/status`, `profile.run/get` (wired in Phases 5–6; all five done; builds run one at a time and are kept in memory per server process)
 - [x] Streaming: `GET /v1/events` (SSE) for build events (general JSON-RPC notifications are not implemented)
 - [x] API request/response JSON schemas
-- [ ] Permission enforcement per request (read/write/build/profile/network)
+- [x] Permission enforcement per request (read/write/build/profile; the network class is not used because tpt-lean makes no network requests of its own; `server/permission.rs`, MCP `permission.rs`)
 - [x] Path safety checks on every path param
 - [x] `tpt-lean server start|stop|status`
 - [x] Persistent daemon behavior (warm index/LSP, idle shutdown): the server keeps one Lean session per project for context.pack and explain, stops it after 10 minutes idle or on shutdown, and reuses it while the text is unchanged. The index is opened per request, which is cheap.
@@ -331,8 +331,8 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [x] `imports --unused`
 - [x] `imports --suggest "<query>"`
 - [x] `imports --minimize <file>`
-- [ ] Import dependency cost / heavy import detection / compile-time estimate
-- [ ] `tpt-lean bisect --good --bad` (commits, dependency versions, Mathlib updates, flags, imports)
+- [ ] Import dependency cost / heavy import detection / compile-time estimate (`imports --cost` gives static fan-in and transitive counts; no compile-time estimate yet)
+- [ ] `tpt-lean bisect --good --bad` (commits, dependency versions, Mathlib updates, flags, imports) (commits only: `bisect` runs over git commits; the other axes are not done)
 - [x] `tpt-lean ci --json --sarif`
 - [ ] SARIF output + schema validation
 - [x] Machine-readable failure summaries, cache stats in CI output (cache stats are the build cache's hit/miss and entry count; cache hits never skip the build)
