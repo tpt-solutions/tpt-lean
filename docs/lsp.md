@@ -52,6 +52,11 @@ Code actions (`textDocument/codeAction`), answered by the proxy:
   for the goal at the position.
 - `Explain this error` (command `tpt-lean.explainError`), offered when the request has
   diagnostics: the error at the position and the goals there.
+- `Format document`: a source action whose edit replaces the whole document with the output of
+  `tpt-lean fmt`. The same edit is returned by `textDocument/formatting` (advertised as
+  `documentFormattingProvider`). The formatter refuses uncertain syntax and tabs; then no edit is
+  returned and the reason is logged. Nothing is written to disk. Lean's check that a format keeps
+  the file valid (`fmt --verify`) is not run here.
 - Lean's own code actions are forwarded and appended. If Lean does not answer, the local actions
   are still returned.
 
@@ -69,6 +74,6 @@ Notifications:
 Cancellation: `$/cancelRequest` is handled on the reader thread, so it works while the proxy is
 waiting on Lean.
 
-Not done: formatting code actions, progress reporting, and incremental sync. The index-backed definition answer is matched by exact name, so it does not
+Not done: progress reporting, incremental sync, and running the Lean check of formatting edits. The index-backed definition answer is matched by exact name, so it does not
 resolve names through `open` or namespaces; those fall through to Lean. Editor setup is in
 [editors.md](editors.md).

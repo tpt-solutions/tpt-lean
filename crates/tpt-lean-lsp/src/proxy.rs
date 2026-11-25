@@ -7,6 +7,7 @@
 use crate::framing::{read_message, write_message};
 use crate::symbols::document_symbols;
 use crate::workspace::{definitions, import_modules, workspace_symbols};
+use tpt_lean_fmt::format_text;
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -171,6 +172,7 @@ impl<W: Write> Proxy<W> {
             "textDocument/hover" => self.hover(params, cancel),
             "textDocument/definition" => self.definition(params, cancel),
             "textDocument/codeAction" => Ok(self.code_actions(params, cancel)),
+            "textDocument/formatting" => Ok(self.formatting(params)),
             "workspace/executeCommand" => self.execute_command(params, cancel),
             _ => {
                 let upstream = self.upstream_params(params);
@@ -361,6 +363,15 @@ impl<W: Write> Proxy<W> {
             "kind": "source",
             "command": { "title": "Search lemmas for this goal", "command": SEARCH_LEMMAS, "arguments": [position.clone()] }
         }));
+        if let Some(edits) = self.format_edits(&uri) {
+            if !edits.is_empty() {
+                actions.push(json!({
+                    "title": "Format document",
+                    "kind": "source",
+                    "edit": { "changes": { uri.clone(): edits } }
+                }));
+            }
+        }
         if !diagnostics.is_empty() {
             actions.push(json!({
                 "title": "Explain this error",
@@ -378,6 +389,42 @@ impl<W: Write> Proxy<W> {
             }
         }
         Value::Array(actions)
+    }
+
+    /// `textDocument/formatting`: the edits that `tpt-lean fmt` would make to the document. A
+    /// document the formatter refuses (uncertain syntax, tabs) gets no edits, and the reason is
+    /// logged. Nothing is written to disk; the editor applies the edits.
+    fn formatting(&mut self, params: &Value) -> Value {
+        let uri = params["textDocument"]["uri"].as_str().unwrap_or_default().to_string();
+        match self.format_edits(&uri) {
+            Some(edits) => Value::Array(edits),
+            None => Value::Array(Vec::new()),
+        }
+    }
+
+    /// One edit replacing the whole document with the formatted text, or `None` when the document
+    /// is unknown or the formatter refuses it (the reason is logged). An unchanged document gives
+    /// an empty list.
+    fn format_edits(&mut self, uri: &str) -> Option<Vec<Value>> {
+        let text = self.documents.get(uri)?.text.clone();
+        match format_text(&text) {
+            Err(e) => {
+                let _ = self.log(&format!("tpt-lean: not formatting {uri}: {e}"));
+                None
+            }
+            Ok(formatted) if !formatted.changed => Some(Vec::new()),
+            Ok(formatted) => {
+                let last = text.rsplit('\n').next().unwrap_or("");
+                let end = json!({
+                    "line": text.matches('\n').count(),
+                    "character": last.encode_utf16().count()
+                });
+                Some(vec![json!({
+                    "range": { "start": { "line": 0, "character": 0 }, "end": end },
+                    "newText": formatted.output
+                })])
+            }
+        }
     }
 
     /// Run one of this server's commands. The argument is `{uri, line, character}`.
@@ -561,6 +608,7 @@ fn initialize_result() -> Value {
             "documentSymbolProvider": true,
             "workspaceSymbolProvider": true,
             "hoverProvider": true,
+            "documentFormattingProvider": true,
             "codeActionProvider": { "codeActionKinds": ["quickfix", "source"] },
             "executeCommandProvider": { "commands": [SEARCH_LEMMAS, EXPLAIN_ERROR] }
         },
@@ -720,6 +768,52 @@ mod tests {
 
         let explained = out.iter().find(|m| m["id"] == 3).expect("explain");
         assert!(explained["result"]["goals"].is_array(), "{explained}");
+    }
+
+    #[test]
+    fn formatting_replaces_the_whole_document_and_refuses_uncertain_text() {
+        let dir = std::env::temp_dir().join(format!("tpt-lsp-fmt-{}", std::process::id()));
+        let session = LspSession::new(
+            Path::new("/nonexistent/tpt-lean-test-server"),
+            &[],
+            &dir,
+            Duration::from_secs(5),
+        );
+        let messy = "def x := 1   
+
+";
+        let tabbed = "def y := 2
+	def z := 3
+";
+        let input = frames(&[
+            json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": "file:///tmp/tpt-fmt/A.lean", "languageId": "lean4", "version": 1, "text": messy}}}),
+            json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+                "textDocument": {"uri": "file:///tmp/tpt-fmt/B.lean", "languageId": "lean4", "version": 1, "text": tabbed}}}),
+            json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/formatting", "params": {
+                "textDocument": {"uri": "file:///tmp/tpt-fmt/A.lean"}, "options": {}}}),
+            json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/formatting", "params": {
+                "textDocument": {"uri": "file:///tmp/tpt-fmt/B.lean"}, "options": {}}}),
+            json!({"jsonrpc": "2.0", "id": 4, "method": "shutdown"}),
+            json!({"jsonrpc": "2.0", "method": "exit"}),
+        ]);
+        let mut proxy = Proxy::new(&dir, session, Vec::new());
+        proxy.serve(BufReader::new(Cursor::new(input))).unwrap();
+        let out = read_back(proxy.output());
+
+        let edits = out.iter().find(|m| m["id"] == 2).expect("formatting A")["result"]
+            .as_array()
+            .unwrap()
+            .clone();
+        assert_eq!(edits.len(), 1, "{edits:?}");
+        assert_eq!(edits[0]["newText"], "def x := 1
+");
+        assert_eq!(edits[0]["range"]["start"], json!({"line": 0, "character": 0}));
+        assert_eq!(edits[0]["range"]["end"], json!({"line": 2, "character": 0}));
+
+        let refused = out.iter().find(|m| m["id"] == 3).expect("formatting B");
+        assert_eq!(refused["result"], json!([]), "{refused}");
     }
 
     #[test]

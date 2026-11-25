@@ -718,6 +718,7 @@ dependencies = [
  "serde_json",
  "tpt-lean-adapter",
  "tpt-lean-core",
+ "tpt-lean-fmt",
  "tpt-lean-index",
  "tpt-lean-syntax",
 ]

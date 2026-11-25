@@ -23,6 +23,7 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - `tpt-lean build --plan [--json]`: the project's module import waves, critical path and widest wave.
 - LSP proxy code actions: an `Import M` quick fix for unknown identifiers, and the commands
   `tpt-lean.searchLemmas` and `tpt-lean.explainError` through `workspace/executeCommand`.
+- LSP `textDocument/formatting` and a `Format document` action, using `tpt-lean fmt`.
 - Cargo workspace with crates for core config and discovery, syntax, indexing,
   search, formatting, the Lean CLI/LSP adapter, FFI, JSON-RPC server, MCP server,
   docgen, profiling, build orchestration, LSP proxy, WASM bindings, and the
