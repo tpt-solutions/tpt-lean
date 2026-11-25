@@ -26,7 +26,7 @@ const PROFILER_THRESHOLD_MS: u32 = 1;
 
 const NOT_MEASURED: &[&str] = &[
     "memory: only the peak resident size of the whole Lean process tree is sampled; per-declaration memory is not measured",
-    "dependency bottleneck graph: direct imports only (`--graph`); transitive costs are not attributed",
+    "dependency bottleneck graph: project modules are expanded to `--graph-depth` (at most 60 timed runs); external packages are timed as leaves and their own imports are not attributed",
     "imports: load cost is timed only when requested (`--imports`), one approximate run per import",
     "build-step timing and cache hit/miss reports: not implemented",
     "imports and startup: included in wall time only, not attributed to declarations",
@@ -123,11 +123,20 @@ pub fn profile_file_traced(
     Ok((report, combined))
 }
 
-/// Time the load of each direct import of `file`: one `lean` run per import, on a file that
-/// holds only that import, minus one run on an empty file. Each figure includes the import's
-/// transitive closure and comes from a single run, so small differences are noise. Imports that
-/// Lean cannot load are reported with their error rather than failing the whole call.
-pub fn import_timings(project_root: &Path, file: &Path, timeout_secs: u64) -> Result<Vec<ImportTiming>> {
+/// Time the loads of the imports of `file`, and of the project modules they import, down to
+/// `depth` levels (1 means only the file's own imports). Each figure comes from one `lean` run on
+/// a file holding only that import, minus one run on an empty file, and includes the import's
+/// transitive closure, so the figures are approximate. At most `max_runs` runs are made; imports
+/// beyond that are left out. A module is timed and expanded once however many files import it.
+/// Imports Lean cannot load are reported with their error and are not expanded. Only modules
+/// that exist as `.lean` files under the project root are expanded; the rest are timed as leaves.
+pub fn import_tree(
+    project_root: &Path,
+    file: &Path,
+    timeout_secs: u64,
+    depth: usize,
+    max_runs: usize,
+) -> Result<Vec<ImportTiming>> {
     if !project_root.is_dir() {
         return Err(
             Error::new(ErrorCode::ProjectNotFound, "project root is not a directory").with_path(project_root),
@@ -135,7 +144,6 @@ pub fn import_timings(project_root: &Path, file: &Path, timeout_secs: u64) -> Re
     }
     let source = fs::read_to_string(file)
         .map_err(|e| Error::new(ErrorCode::Io, format!("reading file: {e}")).with_path(file))?;
-    let imports = tpt_lean_syntax::parse(&source).imports;
 
     let work = WorkDir::create()?;
     let toolchain = discover_toolchain();
@@ -150,23 +158,79 @@ pub fn import_timings(project_root: &Path, file: &Path, timeout_secs: u64) -> Re
         ));
     }
 
-    let mut out = Vec::with_capacity(imports.len());
-    for (i, imp) in imports.iter().enumerate() {
-        let path = work.path().join(format!("import_{i}.lean"));
-        write_file(&path, &format!("import {}\n", imp.module))?;
-        let run = time_lean(&toolchain, project_root, &path, &policy, timeout_secs)?;
-        let load_ms = match run.error {
-            Some(_) => 0.0,
-            None => round_ms((run.wall_ms - baseline.wall_ms).max(0.0)),
-        };
-        out.push(ImportTiming {
-            module: imp.module.clone(),
-            line: imp.line as u32,
-            load_ms,
-            error: run.error,
-        });
+    let mut runs_left = max_runs;
+    // module -> (load cost, error): every module timed so far, timed once.
+    let mut timed: std::collections::HashMap<String, (f64, Option<String>)> =
+        std::collections::HashMap::new();
+    let mut expanded: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<ImportTiming> = Vec::new();
+    let mut frontier: Vec<(Option<String>, Vec<tpt_lean_syntax::Import>)> =
+        vec![(None, tpt_lean_syntax::parse(&source).imports)];
+    for level in 0..depth.max(1) {
+        let mut next: Vec<(Option<String>, Vec<tpt_lean_syntax::Import>)> = Vec::new();
+        for (from, imports) in std::mem::take(&mut frontier) {
+            for imp in imports {
+                let module = imp.module.clone();
+                let known = timed.get(&module).cloned();
+                let (load_ms, error) = match known {
+                    Some(v) => v,
+                    None => {
+                        if runs_left == 0 {
+                            continue;
+                        }
+                        runs_left -= 1;
+                        let path = work.path().join(format!("import_{}.lean", timed.len()));
+                        write_file(&path, &format!("import {module}\n"))?;
+                        let run = time_lean(&toolchain, project_root, &path, &policy, timeout_secs)?;
+                        let load_ms = match run.error {
+                            Some(_) => 0.0,
+                            None => round_ms((run.wall_ms - baseline.wall_ms).max(0.0)),
+                        };
+                        timed.insert(module.clone(), (load_ms, run.error.clone()));
+                        (load_ms, run.error)
+                    }
+                };
+                out.push(ImportTiming {
+                    module: module.clone(),
+                    line: imp.line as u32,
+                    load_ms,
+                    error: error.clone(),
+                    from: from.clone(),
+                });
+                if level + 1 < depth && error.is_none() && expanded.insert(module.clone()) {
+                    if let Some(imports) = project_module_imports(project_root, &module) {
+                        next.push((Some(module), imports));
+                    }
+                }
+            }
+        }
+        frontier = next;
+        if frontier.is_empty() {
+            break;
+        }
     }
     Ok(out)
+}
+
+/// Time the loads of the direct imports of `file` (one level). See [`import_tree`].
+pub fn import_timings(project_root: &Path, file: &Path, timeout_secs: u64) -> Result<Vec<ImportTiming>> {
+    import_tree(project_root, file, timeout_secs, 1, usize::MAX)
+}
+
+/// The imports of a project module, read from `<root>/<Module/Path>.lean`. `None` when the name
+/// is not a plain module name or the file does not exist under the project root.
+fn project_module_imports(project_root: &Path, module: &str) -> Option<Vec<tpt_lean_syntax::Import>> {
+    let plain = !module.is_empty()
+        && module.split('.').all(|part| {
+            !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+        });
+    if !plain {
+        return None;
+    }
+    let rel = format!("{}.lean", module.replace('.', "/"));
+    let path = project_root.join(rel);
+    let text = fs::read_to_string(&path).ok()?;
+    Some(tpt_lean_syntax::parse(&text).imports)
 }
 
 /// Policy for profiled Lean runs. `LEAN_PATH` comes from `lake env` when the project is a Lake

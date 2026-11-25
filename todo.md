@@ -290,7 +290,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [x] Memory usage tracking (peak resident size of the Lean process tree, sampled every 100 ms; not per declaration)
 - [ ] Build-step timing, cache hit/miss reports
 - [x] Slow import detection (`profile --imports`: one approximate lean run per direct import, minus an empty-file baseline)
-- [ ] Dependency bottleneck graph (partial: direct imports with load costs via profile --graph; no transitive attribution)
+- [x] Dependency bottleneck graph (`profile --graph --graph-depth N`: project modules expanded, most expensive import marked; external packages are leaves)
 - [x] Flamegraph output (folded stacks; render with flamegraph.pl or inferno)
 - [x] JSON reports
 - [x] Suggested actions in report

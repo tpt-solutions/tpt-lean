@@ -237,8 +237,16 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--flamegraph",
             "--imports",
             "--graph",
+            "--graph-depth",
         ],
-        &["--project", "--timeout", "--slowest", "--flamegraph", "--graph"],
+        &[
+            "--project",
+            "--timeout",
+            "--slowest",
+            "--flamegraph",
+            "--graph",
+            "--graph-depth",
+        ],
     )?;
     if args.flag("--compare") {
         let paths = args.positionals(&["--project", "--timeout", "--slowest", "--flamegraph"]);
@@ -266,8 +274,18 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     toolchain_or_error()?;
     let (mut report, output) = tpt_lean_profile::profile_file_traced(&root, &path, timeout)?;
     let graph_path = args.value("--graph")?;
+    let depth: usize = match args.value("--graph-depth")? {
+        Some(v) => v
+            .parse::<usize>()
+            .ok()
+            .filter(|d| (1..=4).contains(d))
+            .ok_or_else(|| Error::invalid("--graph-depth must be 1 to 4"))?,
+        None => 1,
+    };
     if args.flag("--imports") || graph_path.is_some() {
-        report.import_timings = tpt_lean_profile::import_timings(&root, &path, timeout)?;
+        // Deeper graphs time project modules too; cap the number of Lean runs they cost.
+        let max_runs = if depth > 1 { 60 } else { usize::MAX };
+        report.import_timings = tpt_lean_profile::import_tree(&root, &path, timeout, depth, max_runs)?;
     }
     if let Some(out_path) = graph_path {
         let dot = tpt_lean_profile::import_graph_dot(&report);

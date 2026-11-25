@@ -16,7 +16,7 @@ pub use report::{
     ProfileReport, TacticTiming, FORMAT_VERSION,
 };
 pub use report::{import_graph_dot, ImportTiming};
-pub use run::{import_timings, profile_file, profile_file_traced};
+pub use run::{import_timings, import_tree, profile_file, profile_file_traced};
 
 /// Folded stacks for the trace tree in Lean's combined output, ready for flamegraph.pl or inferno.
 /// Empty when the output has no trace nodes.

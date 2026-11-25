@@ -5,7 +5,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process;
-use tpt_lean_profile::{compare, from_json, import_timings, profile_file, to_json};
+use tpt_lean_profile::{compare, from_json, import_timings, import_tree, profile_file, to_json};
 
 struct TempProject(PathBuf);
 
@@ -138,4 +138,56 @@ theorem t : 1 = 1 := rfl
     assert_eq!(timings[1].module, "NoSuchModuleForTpt");
     assert!(timings[1].error.is_some(), "{timings:?}");
     assert_eq!(timings[1].load_ms, 0.0);
+}
+
+#[test]
+fn import_tree_expands_project_modules_one_level_further() {
+    if !lean_available() {
+        return;
+    }
+    let project = TempProject::new("import-tree");
+    fs::write(
+        project.path().join("Mid.lean"),
+        "import Std\n\ndef mid : Nat := 1\n",
+    )
+    .unwrap();
+    let main = project.path().join("Main.lean");
+    fs::write(&main, "import Mid\n\ntheorem t : 1 = 1 := rfl\n").unwrap();
+    // Lean imports project modules from their build outputs, so build them first.
+    fs::write(
+        project.path().join("lakefile.lean"),
+        "import Lake\nopen Lake DSL\n\npackage demo\n\n@[default_target]\nlean_lib Mid\n\n@[default_target]\nlean_lib Main\n",
+    )
+    .unwrap();
+    let Some(lake) = tpt_lean_adapter::discover_toolchain().lake else {
+        eprintln!("skipping: lake not found");
+        return;
+    };
+    let built = process::Command::new(lake)
+        .arg("build")
+        .current_dir(project.path())
+        .output()
+        .expect("lake build starts");
+    assert!(
+        built.status.success(),
+        "{}",
+        String::from_utf8_lossy(&built.stderr)
+    );
+
+    let shallow = import_tree(project.path(), &main, 300, 1, usize::MAX).expect("depth 1");
+    assert_eq!(shallow.len(), 1, "{shallow:?}");
+    assert!(shallow[0].from.is_none());
+
+    let deep = import_tree(project.path(), &main, 300, 2, usize::MAX).expect("depth 2");
+    let mid = deep.iter().find(|t| t.module == "Mid").expect("Mid is timed");
+    assert!(mid.from.is_none() && mid.error.is_none(), "{deep:?}");
+    let std_import = deep.iter().find(|t| t.module == "Std").expect("Std is timed");
+    assert_eq!(std_import.from.as_deref(), Some("Mid"), "{deep:?}");
+
+    let capped = import_tree(project.path(), &main, 300, 2, 1).expect("capped");
+    assert_eq!(
+        capped.len(),
+        1,
+        "a run cap of 1 times only the first import: {capped:?}"
+    );
 }

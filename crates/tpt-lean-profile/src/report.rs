@@ -68,31 +68,47 @@ pub struct ImportTiming {
     pub load_ms: f64,
     /// Set when Lean could not load the import; `load_ms` is then zero.
     pub error: Option<String>,
+    /// The project module whose import this is. `None` for imports of the profiled file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
 }
 
-/// Graphviz DOT for the direct imports of the profiled file, with each import's measured load
-/// cost on its edge. Imports at or above half the largest cost are drawn in red, those at or
-/// above a fifth in orange, the rest in grey; imports Lean could not load are dashed. This is the
-/// first level only: each cost already includes the import's own closure.
+/// Graphviz DOT of the timed imports. Each edge runs from the module that imports (the profiled
+/// file, or a project module) to the import, labelled with that import's load cost. Edges are
+/// coloured by cost relative to the largest: at least half is red, at least a fifth orange, the
+/// rest grey. The single most expensive import is the bottleneck: its node and edge are bold.
+/// Imports Lean could not load are dashed. Each cost includes the import's own closure.
 pub fn import_graph_dot(report: &ProfileReport) -> String {
     let max = report
         .import_timings
         .iter()
+        .filter(|t| t.error.is_none())
         .map(|t| t.load_ms)
         .fold(0.0_f64, f64::max);
-    let mut out = String::new();
-    let _ = writeln!(out, "digraph imports {{");
-    let _ = writeln!(out, "  rankdir=LR;");
-    let _ = writeln!(out, "  node [shape=box, fontname=\"Helvetica\"];");
+    let bottleneck = report
+        .import_timings
+        .iter()
+        .filter(|t| t.error.is_none() && t.load_ms > 0.0)
+        .max_by(|a, b| a.load_ms.total_cmp(&b.load_ms))
+        .map(|t| t.module.clone());
     // Label the profiled file by its name; the full path is in the report itself.
     let name = std::path::Path::new(&report.file)
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| report.file.clone());
     let file = dot_escape(&name);
+    let mut out = String::new();
+    let _ = writeln!(out, "digraph imports {{");
+    let _ = writeln!(out, "  rankdir=LR;");
+    let _ = writeln!(out, "  node [shape=box, fontname=\"Helvetica\"];");
     let _ = writeln!(out, "  \"{file}\" [style=bold];");
     for imp in &report.import_timings {
         let module = dot_escape(&imp.module);
+        let parent = match &imp.from {
+            Some(p) => dot_escape(p),
+            None => file.clone(),
+        };
+        let is_bottleneck = bottleneck.as_deref() == Some(imp.module.as_str());
         match &imp.error {
             Some(err) => {
                 let label = dot_escape(&format!("{}\nnot loaded: {err}", imp.module));
@@ -100,7 +116,7 @@ pub fn import_graph_dot(report: &ProfileReport) -> String {
                     out,
                     "  \"{module}\" [label=\"{label}\", style=dashed, color=grey];"
                 );
-                let _ = writeln!(out, "  \"{file}\" -> \"{module}\" [style=dashed, color=grey];");
+                let _ = writeln!(out, "  \"{parent}\" -> \"{module}\" [style=dashed, color=grey];");
             }
             None => {
                 let colour = if max > 0.0 && imp.load_ms >= max / 2.0 {
@@ -111,12 +127,23 @@ pub fn import_graph_dot(report: &ProfileReport) -> String {
                     "grey"
                 };
                 let cost = format_ms(imp.load_ms);
-                let label = dot_escape(&format!("{}\n{cost}", imp.module));
-                let _ = writeln!(out, "  \"{module}\" [label=\"{label}\"];");
+                let mut label = format!("{}\n{cost}", imp.module);
+                if is_bottleneck {
+                    label.push_str("\nbottleneck");
+                }
+                let label = dot_escape(&label);
+                let node_style = if is_bottleneck { ", style=bold" } else { "" };
+                let _ = writeln!(out, "  \"{module}\" [label=\"{label}\"{node_style}];");
+                let edge_bold = if is_bottleneck {
+                    3
+                } else if colour == "grey" {
+                    1
+                } else {
+                    2
+                };
                 let _ = writeln!(
                     out,
-                    "  \"{file}\" -> \"{module}\" [label=\"{cost}\", color={colour}, penwidth={}];",
-                    if colour == "grey" { "1" } else { "2" }
+                    "  \"{parent}\" -> \"{module}\" [label=\"{cost}\", color={colour}, penwidth={edge_bold}];"
                 );
             }
         }
@@ -466,24 +493,28 @@ mod tests {
                 line: 1,
                 load_ms: 800.0,
                 error: None,
+                from: None,
             },
             ImportTiming {
                 module: "Mid".into(),
                 line: 2,
                 load_ms: 300.0,
                 error: None,
+                from: None,
             },
             ImportTiming {
                 module: "Small".into(),
                 line: 3,
                 load_ms: 10.0,
                 error: None,
+                from: None,
             },
             ImportTiming {
                 module: "Missing".into(),
                 line: 4,
                 load_ms: 0.0,
                 error: Some("unknown module".into()),
+                from: None,
             },
         ];
         let dot = import_graph_dot(&r);
@@ -513,10 +544,72 @@ mod tests {
             line: 1,
             load_ms: 5.0,
             error: None,
+            from: None,
         }];
         let dot = import_graph_dot(&r);
         assert!(dot.contains(r#""Main \"x\".lean""#), "{dot}");
-        assert!(dot.contains(r#""A\\B" [label="A\\B\n5.0ms"]"#), "{dot}");
+        assert!(
+            dot.contains(r#""A\\B" [label="A\\B\n5.0ms\nbottleneck", style=bold]"#),
+            "{dot}"
+        );
+    }
+
+    #[test]
+    fn nested_imports_hang_off_their_importing_module() {
+        let mut r = report("Main.lean", 100.0, vec![]);
+        r.import_timings = vec![
+            ImportTiming {
+                module: "Mid".into(),
+                line: 1,
+                load_ms: 300.0,
+                error: None,
+                from: None,
+            },
+            ImportTiming {
+                module: "Leaf".into(),
+                line: 2,
+                load_ms: 100.0,
+                error: None,
+                from: Some("Mid".into()),
+            },
+        ];
+        let dot = import_graph_dot(&r);
+        assert!(dot.contains(r#""Mid" -> "Leaf" [label="100.0ms""#), "{dot}");
+        assert!(!dot.contains(r#""Main.lean" -> "Leaf""#), "{dot}");
+    }
+
+    #[test]
+    fn bottleneck_is_the_most_expensive_import() {
+        let mut r = report("Main.lean", 100.0, vec![]);
+        r.import_timings = vec![
+            ImportTiming {
+                module: "Cheap".into(),
+                line: 1,
+                load_ms: 10.0,
+                error: None,
+                from: None,
+            },
+            ImportTiming {
+                module: "Costly".into(),
+                line: 2,
+                load_ms: 900.0,
+                error: None,
+                from: None,
+            },
+            ImportTiming {
+                module: "Broken".into(),
+                line: 3,
+                load_ms: 0.0,
+                error: Some("missing".into()),
+                from: None,
+            },
+        ];
+        let dot = import_graph_dot(&r);
+        assert_eq!(dot.matches("bottleneck").count(), 1, "{dot}");
+        assert!(
+            dot.contains(r#""Costly" [label="Costly\n900.0ms\nbottleneck", style=bold]"#),
+            "{dot}"
+        );
     }
 
     #[test]
