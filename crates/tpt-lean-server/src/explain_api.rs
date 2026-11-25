@@ -6,7 +6,7 @@
 use std::time::Duration;
 
 use serde_json::{json, Value};
-use tpt_lean_adapter::explain::{error_at, lemma_candidates, snapshot_at, split_goal};
+use tpt_lean_adapter::explain::{error_at, lean_json, lemma_candidates, snapshot_at, split_goal};
 use tpt_lean_core::dirs::ProjectDirs;
 
 use crate::{app_error, position_param, str_param, MethodResult, RpcError, Server, INVALID_PARAMS};
@@ -46,6 +46,7 @@ impl Server {
             "error": error,
             "context": { "goal": target, "hypotheses": hypotheses },
             "suggestions": suggestions,
+            "lean": lean_json(&snap.lean_version, snap.compatibility),
         }))
     }
 }
@@ -96,6 +97,7 @@ impl Server {
             "hypotheses": hypotheses,
             "indexed": indexed,
             "results": results,
+            "lean": lean_json(&snap.lean_version, snap.compatibility),
         }))
     }
 }

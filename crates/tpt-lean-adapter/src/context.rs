@@ -57,6 +57,8 @@ pub struct ContextPack {
     pub constraints: Vec<String>,
     pub truncated: bool,
     pub approx_tokens: usize,
+    /// How the installed Lean version compares with the tested versions (`tested`, `newer`, ...).
+    pub lean_compatibility: String,
 }
 
 /// What to build a pack for. `label` is the file name as the caller gave it.
@@ -196,6 +198,7 @@ pub fn build_pack(req: &PackRequest) -> Result<ContextPack> {
         constraints,
         truncated: false,
         approx_tokens: 0,
+        lean_compatibility: snap.compatibility.as_str().to_string(),
     };
     let estimate = |p: &ContextPack| serde_json::to_string(p).map(|s| approx_tokens(&s)).unwrap_or(0);
     let mut truncated = false;

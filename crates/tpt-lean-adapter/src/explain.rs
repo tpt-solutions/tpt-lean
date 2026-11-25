@@ -14,6 +14,7 @@ use tpt_lean_core::{Error, Result};
 use tpt_lean_index::Index;
 use tpt_lean_syntax::position::LineIndex;
 
+use crate::compat::Compatibility;
 use crate::lsp::{self, LspClient};
 
 /// An error Lean reports at a position. Lines and columns are 1-based.
@@ -36,6 +37,10 @@ pub struct PositionSnapshot {
     pub goals: Vec<String>,
     /// Every diagnostic the language server reported for the document.
     pub diagnostics: Vec<Value>,
+    /// The installed Lean version, when it could be read.
+    pub lean_version: Option<String>,
+    /// How that version compares with the versions this release is tested against.
+    pub compatibility: Compatibility,
 }
 
 /// Ask the Lean language server about one position. `line` and `column` are 1-based, with the
@@ -55,6 +60,11 @@ pub fn snapshot_at(
         .ok_or_else(|| Error::invalid(format!("{label}:{line}:{column} is outside the file")))?;
     let utf16 = index.position(offset).column_utf16 as u64;
     let tc = crate::discover_toolchain();
+    let (lean_version, compatibility) = crate::compat::installed(
+        &tc,
+        &crate::lean_policy(timeout.as_secs().max(1)),
+        &tpt_lean_core::policy::CancelToken::new(),
+    );
     let (program, server_args) = lsp::server_command(root, tc.lake.as_ref(), tc.lean.as_ref())?;
     let mut client = LspClient::start(&program, &server_args, root, timeout)?;
     let uri = lsp::open_document(&mut client, file, text)?;
@@ -66,6 +76,8 @@ pub fn snapshot_at(
         utf16,
         goals: goals?,
         diagnostics,
+        lean_version,
+        compatibility,
     })
 }
 
@@ -139,6 +151,11 @@ pub fn goal_query(target: &str) -> String {
         .map(|c| if c.is_alphanumeric() || c == '_' { c } else { ' ' })
         .collect();
     cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// The Lean version and its compatibility, as the `lean` object that answers carry.
+pub fn lean_json(version: &Option<String>, compatibility: Compatibility) -> Value {
+    json!({ "version": version, "compatibility": compatibility.as_str() })
 }
 
 /// Lemma candidates for a goal from the project index, as JSON objects. Empty when the project

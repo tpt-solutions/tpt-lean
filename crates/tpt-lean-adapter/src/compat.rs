@@ -5,6 +5,10 @@
 //! [`TESTED_LEAN_VERSIONS`]. A different version is not refused: callers report it, so that a
 //! mismatch explains odd output instead of looking like a tool bug.
 
+use tpt_lean_core::policy::{CancelToken, ProcessPolicy};
+
+use crate::{execute, parse_version, Command, Toolchain};
+
 /// Lean versions this release has been tested against. Keep this to versions that were actually
 /// run. The previous stable release should be added once it has been installed and tested.
 pub const TESTED_LEAN_VERSIONS: &[&str] = &["4.36.0"];
@@ -60,6 +64,38 @@ pub fn classify(version: &str) -> Compatibility {
         (Some(_), Some(_)) => Compatibility::Between,
         _ => Compatibility::Unknown,
     }
+}
+
+impl Compatibility {
+    /// A short name for output: `tested`, `newer`, `older`, `between` or `unknown`.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Compatibility::Tested => "tested",
+            Compatibility::Newer => "newer",
+            Compatibility::Older => "older",
+            Compatibility::Between => "between",
+            Compatibility::Unknown => "unknown",
+        }
+    }
+}
+
+/// The installed Lean version (from `lean --version`) and how it compares with the tested set.
+/// The version is `None` when it cannot be read, and the classification is then `Unknown`.
+pub fn installed(
+    toolchain: &Toolchain,
+    policy: &ProcessPolicy,
+    cancel: &CancelToken,
+) -> (Option<String>, Compatibility) {
+    let version = toolchain
+        .lean
+        .as_ref()
+        .and_then(|_| execute(toolchain, &Command::LeanVersion, None, policy, cancel).ok())
+        .and_then(|r| parse_version(&r.output.stdout));
+    let classification = match &version {
+        Some(v) => classify(v),
+        None => Compatibility::Unknown,
+    };
+    (version, classification)
 }
 
 /// The Lean version a `lean-toolchain` file pins, as a plain version: `leanprover/lean4:v4.36.0`

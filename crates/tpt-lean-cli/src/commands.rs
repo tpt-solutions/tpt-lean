@@ -959,6 +959,7 @@ struct ExplainContext {
 
 #[derive(Serialize)]
 struct ExplainReport {
+    lean: serde_json::Value,
     error: Option<adapter::explain::ExplainError>,
     context: ExplainContext,
     suggestions: Vec<serde_json::Value>,
@@ -1016,7 +1017,14 @@ fn explain(ctx: &Ctx, args: &Args) -> Result<i32> {
         .as_deref()
         .map(|t| ext::lemma_candidates(&root, t, 5))
         .unwrap_or_default();
+    if snap.compatibility != adapter::compat::Compatibility::Tested {
+        human.push(format!(
+            "warning: Lean {} is not a tested version; results may differ",
+            snap.lean_version.as_deref().unwrap_or("(unknown)")
+        ));
+    }
     let report = ExplainReport {
+        lean: adapter::explain::lean_json(&snap.lean_version, snap.compatibility),
         error,
         context: ExplainContext {
             goal: target,

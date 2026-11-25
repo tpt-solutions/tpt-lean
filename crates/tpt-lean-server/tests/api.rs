@@ -654,6 +654,7 @@ fn diagnostics_explain_reports_the_error_and_goal_at_a_position() {
         "{r}"
     );
     assert!(explained["suggestions"].is_array(), "{r}");
+    assert!(explained["lean"]["compatibility"].is_string(), "{r}");
 
     let missing = rpc(
         &server,

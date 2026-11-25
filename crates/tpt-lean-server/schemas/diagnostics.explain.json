@@ -33,7 +33,8 @@
           "hypotheses": { "type": "array", "items": { "type": "string" } }
         }
       },
-      "suggestions": { "type": "array" }
+      "suggestions": { "type": "array" },
+      "lean": { "type": "object" }
     }
   }
 }

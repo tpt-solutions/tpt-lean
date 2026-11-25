@@ -52,7 +52,7 @@ On failure with `--json`, stdout contains:
 
 Environment and project:
 - `init <dir> [--mathlib] [--template default|theorem|teaching|library]`
-- `doctor`: toolchain, lean-version, project, config, index, cache, server socket, language server start and shutdown, cache age. `lean-version` warns when the Lean on PATH differs from the `lean-toolchain` pin, or is not one of the versions this release is tested against (currently 4.36.0). Warnings include a suggestion where one applies.
+- `doctor`: toolchain, lean-version, project, config, index, cache, server socket, language server start and shutdown, cache age. `lean-version` warns when the Lean on PATH differs from the `lean-toolchain` pin, or is not one of the versions this release is tested against (currently 4.36.0). `explain` prints a warning when that version is untested, and its JSON carries the same `lean` compatibility object the server returns. Warnings include a suggestion where one applies.
 - `config show`
 - `clean [--timeout S]`: runs `lake clean`
 - `cache status`

@@ -34,6 +34,7 @@
       "relevant_lemmas": { "type": "array" },
       "constraints": { "type": "array", "items": { "type": "string" } },
       "truncated": { "type": "boolean" },
+      "lean_compatibility": { "type": "string", "enum": ["tested", "newer", "older", "between", "unknown"] },
       "approx_tokens": { "type": "integer", "minimum": 0 }
     }
   }

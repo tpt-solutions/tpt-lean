@@ -19,7 +19,8 @@
       "goal": { "type": ["string", "null"] },
       "hypotheses": { "type": "array", "items": { "type": "string" } },
       "indexed": { "type": "boolean" },
-      "results": { "type": "array" }
+      "results": { "type": "array" },
+      "lean": { "type": "object" }
     }
   }
 }
