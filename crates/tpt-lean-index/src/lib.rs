@@ -9,8 +9,11 @@
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use tpt_lean_core::hash::sha256_hex;
 use tpt_lean_core::{Error, ErrorCode, Result};
+
+pub mod ignore;
 
 /// Version of the database schema. Each version has a migration step in [`Index::migrate`].
 pub const SCHEMA_VERSION: i64 = 2;
@@ -752,12 +755,23 @@ fn row_to_symbol(r: &rusqlite::Row<'_>) -> rusqlite::Result<SymbolRow> {
     })
 }
 
-/// Walk `root` for `.lean` files, skipping [`SKIP_DIRS`] and never following symlinks.
+/// Walk `root` for `.lean` files, skipping [`SKIP_DIRS`], never following symlinks,
+/// and honouring `.gitignore` files found in `root` and in its subdirectories.
 /// Returns `(relative_path_with_forward_slashes, absolute_path)` pairs, sorted.
 pub fn collect_lean_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
+    // Each pending directory carries the gitignore rules that apply inside it.
+    let mut stack: Vec<(PathBuf, String, Rc<Vec<ignore::Rule>>)> =
+        vec![(root.to_path_buf(), String::new(), Rc::new(Vec::new()))];
+    while let Some((dir, rel_dir, inherited)) = stack.pop() {
+        let rules = match ignore::load_dir(&dir, &rel_dir) {
+            own if own.is_empty() => inherited,
+            own => {
+                let mut all = (*inherited).clone();
+                all.extend(own);
+                Rc::new(all)
+            }
+        };
         let entries = std::fs::read_dir(&dir).map_err(|e| Error::from(e).with_path(&dir))?;
         for entry in entries {
             let entry = entry.map_err(|e| Error::from(e).with_path(&dir))?;
@@ -768,17 +782,21 @@ pub fn collect_lean_files(root: &Path) -> Result<Vec<(String, PathBuf)>> {
             if file_type.is_symlink() {
                 continue;
             }
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let rel = if rel_dir.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel_dir}/{name}")
+            };
             if file_type.is_dir() {
-                let name = entry.file_name();
-                if !SKIP_DIRS.iter().any(|s| name == *s) {
-                    stack.push(path);
+                if SKIP_DIRS.iter().any(|s| name == *s) || ignore::is_ignored(&rules, &rel, true) {
+                    continue;
                 }
-            } else if file_type.is_file() && path.extension().is_some_and(|e| e == "lean") {
-                let rel = path
-                    .strip_prefix(root)
-                    .unwrap_or(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
+                stack.push((path, rel, Rc::clone(&rules)));
+            } else if file_type.is_file()
+                && path.extension().is_some_and(|e| e == "lean")
+                && !ignore::is_ignored(&rules, &rel, false)
+            {
                 out.push((rel, path));
             }
         }
@@ -868,6 +886,22 @@ mod tests {
         let files = collect_lean_files(&dir).unwrap();
         let names: Vec<&str> = files.iter().map(|(r, _)| r.as_str()).collect();
         assert_eq!(names, vec!["Main.lean", "Sub/Other.lean"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn scan_honours_gitignore_files() {
+        let dir = temp_project("gitignore");
+        std::fs::write(dir.join(".gitignore"), "Scratch*.lean\nGen/\n").unwrap();
+        std::fs::write(dir.join("Scratch1.lean"), "def s := 1\n").unwrap();
+        std::fs::create_dir_all(dir.join("Gen")).unwrap();
+        std::fs::write(dir.join("Gen").join("Auto.lean"), "def g := 1\n").unwrap();
+        std::fs::write(dir.join("Sub").join(".gitignore"), "Local.lean\n").unwrap();
+        std::fs::write(dir.join("Sub").join("Local.lean"), "def l := 1\n").unwrap();
+        std::fs::write(dir.join("Sub").join("Kept.lean"), "def k := 1\n").unwrap();
+        let files = collect_lean_files(&dir).unwrap();
+        let names: Vec<&str> = files.iter().map(|(r, _)| r.as_str()).collect();
+        assert_eq!(names, vec!["Main.lean", "Sub/Kept.lean", "Sub/Other.lean"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

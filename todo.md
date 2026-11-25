@@ -92,7 +92,7 @@ Crates: `tpt-lean-syntax`, `tpt-lean-index`, `tpt-lean-search`, `tpt-lean-fmt`
 - [x] SQLite integration (choose crate, verify license, bundled SQLite)
 - [x] Schema + migrations: projects, files, symbols, docstrings, imports, dependencies, diagnostics, build_runs, profile_runs, cache_entries (schema v2: adds module_sources and declarations; docstrings live in symbols and declarations, dependencies are import edges)
 - [x] FTS5 setup for name/docstring search
-- [ ] Fast file scan (respect ignore rules, `.lake` handling) (skips .lake/build/target only; no .gitignore parsing)
+- [x] Fast file scan (respect ignore rules, `.lake` handling) (skips .lake/build/target; honours `.gitignore` files in the root and subdirectories; `tpt-lean-index::ignore`)
 - [x] Syntax-level indexing using `tpt-lean-syntax`
 - [x] Import graph / dependency edges
 - [x] Incremental invalidation by file hash and import graph (sidecar data is dropped when a module's source or import closure changes)
@@ -199,7 +199,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [ ] No Rust types across boundary; explicit lengths; explicit ownership
 - [x] Document thread safety per handle type
 - [ ] Tests: C harness, Python ctypes, Go cgo
-- [ ] FFI tests: memory frees, invalid args, error handling, ABI version, concurrent reads
+- [x] FFI tests: memory frees, invalid args, error handling, ABI version, concurrent reads (`tests/abi.rs`, `tests/ffi/test_ffi.py`, `tests/c/harness.c`; C harness not run in this environment, no compiler found)
 - [ ] Windows/Linux/macOS build of shared lib
 - [ ] Later (tracked, not MVP): build orchestration, profiling, goals, async callbacks, event streams
 - [ ] Optional: header generation (not a blocker)
@@ -252,7 +252,7 @@ Crate: `tpt-lean-mcp` (hand-written over serde_json)
 - [x] Local HTTP/SSE transport
 - [x] Permission model (default read-only, explicit write/build/profile)
 - [ ] Tests: schema validation, permission enforcement, streaming cancellation, timeouts
-- [ ] Client setup docs (Claude Code, Claude Desktop, other MCP clients)
+- [x] Client setup docs (Claude Code, Claude Desktop, other MCP clients) (`docs/mcp.md`; Desktop config not yet tested)
 
 ---
 
@@ -307,7 +307,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [ ] Features: go-to-definition, hover, document/workspace symbols, diagnostics, goal display, proof-state panel support
 - [ ] Code actions: import suggestions, lemma search, formatting, explain-error
 - [x] `tpt-lean lsp`
-- [ ] Editor setup docs (VS Code, Neovim, Emacs, Helix)
+- [x] Editor setup docs (VS Code, Neovim, Emacs, Helix) (`docs/editors.md`; settings not yet tried in each editor)
 
 ### tpt-lean-docgen
 - [ ] Input from indexed sources, sidecar JSON, LSP symbols
@@ -326,7 +326,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 ## Phase 7 — Remaining CLI utilities (not in spec phase list)
 - [x] `tpt-lean init <name>` with generated lakefile.lean, lean-toolchain, Main.lean, tpt-lean.toml, .gitignore, README.md
 - [ ] `init --mathlib` (lakefile requires mathlib; toolchain not pinned to Mathlib revision)
-- [ ] Templates: theorem, mathlib, teaching, library
+- [x] Templates: theorem, mathlib, teaching, library (`mathlib` is an alias for `--mathlib` with the default starter; the pinned Mathlib toolchain is still open below)
 - [x] `tpt-lean imports` (list graph)
 - [x] `imports --unused`
 - [x] `imports --suggest "<query>"`
@@ -361,10 +361,10 @@ Crate: `tpt-lean-wasm`
 - [ ] Benchmark suite in CI
 - [ ] Per-release dependency license report
 - [x] Per-release `cargo deny` / `cargo audit` gate
-- [ ] Versioning policy (crate semver vs ABI version)
+- [x] Versioning policy (crate semver vs ABI version) (`docs/versioning.md`)
 - [x] CHANGELOG
 - [ ] User docs (install, quickstart, every command, JSON schemas)
-- [ ] Security model docs (permission classes, path safety, command safety, resource limits)
+- [x] Security model docs (permission classes, path safety, command safety, resource limits) (`docs/security.md`)
 - [x] Integration docs: FFI, JSON-RPC API, MCP
 - [ ] Generated client SDKs (decide languages)
 - [ ] Decide: publish crates to crates.io (check `tpt-lean-*` name availability)

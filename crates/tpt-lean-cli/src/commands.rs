@@ -155,11 +155,11 @@ fn init(ctx: &Ctx, args: &Args) -> Result<i32> {
     if dir.exists() && std::fs::read_dir(&dir)?.next().is_some() {
         return Err(Error::invalid(format!("{name} exists and is not empty")).with_path(&dir));
     }
-    std::fs::create_dir_all(&dir)?;
-    let mathlib = args.flag("--mathlib");
     let template = args.value("--template")?.unwrap_or_else(|| "default".into());
+    // `--template mathlib` is the same as `--mathlib` with the default starter file.
+    let mathlib = args.flag("--mathlib") || template == "mathlib";
     let main_body = match template.as_str() {
-        "default" => format!(
+        "default" | "mathlib" => format!(
             "def main : IO Unit :=
   IO.println \"Hello from {}\"
 ",
@@ -190,7 +190,7 @@ def main : IO Unit :=
         .into(),
         other => {
             return Err(Error::invalid(format!(
-                "unknown template {other}; use default, theorem, teaching, or library"
+                "unknown template {other}; use default, mathlib, theorem, teaching, or library"
             )))
         }
     };
@@ -216,6 +216,7 @@ def main : IO Unit :=
             format!("# {name}\n\nA Lean 4 project created with `tpt-lean init`.\n\n- Build: `tpt-lean build`\n- Check environment: `tpt-lean doctor`\n"),
         ),
     ];
+    std::fs::create_dir_all(&dir)?;
     let mut written = Vec::new();
     for (file, body) in &files {
         std::fs::write(dir.join(file), body)?;

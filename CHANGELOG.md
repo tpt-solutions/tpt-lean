@@ -8,6 +8,10 @@ All notable changes to this project are documented here. The format follows
 Initial development version `0.1.0`. Nothing has been published yet.
 
 ### Added
+- File scan honours `.gitignore` files in the project and its subdirectories (`tpt-lean-index::ignore`).
+- `docs/security.md`, `docs/versioning.md`, `docs/editors.md`, and a Claude Desktop setup in `docs/mcp.md`.
+- `tpt-lean init --template mathlib` as an alias for `--mathlib`.
+- `tpt-lean init` no longer leaves an empty directory behind when the template name is unknown.
 - Cargo workspace with crates for core config and discovery, syntax, indexing,
   search, formatting, the Lean CLI/LSP adapter, FFI, JSON-RPC server, MCP server,
   docgen, profiling, build orchestration, LSP proxy, WASM bindings, and the

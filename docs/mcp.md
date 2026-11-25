@@ -29,6 +29,24 @@ Claude Code (project scope, `.mcp.json` at the project root):
 
 Other MCP clients take the same command and arguments in their stdio server configuration.
 
+Claude Desktop (`claude_desktop_config.json`, under the `mcpServers` key). Desktop starts the server
+from an unknown working directory, so give the project as an absolute path:
+
+```json
+{
+  "mcpServers": {
+    "tpt-lean": {
+      "command": "tpt-lean",
+      "args": ["mcp", "stdio", "--project", "C:\\path\\to\\your\\project"]
+    }
+  }
+}
+```
+
+Use forward slashes or doubled backslashes in JSON strings. `tpt-lean` must be on the `PATH` that
+Desktop sees; if it is not, give the full path to the binary as `command`. This configuration has
+not been tested in Claude Desktop yet.
+
 ## Permissions
 
 The server is read-only by default. Each tool declares a permission class, and a call whose
