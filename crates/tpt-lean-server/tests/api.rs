@@ -714,3 +714,27 @@ fn context_pack_bundles_the_snippet_and_error_and_respects_the_budget() {
     );
     assert_eq!(error_code(&bad), -32602, "{bad}");
 }
+
+#[test]
+fn project_doctor_reports_the_same_checks_as_the_cli() {
+    let project = TempProject::new("project-doctor", None);
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(&server, "project.doctor", json!({}));
+    let report = result_of(&r);
+    let names: Vec<&str> = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    for expected in ["lean", "lake", "project", "config", "write", "index", "cache_dir"] {
+        assert!(names.contains(&expected), "missing {expected}: {names:?}");
+    }
+    let config = report["checks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "config")
+        .unwrap();
+    assert_eq!(config["status"], "ok", "{r}");
+}

@@ -9,6 +9,7 @@ pub mod bisect;
 pub mod ci;
 pub mod doctor;
 pub mod imports;
+pub mod project_doctor;
 
 use serde::Serialize;
 

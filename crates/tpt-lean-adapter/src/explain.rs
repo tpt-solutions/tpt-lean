@@ -4,7 +4,8 @@
 //! and the JSON-RPC server share it.
 
 use std::path::Path;
-use std::time::Duration;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -58,7 +59,7 @@ pub fn snapshot_at(
     let mut client = LspClient::start(&program, &server_args, root, timeout)?;
     let uri = lsp::open_document(&mut client, file, text)?;
     let goals = lsp::plain_goals(&mut client, &uri, (line - 1) as u32, utf16 as u32, timeout);
-    let diagnostics = client.diagnostics_for(&uri);
+    let diagnostics = await_diagnostics(&mut client, &uri, timeout.min(DIAGNOSTICS_WAIT));
     client.shutdown(Duration::from_secs(5));
     Ok(PositionSnapshot {
         line0: (line - 1) as u64,
@@ -66,6 +67,26 @@ pub fn snapshot_at(
         goals: goals?,
         diagnostics,
     })
+}
+
+/// Longest time to wait for the server to publish diagnostics for a document.
+const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(30);
+
+/// Diagnostics for `uri` once the server has published them. Lean publishes after it finishes
+/// elaborating, which can be after the goal request has already been answered, so this polls
+/// until a publication arrives or `wait` runs out. A document that never publishes yields an
+/// empty list rather than an error.
+fn await_diagnostics(client: &mut LspClient, uri: &str, wait: Duration) -> Vec<Value> {
+    let deadline = Instant::now() + wait;
+    loop {
+        if let Some(published) = client.published_diagnostics(uri) {
+            return published;
+        }
+        if Instant::now() >= deadline {
+            return Vec::new();
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
 }
 
 /// The first error that covers the position, if any. In LSP, severity 1 is an error.

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "project.doctor",
+  "permission": "build",
+  "params": { "type": "object", "properties": {} },
+  "result": {
+    "type": "object",
+    "required": ["ok", "checks"],
+    "properties": {
+      "ok": { "type": "boolean", "description": "False when any check failed." },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": ["name", "status", "detail"],
+          "properties": {
+            "name": { "type": "string" },
+            "status": { "type": "string", "enum": ["ok", "warn", "fail", "skipped"] },
+            "detail": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

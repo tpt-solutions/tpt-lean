@@ -31,7 +31,7 @@ Each method has a class. The check happens before dispatch.
 | write | `format.file`, `index.refresh` | `security.allow_write = true` (default false) |
 | build | `check.file`, `goals.at` | `security.allow_build = true` (default true) |
 | profile | `profile.run` | `security.allow_build` and `security.allow_profile` (both default true) |
-| build | `build.run`, `build.cancel`, `check.project`, `diagnostics.explain`, `context.pack` | `security.allow_build = true` (default true) |
+| build | `build.run`, `build.cancel`, `check.project`, `diagnostics.explain`, `context.pack`, `project.doctor` | `security.allow_build = true` (default true) |
 | control | `server.shutdown` | always (loopback unless remote is allowed) |
 
 A denied request gets error `-32001` with `data: {"permission", "config_key"}`.
@@ -63,7 +63,7 @@ are rejected.
 | `build.cancel` | optional `run_id` (default: newest running build) | `cancelled` true when a running build was asked to stop; the build then finishes as `cancelled` |
 | `check.project` | optional `timeout` (1 to 3600 s; default `security.command_timeout_seconds`) | the CI report for `lake build` of the whole project: `ok`, `build` status and exit code, `diagnostics`, `failures`, and cache counters. It blocks until the build finishes or times out; `build.run` is the background variant |
 | `diagnostics.explain` | `path`, `line`, `column` (both 1-based) | `error` at that position (or null), `context` with the goal and hypotheses, and lemma `suggestions` from the index (runs the Lean language server) |
-| `context.pack` | `path`, `line`, `column`, optional `max_tokens` (default 6000) | a token-budgeted bundle: snippet (never dropped), goal, hypotheses, diagnostics, imports, nearby declarations, lemma candidates, and `truncated` / `approx_tokens` (runs the Lean language server) |\n| `imports.suggest` | `query`, optional `limit` (1 to 50, default 10) | `suggestions[]`: modules from the index that declare matching names (run `index.refresh` first) |
+| `context.pack` | `path`, `line`, `column`, optional `max_tokens` (default 6000) | a token-budgeted bundle: snippet (never dropped), goal, hypotheses, diagnostics, imports, nearby declarations, lemma candidates, and `truncated` / `approx_tokens` (runs the Lean language server) |\n| `project.doctor` | none | `ok` (false when a check failed) and `checks[]` (`name`, `status`, `detail`): the same checks as `tpt-lean doctor`. Some checks start the language server, and the write check creates `.tpt-lean` when it is missing |\n| `imports.suggest` | `query`, optional `limit` (1 to 50, default 10) | `suggestions[]`: modules from the index that declare matching names (run `index.refresh` first) |
 | `imports.unused` | `path` | `findings[]` with code `import_unused` for imports the file does not use; imports from outside the project are reported as `import_unresolved` |
 | `profile.get` | optional `id` | without `id`: `ids` of stored profiles, newest first, and `report: null`; with `id`: the stored `report`. Ids are restricted to letters, digits, `-` and `_` |
 | `server.shutdown` | none | `stopping: true` |

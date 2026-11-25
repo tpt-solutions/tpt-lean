@@ -209,7 +209,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [ ] Transports: Unix domain socket (Linux/macOS), named pipe or localhost TCP (Windows)
 - [ ] Optional localhost HTTP: `POST /v1/rpc`
 - [x] Remote access disabled by default
-- [ ] Methods: `project.info`, `project.doctor`
+- [x] Methods: `project.info`, `project.doctor`
 - [ ] Methods: `search.query`, `search.symbol`, `search.goal`
 - [x] Methods: `index.status`, `index.refresh`
 - [x] Methods: `format.text`, `format.file`
