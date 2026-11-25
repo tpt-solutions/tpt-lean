@@ -76,7 +76,19 @@ pub fn build_cancellable(
     cancel: &CancelToken,
     sink: &mut dyn FnMut(&BuildEvent),
 ) -> Result<BuildOutcome> {
-    let run_id = new_run_id();
+    build_cancellable_with_run_id(new_run_id(), project_root, target, timeout_secs, cancel, sink)
+}
+
+/// Like [`build_cancellable`], but every event and the outcome carry `run_id`, so a caller that
+/// has already named the build (the server does) sees the same id in both.
+pub fn build_cancellable_with_run_id(
+    run_id: String,
+    project_root: &Path,
+    target: Option<&str>,
+    timeout_secs: u64,
+    cancel: &CancelToken,
+    sink: &mut dyn FnMut(&BuildEvent),
+) -> Result<BuildOutcome> {
     let t0 = now_ms();
 
     let tc = discover_toolchain();

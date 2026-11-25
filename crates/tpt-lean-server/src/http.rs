@@ -76,6 +76,20 @@ pub fn serve_http_connection(server: &Server, mut stream: TcpStream) -> io::Resu
         }
     }
 
+    // Read the body before answering, even when the answer is an error. Closing a socket with
+    // unread data makes the peer see a connection reset instead of the status.
+    let body = match content_length {
+        Some(length) if length <= MAX_REQUEST_BYTES => {
+            let mut body = vec![0u8; length];
+            reader.read_exact(&mut body)?;
+            body
+        }
+        Some(_) => {
+            return respond(&mut stream, 413, "Payload Too Large", None, &json!({"error": "request too large"}));
+        }
+        None => Vec::new(),
+    };
+
     if !host.as_deref().is_some_and(is_loopback_host) {
         return respond(&mut stream, 403, "Forbidden", None, &json!({"error": "host must be loopback"}));
     }
@@ -89,14 +103,9 @@ pub fn serve_http_connection(server: &Server, mut stream: TcpStream) -> io::Resu
     if method != "POST" {
         return respond(&mut stream, 405, "Method Not Allowed", Some("POST"), &json!({"error": "use POST"}));
     }
-    let Some(length) = content_length else {
+    if content_length.is_none() {
         return respond(&mut stream, 411, "Length Required", None, &json!({"error": "Content-Length required"}));
-    };
-    if length > MAX_REQUEST_BYTES {
-        return respond(&mut stream, 413, "Payload Too Large", None, &json!({"error": "request too large"}));
     }
-    let mut body = vec![0u8; length];
-    reader.read_exact(&mut body)?;
 
     let message: Value = match serde_json::from_slice(&body) {
         Ok(m) => m,
@@ -170,7 +179,7 @@ data: {summary}
 
 ")?;
             stream.flush()?;
-            break;
+            return stream.shutdown(std::net::Shutdown::Write);
         }
         stream.flush()?;
         if server.is_shutdown_requested() {
@@ -199,7 +208,8 @@ fn respond(
     head.push_str("\r\n");
     stream.write_all(head.as_bytes())?;
     stream.write_all(text.as_bytes())?;
-    stream.flush()
+    stream.flush()?;
+    stream.shutdown(std::net::Shutdown::Write)
 }
 
 #[cfg(test)]

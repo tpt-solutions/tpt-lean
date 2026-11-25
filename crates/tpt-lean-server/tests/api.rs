@@ -942,6 +942,8 @@ fn build_events_stream_as_server_sent_events_and_end_with_done() {
     );
     let (status, body) = http_exchange(http_port, &run);
     assert_eq!(status, 200, "{body}");
+    let started: Value = serde_json::from_str(&body).unwrap();
+    let run_id = started["result"]["run_id"].as_str().unwrap().to_string();
 
     // The stream follows the build and ends with `event: done`, which the server sends only after
     // the build has finished.
@@ -963,6 +965,7 @@ Host: 127.0.0.1
     assert!(raw.contains("event: done"), "{raw}");
     assert!(raw.contains("event: done
 data: {"), "{raw}");
+    assert!(raw.contains(&format!("\"run_id\":\"{run_id}\"")), "events carry the id build.run returned: {raw}");
 
     let unknown = "GET /v1/events?run_id=nope HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
     let (status, _) = http_exchange(http_port, unknown);

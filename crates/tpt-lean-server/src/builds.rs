@@ -104,7 +104,8 @@ impl Server {
         let thread_job = job.clone();
         std::thread::spawn(move || {
             let events = Arc::clone(&thread_job.events);
-            let outcome = tpt_lean_build::build_cancellable(
+            let outcome = tpt_lean_build::build_cancellable_with_run_id(
+                thread_job.id.clone(),
                 &root,
                 target.as_deref(),
                 timeout,
