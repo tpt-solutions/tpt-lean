@@ -9,6 +9,7 @@
 //!
 //! Not implemented here: Unix domain sockets, named pipes, SSE event streams, `imports.unused`.
 
+mod builds;
 pub mod client;
 mod methods;
 pub mod permission;
@@ -76,6 +77,8 @@ pub struct Server {
     config: Config,
     /// Diagnostics from the most recent `check.file` per file, for this process only.
     diagnostics: Mutex<HashMap<PathBuf, Vec<Diagnostic>>>,
+    /// Builds started by `build.run`, for this process only.
+    builds: Mutex<builds::Builds>,
     shutdown: AtomicBool,
     /// Address the listener is bound to, used to wake the accept loop on shutdown.
     listen_addr: Mutex<Option<SocketAddr>>,
@@ -94,6 +97,7 @@ impl Server {
             config,
             workspace,
             diagnostics: Mutex::new(HashMap::new()),
+            builds: Mutex::new(builds::Builds::default()),
             shutdown: AtomicBool::new(false),
             listen_addr: Mutex::new(None),
         })
@@ -177,6 +181,9 @@ impl Server {
             "check.file" => self.check_file(params),
             "profile.run" => self.profile_run(params),
             "profile.get" => self.profile_get(params),
+            "build.run" => self.build_run(params),
+            "build.status" => self.build_status(params),
+            "build.cancel" => self.build_cancel(params),
             "diagnostics.get" => self.diagnostics_get(params),
             "goals.at" => self.goals_at(params),
             "server.shutdown" => self.server_shutdown(),

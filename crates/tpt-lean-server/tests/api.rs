@@ -475,3 +475,95 @@ fn profile_get_lists_and_returns_stored_reports() {
     let unknown = rpc(&server, "profile.get", json!({ "id": "missing" }));
     assert_eq!(error_code(&unknown), -32602, "{unknown}");
 }
+
+#[test]
+fn build_status_and_cancel_report_nothing_running_without_a_build() {
+    let project = TempProject::new("build-none", None);
+    let server = Server::new(project.path()).unwrap();
+    let status = rpc(&server, "build.status", json!({}));
+    assert_eq!(result_of(&status)["status"], "none");
+    let cancel = rpc(&server, "build.cancel", json!({}));
+    assert_eq!(result_of(&cancel)["cancelled"], false);
+}
+
+#[test]
+fn build_run_rejects_bad_targets() {
+    let project = TempProject::new("build-target", None);
+    let server = Server::new(project.path()).unwrap();
+    let r = rpc(&server, "build.run", json!({ "target": "../escape" }));
+    assert!(r.get("error").is_some(), "{r}");
+    let r = rpc(&server, "build.run", json!({ "target": 3 }));
+    assert_eq!(error_code(&r), -32602, "{r}");
+}
+
+#[test]
+fn build_run_builds_in_the_background_and_reports_the_result() {
+    if tpt_lean_adapter::discover_toolchain().lake.is_none() {
+        eprintln!("skipping: lake not found");
+        return;
+    }
+    let project = TempProject::new("build-run", None);
+    project.write(
+        "lakefile.lean",
+        "import Lake\nopen Lake DSL\n\npackage demo\n\n@[default_target]\nlean_lib Demo\n",
+    );
+    project.write("Demo.lean", "def greeting : String := \"hi\"\n");
+    let server = Server::new(project.path()).unwrap();
+
+    let started = rpc(&server, "build.run", json!({}));
+    let run_id = result_of(&started)["run_id"].as_str().unwrap().to_string();
+    assert_eq!(result_of(&started)["status"], "running");
+
+    // A second build is refused while the first runs.
+    let again = rpc(&server, "build.run", json!({}));
+    assert!(again.get("error").is_some(), "{again}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    let finished = loop {
+        let st = rpc(&server, "build.status", json!({ "run_id": run_id }));
+        if result_of(&st)["status"] != "running" {
+            break st;
+        }
+        assert!(std::time::Instant::now() < deadline, "build did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    };
+    assert_eq!(result_of(&finished)["status"], "passed", "{finished}");
+    assert_eq!(result_of(&finished)["result"]["success"], true, "{finished}");
+}
+
+#[test]
+fn build_cancel_is_consistent_with_the_final_status() {
+    if tpt_lean_adapter::discover_toolchain().lake.is_none() {
+        eprintln!("skipping: lake not found");
+        return;
+    }
+    let project = TempProject::new("build-cancel", None);
+    project.write(
+        "lakefile.lean",
+        "import Lake\nopen Lake DSL\n\npackage demo\n\n@[default_target]\nlean_lib Demo\n",
+    );
+    project.write("Demo.lean", "def greeting : String := \"hi\"\n");
+    let server = Server::new(project.path()).unwrap();
+    let started = rpc(&server, "build.run", json!({}));
+    let run_id = result_of(&started)["run_id"].as_str().unwrap().to_string();
+
+    // The build may already have finished, in which case cancel reports nothing to stop.
+    let cancel = rpc(&server, "build.cancel", json!({ "run_id": run_id }));
+    let stopped = result_of(&cancel)["cancelled"] == true;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(300);
+    let finished = loop {
+        let st = rpc(&server, "build.status", json!({ "run_id": run_id }));
+        if result_of(&st)["status"] != "running" {
+            break st;
+        }
+        assert!(std::time::Instant::now() < deadline, "build did not finish");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    let status = result_of(&finished)["status"].clone();
+    if stopped {
+        assert_eq!(status, "cancelled", "{finished}");
+    } else {
+        assert_eq!(status, "passed", "{finished}");
+    }
+}

@@ -61,6 +61,18 @@ pub fn build(
     timeout_secs: u64,
     sink: &mut dyn FnMut(&BuildEvent),
 ) -> Result<BuildOutcome> {
+    build_cancellable(project_root, target, timeout_secs, &CancelToken::new(), sink)
+}
+
+/// Like [`build`], but the Lake process is stopped when `cancel` is cancelled. A cancelled build
+/// is not recorded in the cache.
+pub fn build_cancellable(
+    project_root: &Path,
+    target: Option<&str>,
+    timeout_secs: u64,
+    cancel: &CancelToken,
+    sink: &mut dyn FnMut(&BuildEvent),
+) -> Result<BuildOutcome> {
     let run_id = new_run_id();
     let t0 = now_ms();
 
@@ -103,7 +115,7 @@ pub fn build(
         target: target.map(str::to_string),
     };
     let policy = lean_policy(timeout_secs);
-    let result = execute(&tc, &lake, Some(project_root), &policy, &CancelToken::new());
+    let result = execute(&tc, &lake, Some(project_root), &policy, cancel);
     let t1 = now_ms();
     let res = match result {
         Ok(r) => r,

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "build.run",
+  "permission": "build",
+  "params": {
+    "type": "object",
+    "properties": {
+      "target": { "type": ["string", "null"], "description": "Lake target name; omit to build the default targets." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["run_id", "status"],
+    "properties": {
+      "run_id": { "type": "string" },
+      "status": { "type": "string", "enum": ["running"] }
+    }
+  }
+}

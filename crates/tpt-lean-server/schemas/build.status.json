@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "build.status",
+  "permission": "read",
+  "params": {
+    "type": "object",
+    "properties": {
+      "run_id": { "type": "string", "description": "A build id from build.run; omit for the latest build." }
+    }
+  },
+  "result": {
+    "type": "object",
+    "required": ["run_id", "status", "result"],
+    "properties": {
+      "run_id": { "type": ["string", "null"] },
+      "status": { "type": "string", "enum": ["none", "running", "passed", "failed", "cancelled"] },
+      "result": { "type": ["object", "null"] }
+    }
+  }
+}

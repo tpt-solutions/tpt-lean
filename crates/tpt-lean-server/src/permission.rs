@@ -69,6 +69,9 @@ pub const METHODS: &[(&str, Permission)] = &[
     ("goals.at", Permission::Build),
     ("profile.run", Permission::Profile),
     ("profile.get", Permission::Read),
+    ("build.run", Permission::Build),
+    ("build.status", Permission::Read),
+    ("build.cancel", Permission::Build),
     ("server.shutdown", Permission::Control),
 ];
 

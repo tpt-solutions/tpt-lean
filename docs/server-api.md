@@ -31,6 +31,7 @@ Each method has a class. The check happens before dispatch.
 | write | `format.file`, `index.refresh` | `security.allow_write = true` (default false) |
 | build | `check.file`, `goals.at` | `security.allow_build = true` (default true) |
 | profile | `profile.run` | `security.allow_build` and `security.allow_profile` (both default true) |
+| build (run/cancel) | `build.run`, `build.cancel` | `security.allow_build = true` (default true) |
 | control | `server.shutdown` | always (loopback unless remote is allowed) |
 
 A denied request gets error `-32001` with `data: {"permission", "config_key"}`.
@@ -57,6 +58,9 @@ are rejected.
 | `diagnostics.get` | `path` | `known`, `diagnostics[]` from the last `check.file` in this server process |
 | `goals.at` | `path`, `line`, `column` (both 1-based) | `goals[]` (plain goals from the Lean language server) |
 | `profile.run` | `path` | the profile report, as `tpt-lean profile --json`, plus `id`; the report is also stored in `.tpt-lean/profiles/` (runs Lean on an instrumented copy of the file; bounded by `security.command_timeout_seconds`) |
+| `build.run` | optional `target` | `run_id` and `status: "running"` at once; `lake build` runs on a background thread. One build at a time; a second `build.run` is refused while one runs |
+| `build.status` | optional `run_id` (default: latest) | `status` (`none`, `running`, `passed`, `failed`, `cancelled`) and `result` (success, exit code, digest, cache hit, files built and failed, duration, error) once finished |
+| `build.cancel` | optional `run_id` (default: newest running build) | `cancelled` true when a running build was asked to stop; the build then finishes as `cancelled` |
 | `profile.get` | optional `id` | without `id`: `ids` of stored profiles, newest first, and `report: null`; with `id`: the stored `report`. Ids are restricted to letters, digits, `-` and `_` |
 | `server.shutdown` | none | `stopping: true` |
 
