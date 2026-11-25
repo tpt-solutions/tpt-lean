@@ -274,7 +274,7 @@ Crate: `tpt-lean-build`
 - [x] `tpt-lean cache prune`
 - [ ] Cache-hit overhead < 200 ms (tpt-lean's own key computation is about 1 ms; a cache-hit build still runs Lake, which takes about 1.1 s to do nothing in a small project, and tpt-lean's Lake child took about 2.4 s in the same case, cause not found; see the measurements in the changelog)
 - [ ] Better logs and diagnostics
-- [ ] Wire `build.*` into server and MCP
+- [x] Wire `build.*` into server and MCP (server `build.run`/`build.cancel`/`build.status`; MCP `tpt_lean_build_project`)
 - [x] Tests for cache correctness/invalidation
 - [ ] Later: deeper build graph support (tracked, not initial)
 
@@ -295,7 +295,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [x] JSON reports
 - [x] Suggested actions in report
 - [x] `tpt-lean profile <file>`, `--flamegraph OUT.folded`, `--slowest N`, `--compare a.json b.json`
-- [ ] Wire into server/MCP
+- [x] Wire into server/MCP (server `profile.run`/`profile.get`; MCP `tpt_lean_profile_file`)
 
 ### tpt-lean-lsp
 - [x] Rust LSP proxy to official Lean LSP

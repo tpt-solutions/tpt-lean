@@ -91,7 +91,7 @@ advertises `inputSchema` and `outputSchema` in `tools/list`.
 | `tpt_lean_explain_diagnostic` | `file`, `line`, `column`, `timeout_seconds` | diagnostics covering the position, goal, hypotheses, target |
 | `tpt_lean_context_pack` | `file`, `line`, `column`, `max_tokens` (default 6000), `timeout_seconds` | goal, hypotheses, diagnostics, `relevant_symbols`, `source_excerpt`, `estimated_tokens`, `truncated` |
 | `tpt_lean_build_project` | `target`, `timeout_seconds` | `success`, `exit_code`, `diagnostics`, `output_tail` (runs `lake build`) |
-| `tpt_lean_profile_file` | `file` | always a tool error: profiling is not implemented |
+| `tpt_lean_profile_file` | `file` | the profile report (wall time, per-declaration timings, tactic totals, suggestions); runs Lean |
 | `tpt_lean_imports_suggest` | `query`, `limit`, `file` | `suggestions`: module, import statement, matching symbols; modules `file` already imports are left out |
 
 Notes:
@@ -115,8 +115,8 @@ Notes:
 | `tpt-lean://profiles` | ids of profile reports stored in `.tpt-lean/profiles` by the server's `profile.run` method, newest first |
 | `tpt-lean://profile/{id}` | one stored profile report; ids are validated, so no other file can be read |
 
-The MCP `tpt_lean_profile_file` tool is not implemented yet, so reports appear here only when
-they were produced through the API server. Build logs are not stored by any transport yet.
+The MCP `tpt_lean_profile_file` tool does not store its report, so reports appear here only when
+they were produced through the API server's `profile.run`. Build logs are not stored by any transport yet.
 
 `resources/list` and `resources/templates/list` describe them; `resources/read` returns JSON.
 
