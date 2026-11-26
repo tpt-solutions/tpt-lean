@@ -137,12 +137,24 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tpt-types-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Nat.lean"), "theorem add_comm : True := trivial
-").unwrap();
-        std::fs::write(dir.join("Lst.lean"), "theorem length_map : True := trivial
-").unwrap();
+        std::fs::write(
+            dir.join("Nat.lean"),
+            "theorem add_comm : True := trivial
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("Lst.lean"),
+            "theorem length_map : True := trivial
+",
+        )
+        .unwrap();
         let mut idx = Index::open_in_memory().unwrap();
-        idx.refresh(&[ScanRoot { package: "project".into(), path: dir.clone() }]).unwrap();
+        idx.refresh(&[ScanRoot {
+            package: "project".into(),
+            path: dir.clone(),
+        }])
+        .unwrap();
         let tc = "leanprover/lean4:v4.36.0";
         let rec = |name: &str, kind: &str, ty: &str| DeclRecord {
             name: name.into(),
@@ -175,10 +187,26 @@ mod tests {
     fn finds_declarations_by_type_tokens() {
         let idx = typed_index();
         // Two `Nat` tokens are required, so the single-`Nat` declarations do not match.
-        let hits = search_by_type(&idx, "Nat → Nat", &SearchOptions { limit: 10, ..Default::default() }).unwrap();
+        let hits = search_by_type(
+            &idx,
+            "Nat → Nat",
+            &SearchOptions {
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let names: Vec<&str> = hits.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(names, vec!["Nat.succ"]);
-        let by_count = search_by_type(&idx, "Nat", &SearchOptions { limit: 10, ..Default::default() }).unwrap();
+        let by_count = search_by_type(
+            &idx,
+            "Nat",
+            &SearchOptions {
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(by_count.len(), 3);
     }
 
@@ -186,21 +214,47 @@ mod tests {
     fn whole_tokens_only_and_order_ranks_higher() {
         let idx = typed_index();
         // `Nat.count` is a different token from `Nat`.
-        let hits = search_by_type(&idx, "Nat.count", &SearchOptions { limit: 10, ..Default::default() }).unwrap();
+        let hits = search_by_type(
+            &idx,
+            "Nat.count",
+            &SearchOptions {
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         let names: Vec<&str> = hits.iter().map(|h| h.name.as_str()).collect();
         assert_eq!(names, vec!["Lst.length_map"]);
-        let ordered = search_by_type(&idx, "Nat n", &SearchOptions { limit: 10, ..Default::default() }).unwrap();
+        let ordered = search_by_type(
+            &idx,
+            "Nat n",
+            &SearchOptions {
+                limit: 10,
+                ..Default::default()
+            },
+        )
+        .unwrap();
         assert_eq!(ordered.first().map(|h| h.name.as_str()), Some("Nat.add_comm"));
     }
 
     #[test]
     fn namespace_filter_and_empty_pattern() {
         let idx = typed_index();
-        let opts = SearchOptions { limit: 10, namespace: Some("Lst".into()), ..Default::default() };
+        let opts = SearchOptions {
+            limit: 10,
+            namespace: Some("Lst".into()),
+            ..Default::default()
+        };
         let hits = search_by_type(&idx, "Nat.count", &opts).unwrap();
         assert_eq!(hits.len(), 1);
-        let other = SearchOptions { limit: 10, namespace: Some("Nat".into()), ..Default::default() };
+        let other = SearchOptions {
+            limit: 10,
+            namespace: Some("Nat".into()),
+            ..Default::default()
+        };
         assert!(search_by_type(&idx, "Nat.count", &other).unwrap().is_empty());
-        assert!(search_by_type(&idx, "->", &SearchOptions::default()).unwrap().is_empty());
+        assert!(search_by_type(&idx, "->", &SearchOptions::default())
+            .unwrap()
+            .is_empty());
     }
 }

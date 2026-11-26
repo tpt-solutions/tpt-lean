@@ -1,0 +1,19 @@
+[package]
+name = "tpt-lean-pipe"
+description = "Windows named-pipe server and client for tpt-lean's API server (the only crate in the workspace that calls Win32 directly)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+
+# Win32 calls are needed for server-side named pipes; the rest of the workspace forbids unsafe.
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }

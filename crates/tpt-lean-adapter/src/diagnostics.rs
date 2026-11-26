@@ -94,12 +94,16 @@ fn parse_location_first(line: &str) -> Option<Diagnostic> {
             continue;
         }
         let after_line = &tail[digits_line.len()..];
-        let Some(after_colon) = after_line.strip_prefix(':') else { continue };
+        let Some(after_colon) = after_line.strip_prefix(':') else {
+            continue;
+        };
         let digits_col: String = after_colon.chars().take_while(|c| c.is_ascii_digit()).collect();
         if digits_col.is_empty() {
             continue;
         }
-        let Some(message) = after_colon[digits_col.len()..].strip_prefix(": ") else { continue };
+        let Some(message) = after_colon[digits_col.len()..].strip_prefix(": ") else {
+            continue;
+        };
         let file = &rest[..i];
         if file.is_empty() {
             return None;
@@ -121,29 +125,17 @@ mod tests {
 
     #[test]
     fn parses_lake_style_location_first_errors() {
-        let d = parse_lean_output(
-            "error: Main.lean:1:26: Type mismatch
-  rfl
-has type
-  ?m = ?m
-",
-        );
+        let d = parse_lean_output("error: Main.lean:1:26: Type mismatch\n  rfl\nhas type\n  ?m = ?m\n");
         assert_eq!(d.len(), 1, "{d:?}");
         assert_eq!(d[0].file, "Main.lean");
         assert_eq!((d[0].line, d[0].column), (1, 26));
         assert_eq!(d[0].severity, Severity::Error);
-        assert_eq!(d[0].message, "Type mismatch
-  rfl
-has type
-  ?m = ?m");
+        assert_eq!(d[0].message, "Type mismatch\n  rfl\nhas type\n  ?m = ?m");
     }
 
     #[test]
     fn location_first_handles_windows_paths_and_colons_in_messages() {
-        let d = parse_lean_output(
-            "error: C:\\work\\Demo\\Main.lean:3:7: unknown identifier 'x:1:2: y'
-",
-        );
+        let d = parse_lean_output("error: C:\\work\\Demo\\Main.lean:3:7: unknown identifier 'x:1:2: y'\n");
         assert_eq!(d.len(), 1, "{d:?}");
         assert_eq!(d[0].file, "C:\\work\\Demo\\Main.lean");
         assert_eq!((d[0].line, d[0].column), (3, 7));
@@ -152,10 +144,8 @@ has type
 
     #[test]
     fn plain_lines_are_not_diagnostics() {
-        assert!(parse_lean_output("Build completed successfully (5 jobs).
-").is_empty());
-        assert!(parse_lean_output("error: build failed
-").is_empty());
+        assert!(parse_lean_output("Build completed successfully (5 jobs).\n").is_empty());
+        assert!(parse_lean_output("error: build failed\n").is_empty());
     }
 
     #[test]

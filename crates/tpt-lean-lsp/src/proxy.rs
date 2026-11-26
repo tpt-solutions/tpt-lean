@@ -7,7 +7,6 @@
 use crate::framing::{read_message, write_message};
 use crate::symbols::document_symbols;
 use crate::workspace::{definitions, import_modules, workspace_symbols};
-use tpt_lean_fmt::format_text;
 use serde_json::{json, Value};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
@@ -24,6 +23,7 @@ use tpt_lean_adapter::LspSession;
 use tpt_lean_core::dirs::ProjectDirs;
 use tpt_lean_core::policy::CancelToken;
 use tpt_lean_core::{Error, ErrorCode, Result};
+use tpt_lean_fmt::format_text;
 
 /// How often the loop checks Lean for new diagnostics when no editor message arrives.
 const POLL: Duration = Duration::from_millis(50);
@@ -325,7 +325,10 @@ impl<W: Write> Proxy<W> {
     /// the error explanation. Lean's own code actions are forwarded and appended; if Lean does not
     /// answer, only the local actions are returned.
     fn code_actions(&mut self, params: &Value, cancel: &CancelToken) -> Value {
-        let uri = params["textDocument"]["uri"].as_str().unwrap_or_default().to_string();
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         let range = params["range"].clone();
         let diagnostics: Vec<Value> = params["context"]["diagnostics"]
             .as_array()
@@ -357,7 +360,8 @@ impl<W: Write> Proxy<W> {
                 }));
             }
         }
-        let position = json!({ "uri": uri, "line": range["start"]["line"], "character": range["start"]["character"] });
+        let position =
+            json!({ "uri": uri, "line": range["start"]["line"], "character": range["start"]["character"] });
         actions.push(json!({
             "title": "Search lemmas for this goal",
             "kind": "source",
@@ -379,11 +383,10 @@ impl<W: Write> Proxy<W> {
                 "command": { "title": "Explain this error", "command": EXPLAIN_ERROR, "arguments": [position] }
             }));
         }
-        if let Ok(upstream) = self.session.request_cancellable(
-            "textDocument/codeAction",
-            self.upstream_params(params),
-            cancel,
-        ) {
+        if let Ok(upstream) =
+            self.session
+                .request_cancellable("textDocument/codeAction", self.upstream_params(params), cancel)
+        {
             if let Some(lean_actions) = upstream.as_array() {
                 actions.extend(lean_actions.iter().cloned());
             }
@@ -395,7 +398,10 @@ impl<W: Write> Proxy<W> {
     /// document the formatter refuses (uncertain syntax, tabs) gets no edits, and the reason is
     /// logged. Nothing is written to disk; the editor applies the edits.
     fn formatting(&mut self, params: &Value) -> Value {
-        let uri = params["textDocument"]["uri"].as_str().unwrap_or_default().to_string();
+        let uri = params["textDocument"]["uri"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string();
         match self.format_edits(&uri) {
             Some(edits) => Value::Array(edits),
             None => Value::Array(Vec::new()),
@@ -443,12 +449,17 @@ impl<W: Write> Proxy<W> {
                 let goals = self.goals_at(&position_params, cancel)?;
                 let target = goals.iter().find_map(|g| split_goal(g).1).unwrap_or_default();
                 let lemmas = lemma_candidates(&self.project_root, &target, 10);
-                self.log(&format!("tpt-lean: {} lemma candidate(s) for the goal", lemmas.len()))?;
+                self.log(&format!(
+                    "tpt-lean: {} lemma candidate(s) for the goal",
+                    lemmas.len()
+                ))?;
                 Ok(Value::Array(lemmas))
             }
             EXPLAIN_ERROR => {
                 let diagnostics = self.published.get(&uri).cloned().unwrap_or_default();
-                let file = uri_to_path(&uri).map(|p| p.display().to_string()).unwrap_or_default();
+                let file = uri_to_path(&uri)
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_default();
                 let error = error_at(&diagnostics, &file, line, character);
                 // The explanation is still useful without goals (for example when Lean is down).
                 let goals = self.goals_at(&position_params, cancel).unwrap_or_default();
@@ -705,10 +716,16 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tpt-lsp-actions-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".tpt-lean")).unwrap();
-        std::fs::write(dir.join("Lib.lean"), "theorem widget_size_ok : True := trivial
-").unwrap();
+        std::fs::write(
+            dir.join("Lib.lean"),
+            "theorem widget_size_ok : True := trivial
+",
+        )
+        .unwrap();
         let mut index = tpt_lean_index::Index::open(&ProjectDirs::new(&dir).index_db()).unwrap();
-        index.refresh(&tpt_lean_index::default_scan_roots(&dir, false)).unwrap();
+        index
+            .refresh(&tpt_lean_index::default_scan_roots(&dir, false))
+            .unwrap();
         drop(index);
         let session = LspSession::new(
             Path::new("/nonexistent/tpt-lean-test-server"),
@@ -747,7 +764,10 @@ mod tests {
 
         let init = out.iter().find(|m| m["id"] == 1).expect("initialize");
         assert!(init["result"]["capabilities"]["codeActionProvider"].is_object());
-        assert_eq!(init["result"]["capabilities"]["executeCommandProvider"]["commands"][1], EXPLAIN_ERROR);
+        assert_eq!(
+            init["result"]["capabilities"]["executeCommandProvider"]["commands"][1],
+            EXPLAIN_ERROR
+        );
 
         let actions = out.iter().find(|m| m["id"] == 2).expect("codeAction")["result"]
             .as_array()
@@ -760,8 +780,11 @@ mod tests {
         assert_eq!(import["kind"], "quickfix");
         let edit = &import["edit"]["changes"][uri][0];
         assert_eq!(edit["range"]["start"]["line"], 1);
-        assert_eq!(edit["newText"], "import Lib
-");
+        assert_eq!(
+            edit["newText"],
+            "import Lib
+"
+        );
         let titles: Vec<&str> = actions.iter().filter_map(|a| a["title"].as_str()).collect();
         assert!(titles.contains(&"Search lemmas for this goal"), "{titles:?}");
         assert!(titles.contains(&"Explain this error"), "{titles:?}");
@@ -807,8 +830,11 @@ mod tests {
             .unwrap()
             .clone();
         assert_eq!(edits.len(), 1, "{edits:?}");
-        assert_eq!(edits[0]["newText"], "def x := 1
-");
+        assert_eq!(
+            edits[0]["newText"],
+            "def x := 1
+"
+        );
         assert_eq!(edits[0]["range"]["start"], json!({"line": 0, "character": 0}));
         assert_eq!(edits[0]["range"]["end"], json!({"line": 2, "character": 0}));
 
@@ -818,7 +844,10 @@ mod tests {
 
     #[test]
     fn unknown_names_and_import_lines() {
-        assert_eq!(unknown_name("unknown identifier 'Nat.foo'").as_deref(), Some("Nat.foo"));
+        assert_eq!(
+            unknown_name("unknown identifier 'Nat.foo'").as_deref(),
+            Some("Nat.foo")
+        );
         assert_eq!(unknown_name("unknown constant 'bar'").as_deref(), Some("bar"));
         assert_eq!(unknown_name("type mismatch"), None);
         assert_eq!(unknown_name("unknown identifier ''"), None);

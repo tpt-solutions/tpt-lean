@@ -53,6 +53,13 @@ Initial development version `0.1.0`. Nothing has been published yet.
   A project with a Lean error produces two results, and both files validate.
 - `init --mathlib` pins Mathlib to the tag v4.36.0 and sets `lean-toolchain` to match. The tag exists
   on the Mathlib repository. A full Mathlib build was not run.
+- Named pipes on Windows (`crates/tpt-lean-pipe`): the API server listens on `\.\pipe	pt-lean-<hash>`
+  by default there, with the default security descriptor and a refusal of a second server. Tested on
+  Windows: connect, exchange, exclusive bind, clean end of a reply.
+- `build.subscribe` over JSON-RPC: the build's events as `build.event` notifications, then
+  `build.finished`, on any transport.
+- Fixed: SSE and HTTP responses could be sent with bare line feeds where CRLF belongs; tests now check
+  the line endings.
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the

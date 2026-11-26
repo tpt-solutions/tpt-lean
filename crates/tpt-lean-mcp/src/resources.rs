@@ -150,7 +150,9 @@ fn stored_profile(server: &Server, id: &str) -> Result<Value, RpcError> {
     if !valid_profile_id(id) {
         return Err((RESOURCE_NOT_FOUND, format!("no stored profile {id:?}")));
     }
-    let path = ProjectDirs::new(server.root()).profiles().join(format!("{id}.json"));
+    let path = ProjectDirs::new(server.root())
+        .profiles()
+        .join(format!("{id}.json"));
     let text = std::fs::read_to_string(&path)
         .map_err(|_| (RESOURCE_NOT_FOUND, format!("no stored profile {id:?}")))?;
     serde_json::from_str(&text).map_err(|e| (INTERNAL_ERROR, e.to_string()))
@@ -160,7 +162,9 @@ fn stored_profile(server: &Server, id: &str) -> Result<Value, RpcError> {
 fn valid_profile_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 80
-        && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
 /// The `{path}` of a `tpt-lean://file/{path}/symbols` URI, percent-decoded.
@@ -246,7 +250,10 @@ mod tests {
             .iter()
             .map(|r| r["uri"].as_str().unwrap())
             .collect();
-        assert_eq!(uris, vec![PROJECT_INFO, PROJECT_DIAGNOSTICS, INDEX_STATUS, PROFILES]);
+        assert_eq!(
+            uris,
+            vec![PROJECT_INFO, PROJECT_DIAGNOSTICS, INDEX_STATUS, PROFILES]
+        );
         assert_eq!(
             templates()["resourceTemplates"][0]["uriTemplate"],
             "tpt-lean://file/{path}/symbols"
@@ -275,8 +282,14 @@ mod tests {
         let body: Value = serde_json::from_str(r["contents"][0]["text"].as_str().unwrap()).unwrap();
         assert_eq!(body["total_ms"], 5);
 
-        assert_eq!(read(&s, "tpt-lean://profile/..%2Fx").unwrap_err().0, RESOURCE_NOT_FOUND);
-        assert_eq!(read(&s, "tpt-lean://profile/missing").unwrap_err().0, RESOURCE_NOT_FOUND);
+        assert_eq!(
+            read(&s, "tpt-lean://profile/..%2Fx").unwrap_err().0,
+            RESOURCE_NOT_FOUND
+        );
+        assert_eq!(
+            read(&s, "tpt-lean://profile/missing").unwrap_err().0,
+            RESOURCE_NOT_FOUND
+        );
     }
 
     fn temp_project(name: &str) -> std::path::PathBuf {

@@ -15,12 +15,17 @@ fn incremental_refresh_after_one_edit() {
     for f in 0..500 {
         let mut text = format!("namespace Bench.M{f}\n");
         for d in 0..10 {
-            text.push_str(&format!("/-- Lemma {d} in file {f}. -/\ntheorem lemma_{f}_{d} : True := trivial\n"));
+            text.push_str(&format!(
+                "/-- Lemma {d} in file {f}. -/\ntheorem lemma_{f}_{d} : True := trivial\n"
+            ));
         }
         text.push_str(&format!("end Bench.M{f}\n"));
         std::fs::write(dir.join(format!("M{f}.lean")), text).unwrap();
     }
-    let roots = [ScanRoot { package: "project".into(), path: dir.clone() }];
+    let roots = [ScanRoot {
+        package: "project".into(),
+        path: dir.clone(),
+    }];
     let db = dir.join("index.sqlite");
     let mut index = Index::open(&db).unwrap();
 

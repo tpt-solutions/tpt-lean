@@ -18,6 +18,9 @@ pub enum Endpoint {
     Tcp(SocketAddr),
     #[cfg(unix)]
     Unix(PathBuf),
+    /// A Windows named pipe, by its short name (`\\.\pipe\<name>`).
+    #[cfg(windows)]
+    Pipe(String),
 }
 
 impl Endpoint {
@@ -33,7 +36,12 @@ pub fn call(port: u16, method: &str, params: Value, timeout: Duration) -> io::Re
 }
 
 /// Send one request to the server at `endpoint` and return the parsed response object.
-pub fn call_endpoint(endpoint: &Endpoint, method: &str, params: Value, timeout: Duration) -> io::Result<Value> {
+pub fn call_endpoint(
+    endpoint: &Endpoint,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> io::Result<Value> {
     match endpoint {
         Endpoint::Tcp(addr) => {
             let stream = TcpStream::connect_timeout(addr, timeout)?;
@@ -47,6 +55,19 @@ pub fn call_endpoint(endpoint: &Endpoint, method: &str, params: Value, timeout: 
             stream.set_read_timeout(Some(timeout))?;
             stream.set_write_timeout(Some(timeout))?;
             exchange(stream, method, params)
+        }
+        #[cfg(windows)]
+        Endpoint::Pipe(name) => {
+            // Pipes have no read timeout, so the exchange runs on a thread that is abandoned if the
+            // reply does not come in time.
+            let stream = tpt_lean_pipe::connect(name)?;
+            let method = method.to_string();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(exchange(stream, &method, params));
+            });
+            rx.recv_timeout(timeout)
+                .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "no reply from the pipe server"))?
         }
     }
 }

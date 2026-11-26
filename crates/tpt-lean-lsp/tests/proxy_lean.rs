@@ -125,10 +125,7 @@ fn code_actions_and_commands_through_proxy_with_lean() {
         .as_array()
         .unwrap()
         .clone();
-    assert!(
-        actions.iter().any(|a| a["title"] == "Import Lib"),
-        "{actions:?}"
-    );
+    assert!(actions.iter().any(|a| a["title"] == "Import Lib"), "{actions:?}");
 
     let explained = out.iter().find(|m| m["id"] == 3).expect("explain response");
     let goals = explained["result"]["goals"].as_array().expect("goals array");

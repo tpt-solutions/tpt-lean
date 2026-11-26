@@ -25,7 +25,11 @@ fn sidecar_exe() -> Option<PathBuf> {
     } else {
         base.join(format!("build-v{version}"))
     };
-    let exe = if cfg!(windows) { "tpt_sidecar.exe" } else { "tpt_sidecar" };
+    let exe = if cfg!(windows) {
+        "tpt_sidecar.exe"
+    } else {
+        "tpt_sidecar"
+    };
     let path = dir.join("bin").join(exe);
     path.is_file().then_some(path)
 }

@@ -34,6 +34,9 @@ fn format_five_thousand_lines_under_target() {
     }
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let median = times[times.len() / 2];
-    println!("formatted {lines} lines: median {median:.2} ms over {} runs", times.len());
+    println!(
+        "formatted {lines} lines: median {median:.2} ms over {} runs",
+        times.len()
+    );
     assert!(median < 100.0, "median {median:.2} ms exceeds the 100 ms target");
 }

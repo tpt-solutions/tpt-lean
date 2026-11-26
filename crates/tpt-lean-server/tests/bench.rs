@@ -46,7 +46,10 @@ fn warm_context_pack_latency() {
     let dir = project();
     let server = Server::new(&dir).unwrap();
     let cold = call(&server);
-    println!("first call (starts Lean): {cold:.0} ms, starts {}", server.warm_session_starts());
+    println!(
+        "first call (starts Lean): {cold:.0} ms, starts {}",
+        server.warm_session_starts()
+    );
 
     let mut warm = Vec::new();
     for _ in 0..30 {

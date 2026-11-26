@@ -7,9 +7,13 @@ Transports:
 - **Unix domain socket** (Linux and macOS, the default there): `.tpt-lean/server.sock`. The socket
   file is created with mode 0600, so only the owning user can connect. A leftover socket file from
   a crashed server is replaced at start.
-- **Loopback TCP** on `127.0.0.1` (every platform, the default on Windows, port 7373). Chosen with
-  `tpt-lean server start --port N` (0 picks a free port). Unless `server.allow_remote = true`, the
-  server does not bind other addresses.
+- **Named pipe** on Windows, the default there: `\.\pipe	pt-lean-<16 hex digits>`, where the
+  digits are the start of the SHA-256 of the project path. The pipe is created with the default
+  security descriptor, so ordinary other users cannot connect, which matches the owner-only Unix
+  socket. A second server for the same project is refused while the first one runs.
+- **Loopback TCP** on `127.0.0.1` (every platform; the default port is 7373 when `--port` is given
+  without a value). Chosen with `tpt-lean server start --port N` (0 picks a free port). Unless
+  `server.allow_remote = true`, the server does not bind other addresses.
 
 Schemas for every method's params and result are in `crates/tpt-lean-server/schemas/`
 (`error.json` for the error envelope). Tests in `tests/schemas.rs` validate real responses.
@@ -53,6 +57,18 @@ curl -s http://127.0.0.1:7373/v1/rpc -H 'Content-Type: application/json'   -d '{
 ```
 
 ## Build event stream
+
+Over JSON-RPC (any transport, including the named pipe), a client can subscribe to a build instead
+of polling:
+
+```json
+{"jsonrpc":"2.0","id":2,"method":"build.subscribe","params":{"run_id":"build_…"}}
+```
+
+The reply to the request comes first and carries the run id. Then the server sends one
+`build.event` notification per event (no `id`, as JSON-RPC requires) and one `build.finished`
+notification with the summary. The server then closes the connection. An unknown run id gets an
+error reply.
 
 `build.run` starts a build in the background. Its events are available over HTTP while it runs:
 
@@ -159,6 +175,7 @@ message naming `lean`.
   `imports.suggest`, `imports.unused` (out of scope for this phase), `context.pack`,
   `build.*`, `profile.*`.
 - Transports: named pipes (Windows). Windows uses loopback TCP instead.
-- General streaming (notifications for any method). Build events are streamed; see below.
+- Notifications for methods other than build events. Only build events are streamed (over SSE and
+  `build.subscribe`).
 - Authentication. Any local process that can connect to the port can call the methods allowed
   by the configuration. Keep write and build permissions off unless you need them.

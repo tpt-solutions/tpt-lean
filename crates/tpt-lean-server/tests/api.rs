@@ -818,12 +818,18 @@ fn warm_session_is_reused_and_follows_edits() {
     let params = json!({ "path": "Warm.lean", "line": 1, "column": 9 });
 
     let first = rpc(&server, "context.pack", params.clone());
-    assert!(!result_of(&first)["diagnostics"].as_array().unwrap().is_empty(), "{first}");
+    assert!(
+        !result_of(&first)["diagnostics"].as_array().unwrap().is_empty(),
+        "{first}"
+    );
     assert_eq!(server.warm_session_starts(), 1);
 
     // The same text again reuses the running server and gives the same answer.
     let second = rpc(&server, "context.pack", params.clone());
-    assert!(!result_of(&second)["diagnostics"].as_array().unwrap().is_empty(), "{second}");
+    assert!(
+        !result_of(&second)["diagnostics"].as_array().unwrap().is_empty(),
+        "{second}"
+    );
     assert_eq!(server.warm_session_starts(), 1, "the session is reused");
 
     // An edit that fixes the error must not report the old error.
@@ -891,7 +897,9 @@ fn http_transport_serves_rpc_and_refuses_other_hosts_and_methods() {
     let root = project.path().to_path_buf();
     let runner = {
         let root = root.clone();
-        thread::spawn(move || state::run_foreground_with_http(&root, tpt_lean_server::Transport::Tcp(0), Some(0)))
+        thread::spawn(move || {
+            state::run_foreground_with_http(&root, tpt_lean_server::Transport::Tcp(0), Some(0))
+        })
     };
     let st = wait_for_state(&root);
     let http_port = st.http_port.expect("state records the HTTP port");
@@ -931,7 +939,9 @@ fn build_events_stream_as_server_sent_events_and_end_with_done() {
     let root = project.path().to_path_buf();
     let runner = {
         let root = root.clone();
-        thread::spawn(move || state::run_foreground_with_http(&root, tpt_lean_server::Transport::Tcp(0), Some(0)))
+        thread::spawn(move || {
+            state::run_foreground_with_http(&root, tpt_lean_server::Transport::Tcp(0), Some(0))
+        })
     };
     let st = wait_for_state(&root);
     let http_port = st.http_port.expect("HTTP port recorded");
@@ -947,10 +957,7 @@ fn build_events_stream_as_server_sent_events_and_end_with_done() {
 
     // The stream follows the build and ends with `event: done`, which the server sends only after
     // the build has finished.
-    let stream = "GET /v1/events HTTP/1.1
-Host: 127.0.0.1
-
-".to_string();
+    let stream = "GET /v1/events HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_string();
     let mut raw = String::new();
     {
         use std::io::Read as _;
@@ -959,17 +966,180 @@ Host: 127.0.0.1
         conn.write_all(stream.as_bytes()).unwrap();
         conn.read_to_string(&mut raw).unwrap();
     }
-    assert!(raw.starts_with("HTTP/1.1 200 OK"), "{raw}");
+    assert!(
+        raw.starts_with("HTTP/1.1 200 OK\r\n"),
+        "headers end lines with CRLF: {raw:?}"
+    );
+    assert!(
+        raw.contains("\r\n\r\nevent: "),
+        "the body follows a CRLF blank line: {raw:?}"
+    );
     assert!(raw.contains("Content-Type: text/event-stream"), "{raw}");
     assert!(raw.contains("event: build_started"), "{raw}");
-    assert!(raw.contains("event: done"), "{raw}");
-    assert!(raw.contains("event: done
-data: {"), "{raw}");
-    assert!(raw.contains(&format!("\"run_id\":\"{run_id}\"")), "events carry the id build.run returned: {raw}");
+    assert!(raw.contains("event: done\ndata: {"), "{raw}");
+    assert!(
+        raw.contains(&format!("\"run_id\":\"{run_id}\"")),
+        "events carry the id build.run returned: {raw}"
+    );
 
     let unknown = "GET /v1/events?run_id=nope HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
     let (status, _) = http_exchange(http_port, unknown);
     assert_eq!(status, 404);
+
+    assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
+    runner.join().unwrap().unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn named_pipe_lifecycle_refuses_a_second_server_and_stops() {
+    use tpt_lean_server::Transport;
+
+    let project = TempProject::new("pipe", None);
+    let root = project.path().to_path_buf();
+    let runner = {
+        let root = root.clone();
+        thread::spawn(move || state::run_foreground_on(&root, Transport::Pipe))
+    };
+    let st = wait_for_state(&root);
+    let pipe = st.pipe.clone().expect("state records the pipe name");
+    assert!(pipe.starts_with("tpt-lean-"), "{pipe}");
+    assert_eq!(st.port, 0);
+
+    let reply = tpt_lean_server::client::call_endpoint(
+        &st.endpoint(),
+        "project.info",
+        json!({}),
+        Duration::from_secs(10),
+    )
+    .unwrap();
+    assert!(reply.get("result").is_some(), "{reply}");
+    assert!(state::status(&root).unwrap().running);
+
+    // A second server for the same project is refused while the first one answers.
+    let second = state::run_foreground_on(&root, Transport::Pipe);
+    assert!(second.is_err());
+
+    assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
+    runner.join().unwrap().unwrap();
+    assert!(!state::status(&root).unwrap().running);
+}
+
+#[test]
+fn build_subscription_sends_notifications_and_then_finished() {
+    use std::io::Read as _;
+
+    let project = TempProject::new("subscribe", None);
+    let root = project.path().to_path_buf();
+    let runner = {
+        let root = root.clone();
+        thread::spawn(move || state::run_foreground(&root, 0))
+    };
+    let st = wait_for_state(&root);
+    let port = st.port;
+
+    // Start a build on one connection and read its reply.
+    let mut conn = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+    conn.set_read_timeout(Some(Duration::from_secs(60))).unwrap();
+    writeln!(
+        conn,
+        r#"{{"jsonrpc":"2.0","id":1,"method":"build.run","params":{{}}}}"#
+    )
+    .unwrap();
+    let mut reply = String::new();
+    BufReader::new(conn.try_clone().unwrap())
+        .read_line(&mut reply)
+        .unwrap();
+    let started: Value = serde_json::from_str(&reply).unwrap();
+    let run_id = started["result"]["run_id"].as_str().unwrap().to_string();
+
+    // Subscribe on a second connection: the stream ends after the summary notification.
+    let mut sub = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+    sub.set_read_timeout(Some(Duration::from_secs(120))).unwrap();
+    writeln!(
+        sub,
+        r#"{{"jsonrpc":"2.0","id":2,"method":"build.subscribe","params":{{"run_id":"{run_id}"}}}}"#
+    )
+    .unwrap();
+    let mut raw = String::new();
+    sub.read_to_string(&mut raw).unwrap();
+    let lines: Vec<Value> = raw
+        .lines()
+        .map(|l| {
+            serde_json::from_str(l).unwrap_or_else(|e| {
+                panic!(
+                    "bad line {l:?}: {e}
+full: {raw:?}"
+                )
+            })
+        })
+        .collect();
+
+    assert!(lines.len() >= 3, "{raw}");
+    assert_eq!(lines[0]["id"], 2, "{raw}");
+    assert_eq!(lines[0]["result"]["run_id"], run_id.as_str(), "{raw}");
+    for notification in &lines[1..] {
+        assert!(
+            notification.get("id").is_none(),
+            "notifications carry no id: {notification}"
+        );
+    }
+    assert!(
+        lines[1..lines.len() - 1]
+            .iter()
+            .all(|n| n["method"] == "build.event"),
+        "{raw}"
+    );
+    let last = lines.last().unwrap();
+    assert_eq!(last["method"], "build.finished", "{raw}");
+    assert_eq!(last["params"]["run_id"], run_id.as_str(), "{raw}");
+
+    // An unknown run id is an error reply, not a stream.
+    let mut bad = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).unwrap();
+    bad.set_read_timeout(Some(Duration::from_secs(10))).unwrap();
+    writeln!(
+        bad,
+        r#"{{"jsonrpc":"2.0","id":3,"method":"build.subscribe","params":{{"run_id":"nope"}}}}"#
+    )
+    .unwrap();
+    let mut answer = String::new();
+    bad.read_to_string(&mut answer).unwrap();
+    assert!(answer.contains("\"error\""), "{answer}");
+
+    assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
+    runner.join().unwrap().unwrap();
+}
+
+#[cfg(windows)]
+#[test]
+fn named_pipe_subscription_ends_cleanly() {
+    use std::io::Read as _;
+    use tpt_lean_server::Transport;
+
+    let project = TempProject::new("pipe-sub", None);
+    let root = project.path().to_path_buf();
+    let runner = {
+        let root = root.clone();
+        thread::spawn(move || state::run_foreground_on(&root, Transport::Pipe))
+    };
+    let st = wait_for_state(&root);
+    let endpoint = st.endpoint();
+
+    let started =
+        tpt_lean_server::client::call_endpoint(&endpoint, "build.run", json!({}), Duration::from_secs(60))
+            .unwrap();
+    let run_id = started["result"]["run_id"].as_str().unwrap().to_string();
+
+    let mut sub = tpt_lean_pipe::connect(&st.pipe.clone().unwrap()).unwrap();
+    writeln!(
+        sub,
+        r#"{{"jsonrpc":"2.0","id":2,"method":"build.subscribe","params":{{"run_id":"{run_id}"}}}}"#
+    )
+    .unwrap();
+    let mut raw = String::new();
+    sub.read_to_string(&mut raw).unwrap();
+    let lines: Vec<Value> = raw.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+    assert_eq!(lines.last().unwrap()["method"], "build.finished", "{raw}");
 
     assert_eq!(state::stop(&root).unwrap().outcome, StopOutcome::Stopped);
     runner.join().unwrap().unwrap();

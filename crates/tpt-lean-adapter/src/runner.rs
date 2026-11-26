@@ -317,14 +317,9 @@ mod tests {
         };
         let mut pending = Vec::new();
         emit_lines(&mut pending, b"[1/3] Built A\r[2/3] Bui", &sink);
-        emit_lines(&mut pending, b"lt B
-
-[3/3] Done", &sink);
+        emit_lines(&mut pending, b"lt B\n\n[3/3] Done", &sink);
         assert_eq!(pending, b"[3/3] Done");
-        assert_eq!(
-            *seen.lock().unwrap(),
-            vec!["[1/3] Built A", "[2/3] Built B"]
-        );
+        assert_eq!(*seen.lock().unwrap(), vec!["[1/3] Built A", "[2/3] Built B"]);
     }
 
     #[test]

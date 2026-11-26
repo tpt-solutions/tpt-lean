@@ -25,7 +25,15 @@ impl Server {
         let timeout = self.config().security.command_timeout_seconds;
         let snap = self
             .with_warm_session(|session, version| {
-                snapshot_in_session(session, &path, &text, line, column, version, Duration::from_secs(timeout))
+                snapshot_in_session(
+                    session,
+                    &path,
+                    &text,
+                    line,
+                    column,
+                    version,
+                    Duration::from_secs(timeout),
+                )
             })
             .map_err(app_error)?;
         let error = error_at(&snap.diagnostics, &rel, snap.line0, snap.utf16);
@@ -70,7 +78,15 @@ impl Server {
         let timeout = self.config().security.command_timeout_seconds;
         let snap = self
             .with_warm_session(|session, version| {
-                snapshot_in_session(session, &path, &text, line, column, version, Duration::from_secs(timeout))
+                snapshot_in_session(
+                    session,
+                    &path,
+                    &text,
+                    line,
+                    column,
+                    version,
+                    Duration::from_secs(timeout),
+                )
             })
             .map_err(app_error)?;
         let (hypotheses, target) = match snap.goals.first() {

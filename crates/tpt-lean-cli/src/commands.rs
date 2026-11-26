@@ -872,28 +872,38 @@ fn mcp_stdio(_ctx: &Ctx, args: &Args) -> Result<i32> {
 /// the default is a Unix socket at `.tpt-lean/server.sock`; `--port N` selects loopback TCP, and
 /// Windows always uses loopback TCP (default port 7373).
 fn server_start(ctx: &Ctx, args: &Args) -> Result<i32> {
-    args.reject_unknown(&["--project", "--port", "--http"], &["--project", "--port", "--http"])?;
+    args.reject_unknown(
+        &["--project", "--port", "--http"],
+        &["--project", "--port", "--http"],
+    )?;
     let root = project_root(args)?;
     let http = match args.value("--http")? {
-        Some(p) => Some(p.parse::<u16>().map_err(|_| Error::invalid("--http must be 0-65535"))?),
+        Some(p) => Some(
+            p.parse::<u16>()
+                .map_err(|_| Error::invalid("--http must be 0-65535"))?,
+        ),
         None => None,
     };
     let transport = match args.value("--port")? {
-        Some(p) => tpt_lean_server::Transport::Tcp(
-            p.parse().map_err(|_| Error::invalid("--port must be 0-65535"))?,
-        ),
+        Some(p) => {
+            tpt_lean_server::Transport::Tcp(p.parse().map_err(|_| Error::invalid("--port must be 0-65535"))?)
+        }
         None => default_transport(),
     };
     let described = match transport {
         tpt_lean_server::Transport::Tcp(port) => format!("127.0.0.1:{port}"),
         #[cfg(unix)]
         tpt_lean_server::Transport::Unix => "a Unix socket in .tpt-lean".to_string(),
+        #[cfg(windows)]
+        tpt_lean_server::Transport::Pipe => "a named pipe".to_string(),
     };
     let http_note = match http {
         Some(port) => format!(" and HTTP on 127.0.0.1:{port} (POST /v1/rpc)"),
         None => String::new(),
     };
-    ctx.note(&format!("serving JSON-RPC on {described}{http_note} (Ctrl+C to stop)"));
+    ctx.note(&format!(
+        "serving JSON-RPC on {described}{http_note} (Ctrl+C to stop)"
+    ));
     tpt_lean_server::run_foreground_with_http(&root, transport, http)?;
     Ok(OK)
 }
@@ -903,7 +913,12 @@ fn default_transport() -> tpt_lean_server::Transport {
     tpt_lean_server::Transport::Unix
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+fn default_transport() -> tpt_lean_server::Transport {
+    tpt_lean_server::Transport::Pipe
+}
+
+#[cfg(not(any(unix, windows)))]
 fn default_transport() -> tpt_lean_server::Transport {
     tpt_lean_server::Transport::Tcp(7373)
 }

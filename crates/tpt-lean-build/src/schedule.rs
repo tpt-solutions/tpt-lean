@@ -63,11 +63,7 @@ pub fn plan(scan: &ProjectScan) -> Result<Plan> {
             .map(|(m, _)| *m)
             .collect();
         if wave.is_empty() {
-            let stuck: Vec<&str> = deps
-                .keys()
-                .copied()
-                .filter(|m| !done.contains(m))
-                .collect();
+            let stuck: Vec<&str> = deps.keys().copied().filter(|m| !done.contains(m)).collect();
             return Err(Error::new(
                 ErrorCode::ConfigInvalid,
                 format!("import cycle among modules: {}", stuck.join(", ")),

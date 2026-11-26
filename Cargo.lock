@@ -738,6 +738,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "tpt-lean-pipe"
+version = "0.1.0"
+
+[[package]]
 name = "tpt-lean-profile"
 version = "0.1.0"
 dependencies = [
@@ -766,6 +770,7 @@ dependencies = [
  "tpt-lean-core",
  "tpt-lean-fmt",
  "tpt-lean-index",
+ "tpt-lean-pipe",
  "tpt-lean-profile",
  "tpt-lean-search",
  "tpt-lean-syntax",

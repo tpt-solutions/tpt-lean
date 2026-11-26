@@ -23,9 +23,9 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use std::sync::Arc;
 use tpt_lean_adapter::{discover_toolchain, execute_streaming, lean_policy, Command, Diagnostic, LineSink};
-use tpt_lean_core::{Error, ErrorCode};
 use tpt_lean_core::policy::CancelToken;
 use tpt_lean_core::Result;
+use tpt_lean_core::{Error, ErrorCode};
 
 pub use cache::{
     prune_older_than, records_dir, status, BuildRecord, CacheStatus, DiskCache, MemoryCache, PruneReport,
@@ -102,7 +102,9 @@ pub fn build_cancellable_with_run_id(
     let root_str = project_root.display().to_string();
     let disk = DiskCache::default_location();
     let shared = cache::shared_layers();
-    let found = cache::lookup_layers(disk.as_ref(), &shared, &digest, &root_str).ok().flatten();
+    let found = cache::lookup_layers(disk.as_ref(), &shared, &digest, &root_str)
+        .ok()
+        .flatten();
     let hit = found.as_ref().map(|(layer, _)| *layer);
 
     sink(&BuildEvent::BuildStarted {
@@ -140,7 +142,8 @@ pub fn build_cancellable_with_run_id(
     let mut built = 0usize;
     let mut failed = 0usize;
     let result = std::thread::scope(|scope| {
-        let worker = scope.spawn(|| execute_streaming(&tc, &lake, Some(project_root), &policy, cancel, Some(line_sink)));
+        let worker = scope
+            .spawn(|| execute_streaming(&tc, &lake, Some(project_root), &policy, cancel, Some(line_sink)));
         for p in rx {
             let t = now_ms();
             match p {
@@ -350,8 +353,8 @@ pub fn probe_cache(
         });
     };
     let shared = cache::shared_layers();
-    let hit = cache::lookup_layers(Some(&disk), &shared, &digest, &project_root.display().to_string())?
-        .is_some();
+    let hit =
+        cache::lookup_layers(Some(&disk), &shared, &digest, &project_root.display().to_string())?.is_some();
     let entries = cache::status(disk.root()).files;
     Ok(CacheProbe {
         digest,

@@ -12,11 +12,11 @@
 //! layer. Shared records match on the digest alone, because the project path differs between
 //! machines. `export` and `import` move records between directories, for CI artifacts.
 
+use crate::events::CacheLayer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use crate::events::CacheLayer;
 use tpt_lean_core::dirs::global_cache_dir;
 use tpt_lean_core::{Error, Result};
 
@@ -62,14 +62,22 @@ pub fn lookup_layers(
 /// Record a successful build in the local layer and in every shared layer. Failures in shared
 /// layers are returned as messages instead of errors, so an unavailable share does not fail a
 /// build.
-pub fn store_layers(local: Option<&DiskCache>, shared: &[DiskCache], record: &BuildRecord) -> Result<Vec<String>> {
+pub fn store_layers(
+    local: Option<&DiskCache>,
+    shared: &[DiskCache],
+    record: &BuildRecord,
+) -> Result<Vec<String>> {
     if let Some(local) = local {
         local.store(record)?;
     }
     let mut warnings = Vec::new();
     for layer in shared {
         if let Err(e) = layer.store(record) {
-            warnings.push(format!("could not record build in shared cache {}: {}", layer.root().display(), e.message()));
+            warnings.push(format!(
+                "could not record build in shared cache {}: {}",
+                layer.root().display(),
+                e.message()
+            ));
         }
     }
     Ok(warnings)
@@ -110,8 +118,12 @@ fn read_records(dir: &Path) -> Result<Vec<BuildRecord>> {
         if path.extension().is_none_or(|e| e != "json") {
             continue;
         }
-        let Ok(text) = std::fs::read_to_string(&path) else { continue };
-        let Ok(record) = serde_json::from_str::<BuildRecord>(&text) else { continue };
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(record) = serde_json::from_str::<BuildRecord>(&text) else {
+            continue;
+        };
         if is_digest(&record.digest) && path == dir.join(format!("{}.json", record.digest)) {
             out.push(record);
         }

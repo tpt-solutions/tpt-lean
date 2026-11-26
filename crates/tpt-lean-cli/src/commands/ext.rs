@@ -76,8 +76,14 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             }
             human.push(format!("wave {}: {}", i + 1, names.join(", ")));
         }
-        ctx.emit("build.plan", &human.join("
-"), &plan)?;
+        ctx.emit(
+            "build.plan",
+            &human.join(
+                "
+",
+            ),
+            &plan,
+        )?;
         return Ok(OK);
     }
     let target = args
@@ -164,7 +170,8 @@ fn cache_dir_or_error() -> Result<PathBuf> {
 /// artifact to restore on another machine.
 pub fn cache_export(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&[], &[])?;
-    let dir = tpt_lean_build::cache::records_dir().ok_or_else(|| Error::new(ErrorCode::Io, "no global cache directory could be determined"))?;
+    let dir = tpt_lean_build::cache::records_dir()
+        .ok_or_else(|| Error::new(ErrorCode::Io, "no global cache directory could be determined"))?;
     let dest = args
         .positionals(&[])
         .into_iter()
@@ -184,7 +191,8 @@ pub fn cache_export(ctx: &Ctx, args: &Args) -> Result<i32> {
 /// files are skipped.
 pub fn cache_import(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&[], &[])?;
-    let dir = tpt_lean_build::cache::records_dir().ok_or_else(|| Error::new(ErrorCode::Io, "no global cache directory could be determined"))?;
+    let dir = tpt_lean_build::cache::records_dir()
+        .ok_or_else(|| Error::new(ErrorCode::Io, "no global cache directory could be determined"))?;
     let src = args
         .positionals(&[])
         .into_iter()
@@ -218,8 +226,7 @@ pub fn cache_status(ctx: &Ctx, _args: &Args) -> Result<i32> {
     let human = if shared.is_empty() {
         human
     } else {
-        format!("{human}
-shared layers: {}", shared.join(", "))
+        format!("{human}\nshared layers: {}", shared.join(", "))
     };
     ctx.emit(
         "cache.status",

@@ -29,12 +29,7 @@ pub fn workspace_symbols(
 
 /// Declarations whose full name or short name is exactly `name`, as LSP `Location`s. Used for
 /// go-to-definition. Empty when no index exists or nothing matches.
-pub fn definitions(
-    project_root: &Path,
-    index_path: &Path,
-    name: &str,
-    limit: usize,
-) -> Result<Vec<Value>> {
+pub fn definitions(project_root: &Path, index_path: &Path, name: &str, limit: usize) -> Result<Vec<Value>> {
     if !index_path.is_file() {
         return Ok(Vec::new());
     }
@@ -118,13 +113,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tpt-lsp-def-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("Lib.lean"), "namespace Geo
+        std::fs::write(
+            dir.join("Lib.lean"),
+            "namespace Geo
 theorem compact_ok : True := trivial
 end Geo
-").unwrap();
+",
+        )
+        .unwrap();
         let db = dir.join("index.sqlite");
         let mut index = Index::open(&db).unwrap();
-        index.refresh(&tpt_lean_index::default_scan_roots(&dir, false)).unwrap();
+        index
+            .refresh(&tpt_lean_index::default_scan_roots(&dir, false))
+            .unwrap();
         drop(index);
         let by_full = definitions(&dir, &db, "Geo.compact_ok", 5).unwrap();
         let by_short = definitions(&dir, &db, "compact_ok", 5).unwrap();

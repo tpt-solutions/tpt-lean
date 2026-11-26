@@ -46,11 +46,11 @@ use tpt_lean_core::project;
 use tpt_lean_core::{Error, ErrorCode, Result};
 
 pub use client::call;
-pub use permission::Permission;
 pub use client::Endpoint;
+pub use permission::Permission;
 pub use state::{
-    run_foreground, run_foreground_on, run_foreground_with_http, status, stop, ServerState, StatusReport, StopOutcome,
-    StopReport, Transport,
+    run_foreground, run_foreground_on, run_foreground_with_http, status, stop, ServerState, StatusReport,
+    StopOutcome, StopReport, Transport,
 };
 
 pub const PARSE_ERROR: i64 = -32700;
@@ -375,7 +375,17 @@ pub fn serve_connection<S: Stream>(server: &Server, stream: S) -> io::Result<()>
         if buf.trim().is_empty() {
             continue;
         }
-        let reply = match serde_json::from_str::<Value>(&buf) {
+        let parsed = serde_json::from_str::<Value>(&buf);
+        if let Ok(msg) = &parsed {
+            if msg.get("method").and_then(Value::as_str) == Some("build.subscribe") {
+                // A subscription keeps the connection until the build has finished, then ends it
+                // with a half-close so the peer reads every notification before the close.
+                let result = serve_build_subscription(server, &mut writer, msg);
+                let _ = writer.shutdown_write();
+                return result;
+            }
+        }
+        let reply = match parsed {
             Ok(msg) => server.handle(&msg),
             Err(e) => Some(error_reply(
                 Value::Null,
@@ -396,16 +406,38 @@ pub fn serve_connection<S: Stream>(server: &Server, stream: S) -> io::Result<()>
 /// A connected byte stream that the server can read and write from two handles.
 pub trait Stream: Read + Write + Send + Sized + 'static {
     fn try_clone_stream(&self) -> io::Result<Self>;
+
+    /// Tell the peer that no more data follows (a TCP or Unix half-close). Called after the last
+    /// reply, so the peer sees the end of the reply rather than a reset. Transports without a
+    /// half-close do nothing.
+    fn shutdown_write(&self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Stream for TcpStream {
     fn try_clone_stream(&self) -> io::Result<Self> {
         self.try_clone()
     }
+
+    fn shutdown_write(&self) -> io::Result<()> {
+        self.shutdown(std::net::Shutdown::Write)
+    }
 }
 
 #[cfg(unix)]
 impl Stream for UnixStream {
+    fn try_clone_stream(&self) -> io::Result<Self> {
+        self.try_clone()
+    }
+
+    fn shutdown_write(&self) -> io::Result<()> {
+        self.shutdown(std::net::Shutdown::Write)
+    }
+}
+
+#[cfg(windows)]
+impl Stream for std::fs::File {
     fn try_clone_stream(&self) -> io::Result<Self> {
         self.try_clone()
     }
@@ -418,6 +450,38 @@ fn loopback(addr: SocketAddr) -> SocketAddr {
     } else {
         addr
     }
+}
+
+/// `build.subscribe` with `params.run_id`: the reply to the request comes first and carries the run
+/// id. Then each event of the build is sent as a `build.event` notification, and the summary as one
+/// `build.finished` notification. The connection is closed after that. Notifications carry no id,
+/// as JSON-RPC requires.
+fn serve_build_subscription<W: Write>(server: &Server, writer: &mut W, msg: &Value) -> io::Result<()> {
+    let id = msg.get("id").cloned().unwrap_or(Value::Null);
+    let run_id = msg["params"]["run_id"].as_str().map(str::to_string);
+    let Some(build) = server.build_stream(run_id.as_deref()) else {
+        let reply = error_reply(id, &RpcError::new(INVALID_PARAMS, "no such build"));
+        writeln!(writer, "{reply}")?;
+        return writer.flush();
+    };
+    writeln!(
+        writer,
+        "{}",
+        json!({ "jsonrpc": "2.0", "id": id, "result": { "run_id": build.id } })
+    )?;
+    writer.flush()?;
+    server.follow_build(&build, |step| {
+        let line = match step {
+            builds::Followed::Event(event) => {
+                json!({ "jsonrpc": "2.0", "method": "build.event", "params": event })
+            }
+            builds::Followed::Done(summary) => {
+                json!({ "jsonrpc": "2.0", "method": "build.finished", "params": summary })
+            }
+        };
+        writeln!(writer, "{line}")?;
+        writer.flush()
+    })
 }
 
 /// Connect once to the listener so a blocked `accept` returns and sees the shutdown flag.
@@ -433,6 +497,10 @@ fn wake_listener(server: &Server) {
         #[cfg(unix)]
         Some(Endpoint::Unix(path)) => {
             let _ = UnixStream::connect(path);
+        }
+        #[cfg(windows)]
+        Some(Endpoint::Pipe(name)) => {
+            let _ = tpt_lean_pipe::connect(&name);
         }
         None => {}
     }
@@ -473,6 +541,28 @@ pub fn serve_listener(server: Arc<Server>, listener: TcpListener) -> io::Result<
             break;
         }
         spawn_connection(&server, stream?);
+    }
+    server.release_warm_session();
+    Ok(())
+}
+
+/// Serve named-pipe connections until a `server.shutdown` request is handled. `name` is the short
+/// pipe name, recorded as the listening endpoint.
+#[cfg(windows)]
+pub fn serve_pipe(
+    server: Arc<Server>,
+    mut listener: tpt_lean_pipe::PipeListener,
+    name: String,
+) -> io::Result<()> {
+    *lock(&server.listen_addr) = Some(Endpoint::Pipe(name));
+    warm::spawn_reaper(Arc::clone(&server));
+    start_pending_http(&server);
+    loop {
+        let conn = listener.accept()?;
+        if server.is_shutdown_requested() {
+            break;
+        }
+        spawn_connection(&server, conn);
     }
     server.release_warm_session();
     Ok(())

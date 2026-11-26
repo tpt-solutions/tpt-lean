@@ -23,5 +23,8 @@ tpt-lean-build.workspace = true
 tpt-lean-tools.workspace = true
 serde_json.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+tpt-lean-pipe.workspace = true
+
 [lints]
 workspace = true

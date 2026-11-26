@@ -9,6 +9,7 @@ members = [
     "crates/tpt-lean-adapter",
     "crates/tpt-lean-mcp",
     "crates/tpt-lean-ffi",
+    "crates/tpt-lean-pipe",
     "crates/tpt-lean-server",
     "crates/tpt-lean-docgen",
     "crates/tpt-lean-profile",
@@ -41,6 +42,7 @@ tpt-lean-profile = { path = "crates/tpt-lean-profile", version = "0.1.0" }
 tpt-lean-build = { path = "crates/tpt-lean-build", version = "0.1.0" }
 tpt-lean-lsp = { path = "crates/tpt-lean-lsp", version = "0.1.0" }
 tpt-lean-tools = { path = "crates/tpt-lean-tools", version = "0.1.0" }
+tpt-lean-pipe = { path = "crates/tpt-lean-pipe", version = "0.1.0" }
 
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

@@ -206,7 +206,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 
 ### tpt-lean-server
 - [x] JSON-RPC 2.0 core (shared crate/module reused by MCP)
-- [x] Transports: Unix domain socket (Linux/macOS, owner-only file) and localhost TCP (Windows; named pipe not implemented)
+- [x] Transports: Unix domain socket (Linux/macOS, owner-only file), named pipe (Windows, default there; `crates/tpt-lean-pipe`), and localhost TCP (every platform, `--port`)
 - [x] Optional localhost HTTP: `POST /v1/rpc` (`server start --http PORT`; loopback Host check; one request per connection)
 - [x] Remote access disabled by default
 - [x] Methods: `project.info`, `project.doctor`
@@ -218,7 +218,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [x] Methods: `imports.suggest`, `imports.unused` (wired in Phase 7)
 - [x] Methods: `context.pack`
 - [x] Methods: `build.run/cancel/status`, `profile.run/get` (wired in Phases 5–6; all five done; builds run one at a time and are kept in memory per server process)
-- [x] Streaming: `GET /v1/events` (SSE) for build events (general JSON-RPC notifications are not implemented)
+- [x] Streaming: `GET /v1/events` (SSE) and `build.subscribe` (JSON-RPC notifications) for build events; notifications for other methods are not implemented
 - [x] API request/response JSON schemas
 - [x] Permission enforcement per request (read/write/build/profile; the network class is not used because tpt-lean makes no network requests of its own; `server/permission.rs`, MCP `permission.rs`)
 - [x] Path safety checks on every path param

@@ -40,7 +40,10 @@ fn search_latency_against_targets() {
     let mut index = Index::open_in_memory().unwrap();
     let t = Instant::now();
     index
-        .refresh(&[ScanRoot { package: "project".into(), path: dir.clone() }])
+        .refresh(&[ScanRoot {
+            package: "project".into(),
+            path: dir.clone(),
+        }])
         .unwrap();
     let scan_ms = t.elapsed().as_secs_f64() * 1000.0;
     let stats = index.status().unwrap();
@@ -54,7 +57,10 @@ fn search_latency_against_targets() {
         "Bench.M42",            // namespace
         "nonexistent_thing",    // miss
     ];
-    let opts = SearchOptions { limit: 10, ..Default::default() };
+    let opts = SearchOptions {
+        limit: 10,
+        ..Default::default()
+    };
     for q in queries {
         let _ = search(&index, q, &opts).unwrap(); // warm up
     }
@@ -70,7 +76,10 @@ fn search_latency_against_targets() {
     times.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let p50 = percentile(&times, 0.50);
     let p95 = percentile(&times, 0.95);
-    println!("search over {} queries: p50 {p50:.3} ms, p95 {p95:.3} ms", times.len());
+    println!(
+        "search over {} queries: p50 {p50:.3} ms, p95 {p95:.3} ms",
+        times.len()
+    );
     let _ = std::fs::remove_dir_all(&dir);
     assert!(p50 < 10.0, "p50 {p50:.3} ms exceeds the 10 ms target");
     assert!(p95 < 50.0, "p95 {p95:.3} ms exceeds the 50 ms target");

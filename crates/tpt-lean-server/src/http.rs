@@ -19,10 +19,8 @@ use std::thread;
 
 use serde_json::{json, Value};
 
-use std::time::Duration;
-
-use crate::builds::BuildState;
-use crate::{lock, Server, MAX_REQUEST_BYTES};
+use crate::builds::Followed;
+use crate::{Server, MAX_REQUEST_BYTES};
 
 /// Path of the JSON-RPC endpoint.
 pub const RPC_PATH: &str = "/v1/rpc";
@@ -85,26 +83,56 @@ pub fn serve_http_connection(server: &Server, mut stream: TcpStream) -> io::Resu
             body
         }
         Some(_) => {
-            return respond(&mut stream, 413, "Payload Too Large", None, &json!({"error": "request too large"}));
+            return respond(
+                &mut stream,
+                413,
+                "Payload Too Large",
+                None,
+                &json!({"error": "request too large"}),
+            );
         }
         None => Vec::new(),
     };
 
     if !host.as_deref().is_some_and(is_loopback_host) {
-        return respond(&mut stream, 403, "Forbidden", None, &json!({"error": "host must be loopback"}));
+        return respond(
+            &mut stream,
+            403,
+            "Forbidden",
+            None,
+            &json!({"error": "host must be loopback"}),
+        );
     }
     let (path, query) = target.split_once('?').unwrap_or((target, ""));
     if method == "GET" && path == EVENTS_PATH {
         return serve_events(server, &mut stream, query);
     }
     if path != RPC_PATH {
-        return respond(&mut stream, 404, "Not Found", None, &json!({"error": "unknown path"}));
+        return respond(
+            &mut stream,
+            404,
+            "Not Found",
+            None,
+            &json!({"error": "unknown path"}),
+        );
     }
     if method != "POST" {
-        return respond(&mut stream, 405, "Method Not Allowed", Some("POST"), &json!({"error": "use POST"}));
+        return respond(
+            &mut stream,
+            405,
+            "Method Not Allowed",
+            Some("POST"),
+            &json!({"error": "use POST"}),
+        );
     }
     if content_length.is_none() {
-        return respond(&mut stream, 411, "Length Required", None, &json!({"error": "Content-Length required"}));
+        return respond(
+            &mut stream,
+            411,
+            "Length Required",
+            None,
+            &json!({"error": "Content-Length required"}),
+        );
     }
 
     let message: Value = match serde_json::from_slice(&body) {
@@ -147,47 +175,21 @@ fn serve_events(server: &Server, stream: &mut TcpStream, query: &str) -> io::Res
         return respond(stream, 404, "Not Found", None, &json!({"error": "no such build"}));
     };
     stream.write_all(
-        b"HTTP/1.1 200 OK
-Content-Type: text/event-stream
-Cache-Control: no-cache
-Connection: close
-
-",
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n",
     )?;
-    let mut sent = 0usize;
-    loop {
-        // Read the state first: once a build is finished, all its events are already recorded.
-        let finished = match &*lock(&build.state) {
-            BuildState::Finished(summary) => Some(summary.clone()),
-            BuildState::Running => None,
-        };
-        let batch: Vec<Value> = {
-            let events = lock(&build.events);
-            events[sent.min(events.len())..].to_vec()
-        };
-        for event in &batch {
-            let name = event["event"].as_str().unwrap_or("message");
-            write!(stream, "event: {name}
-data: {event}
-
-")?;
-            sent += 1;
+    server.follow_build(&build, |step| {
+        match step {
+            Followed::Event(event) => {
+                let name = event["event"].as_str().unwrap_or("message");
+                write!(stream, "event: {name}\ndata: {event}\n\n")?;
+            }
+            Followed::Done(summary) => {
+                write!(stream, "event: done\ndata: {summary}\n\n")?;
+            }
         }
-        if let Some(summary) = finished {
-            write!(stream, "event: done
-data: {summary}
-
-")?;
-            stream.flush()?;
-            return stream.shutdown(std::net::Shutdown::Write);
-        }
-        stream.flush()?;
-        if server.is_shutdown_requested() {
-            break;
-        }
-        thread::sleep(Duration::from_millis(50));
-    }
-    Ok(())
+        stream.flush()
+    })?;
+    stream.shutdown(std::net::Shutdown::Write)
 }
 
 fn respond(

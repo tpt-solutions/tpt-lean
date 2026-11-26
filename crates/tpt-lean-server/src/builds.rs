@@ -3,8 +3,10 @@
 //! `build.status` reports the latest build, or one by id; `build.cancel` stops a running build.
 //! One build runs at a time per server, so a second `build.run` while one runs is refused.
 
+use std::io;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
@@ -39,8 +41,15 @@ pub(crate) struct BuildJob {
 
 /// What the event stream needs from a build.
 pub(crate) struct BuildStream {
+    pub(crate) id: String,
     pub(crate) events: Arc<Mutex<Vec<Value>>>,
     pub(crate) state: Arc<Mutex<BuildState>>,
+}
+
+/// One step of following a build: an event, then the summary once, when the build has finished.
+pub(crate) enum Followed<'a> {
+    Event(&'a Value),
+    Done(&'a Value),
 }
 
 impl BuildJob {
@@ -158,9 +167,43 @@ impl Server {
             None => builds.jobs.last()?,
         };
         Some(BuildStream {
+            id: job.id.clone(),
             events: Arc::clone(&job.events),
             state: Arc::clone(&job.state),
         })
+    }
+
+    /// Call `emit` for each event of `build` in order, then once with the summary when the build has
+    /// finished. While the build runs, the events are checked again every 50 ms. Returns early when
+    /// the server shuts down. An error from `emit` (usually a closed connection) stops the loop.
+    pub(crate) fn follow_build(
+        &self,
+        build: &BuildStream,
+        mut emit: impl FnMut(Followed<'_>) -> io::Result<()>,
+    ) -> io::Result<()> {
+        let mut sent = 0usize;
+        loop {
+            // Read the state first: once a build is finished, all its events are already recorded.
+            let finished = match &*lock(&build.state) {
+                BuildState::Finished(summary) => Some(summary.clone()),
+                BuildState::Running => None,
+            };
+            let batch: Vec<Value> = {
+                let events = lock(&build.events);
+                events[sent.min(events.len())..].to_vec()
+            };
+            for event in &batch {
+                emit(Followed::Event(event))?;
+                sent += 1;
+            }
+            if let Some(summary) = finished {
+                return emit(Followed::Done(&summary));
+            }
+            if self.is_shutdown_requested() {
+                return Ok(());
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     /// The latest build, or the build with `run_id`. `status` is `none` when no build was started.

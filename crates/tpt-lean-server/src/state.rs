@@ -13,9 +13,9 @@ use serde_json::{json, Value};
 use tpt_lean_core::{Error, ErrorCode, Result};
 
 use crate::client::{call_endpoint, is_ok_response, Endpoint};
-use crate::{serve_listener, Server};
 #[cfg(unix)]
 use crate::{bind_unix, serve_unix_listener};
+use crate::{serve_listener, Server};
 
 /// Directory (relative to the project root) that holds the state file.
 pub const DATA_DIR: &str = ".tpt-lean";
@@ -35,6 +35,16 @@ pub enum Transport {
     /// Unix domain socket at `.tpt-lean/server.sock` (Linux and macOS).
     #[cfg(unix)]
     Unix,
+    /// Named pipe `\\.\pipe\tpt-lean-<hash of the project path>` (Windows).
+    #[cfg(windows)]
+    Pipe,
+}
+
+/// Pipe name for a project: `tpt-lean-` and the first 16 hex digits of the SHA-256 of its path.
+#[cfg(windows)]
+pub fn pipe_name(root: &Path) -> String {
+    let digest = tpt_lean_core::hash::sha256_hex(root.display().to_string().as_bytes());
+    format!("tpt-lean-{}", &digest[..16])
 }
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
@@ -47,6 +57,8 @@ pub struct ServerState {
     pub pid: u32,
     pub port: u16,
     pub socket: Option<PathBuf>,
+    /// Short name of the named pipe (Windows), when the server listens on one.
+    pub pipe: Option<String>,
     /// Port of the HTTP transport (`POST /v1/rpc`), when it is enabled.
     pub http_port: Option<u16>,
     pub project: String,
@@ -67,6 +79,9 @@ impl ServerState {
         if let Some(port) = self.http_port {
             v["http_port"] = json!(port);
         }
+        if let Some(pipe) = &self.pipe {
+            v["pipe"] = json!(pipe);
+        }
         v
     }
 
@@ -78,6 +93,12 @@ impl ServerState {
                 return Endpoint::Unix(socket.clone());
             }
         }
+        #[cfg(windows)]
+        {
+            if let Some(pipe) = &self.pipe {
+                return Endpoint::Pipe(pipe.clone());
+            }
+        }
         Endpoint::localhost(self.port)
     }
 
@@ -86,6 +107,7 @@ impl ServerState {
             pid: u32::try_from(v.get("pid")?.as_u64()?).ok()?,
             port: u16::try_from(v.get("port")?.as_u64()?).ok()?,
             socket: v.get("socket").and_then(|s| s.as_str()).map(PathBuf::from),
+            pipe: v.get("pipe").and_then(|s| s.as_str()).map(str::to_string),
             http_port: v
                 .get("http_port")
                 .and_then(|p| p.as_u64())
@@ -182,12 +204,32 @@ pub fn run_foreground_with_http(root: &Path, transport: Transport, http_port: Op
                 pid: std::process::id(),
                 port: listener.local_addr()?.port(),
                 socket: None,
+                pipe: None,
                 http_port,
                 project: project.display().to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
             };
             write_state(&project, &state)?;
             let result = serve_listener(Arc::new(server), listener);
+            let cleanup = remove_state(&project);
+            result?;
+            cleanup
+        }
+        #[cfg(windows)]
+        Transport::Pipe => {
+            let name = pipe_name(&project);
+            let listener = tpt_lean_pipe::PipeListener::bind(&name)?;
+            let state = ServerState {
+                pid: std::process::id(),
+                port: 0,
+                socket: None,
+                pipe: Some(name.clone()),
+                http_port,
+                project: project.display().to_string(),
+                version: env!("CARGO_PKG_VERSION").to_string(),
+            };
+            write_state(&project, &state)?;
+            let result = crate::serve_pipe(Arc::new(server), listener, name);
             let cleanup = remove_state(&project);
             result?;
             cleanup
@@ -210,6 +252,7 @@ pub fn run_foreground_with_http(root: &Path, transport: Transport, http_port: Op
                 pid: std::process::id(),
                 port: 0,
                 socket: Some(path.clone()),
+                pipe: None,
                 http_port,
                 project: project.display().to_string(),
                 version: env!("CARGO_PKG_VERSION").to_string(),
@@ -229,6 +272,8 @@ fn describe(endpoint: &Endpoint) -> String {
         Endpoint::Tcp(addr) => format!("port {}", addr.port()),
         #[cfg(unix)]
         Endpoint::Unix(path) => format!("socket {}", path.display()),
+        #[cfg(windows)]
+        Endpoint::Pipe(name) => format!("pipe {name}"),
     }
 }
 
@@ -257,6 +302,7 @@ impl StatusReport {
             "port": self.state.as_ref().map(|s| s.port),
             "http_port": self.state.as_ref().and_then(|s| s.http_port),
             "socket": self.state.as_ref().and_then(|s| s.socket.as_ref()).map(|p| p.display().to_string()),
+            "pipe": self.state.as_ref().and_then(|s| s.pipe.clone()),
             "project": self.state.as_ref().map(|s| s.project.clone()),
         })
     }

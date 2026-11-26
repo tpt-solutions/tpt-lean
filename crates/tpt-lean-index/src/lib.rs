@@ -493,11 +493,9 @@ impl Index {
             terms.len() + 1
         );
         let mut stmt = self.conn.prepare(&sql).map_err(|e| db_err(e, &self.path))?;
-        let patterns: Vec<String> = terms
-            .iter()
-            .map(|t| format!("%{}%", escape_like(t)))
-            .collect();
-        let mut bind: Vec<&dyn rusqlite::ToSql> = patterns.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
+        let patterns: Vec<String> = terms.iter().map(|t| format!("%{}%", escape_like(t))).collect();
+        let mut bind: Vec<&dyn rusqlite::ToSql> =
+            patterns.iter().map(|p| p as &dyn rusqlite::ToSql).collect();
         let limit = limit as i64;
         bind.push(&limit);
         let rows = stmt
