@@ -24,7 +24,7 @@ object) or `--ndjson` (one record per line). The binaries are `tpt-lean` and `tl
 | `imports [file] [--unused\|--cost\|--minimize FILE\|--suggest QUERY]` | import analysis |
 | `search <query> [--from FILE] [--namespace NS] [--near TERM] [--limit N]` | name, prefix, and docstring search; `--type` and `--goal-at` also |
 | `index scan\|refresh\|status\|clear\|sidecar` | SQLite symbol index (incremental) |
-| `build [target] [--watch\|--plan\|--explain-slow]` | `lake build` through typed options |
+| `build [target] [--watch\|--plan\|--report\|--explain-slow]` | `lake build` through typed options |
 | `check [file]` | `lake build`, or `lean <file>` |
 | `watch [--once] [--interval-ms N]` | re-check changed files; one diagnostics and `sorry` summary per file |
 | `sorry-report [paths] [--deny-sorry]` | `sorry` and `admit` per declaration; `--deny-sorry` exits 1 when any is found |
@@ -36,6 +36,7 @@ object) or `--ndjson` (one record per line). The binaries are `tpt-lean` and `tl
 | `ci [--json\|--sarif]` | run the project checks as one CI job |
 | `bisect --good REV --bad REV` | first failing git commit |
 | `clean` | `lake clean` |
+| `upgrade --to VERSION [--apply]` | plan a `lean-toolchain` change and the Mathlib pin to update; `--apply` runs `lake build` and restores the file if it fails |
 | `cache status\|prune\|export DIR\|import DIR` | the global build cache |
 | `server start\|status\|stop` | the local JSON-RPC API server |
 | `mcp stdio\|http` | the Model Context Protocol server |
@@ -44,7 +45,8 @@ object) or `--ndjson` (one record per line). The binaries are `tpt-lean` and `tl
 | `completions bash\|zsh\|fish\|powershell` | print a shell completion script |
 
 Lean and Lake are needed only by the commands that run them (`build`, `check`, `goals`, `explain`,
-`context-pack`, `profile`, `ci`, `bisect`, `watch`, `index sidecar`, `init --mathlib`). See
+`context-pack`, `profile`, `ci`, `bisect`, `watch`, `index sidecar`, `init --mathlib`, `upgrade
+--apply`, `lsp`). See
 [docs/install.md](docs/install.md).
 
 ## Build
@@ -64,6 +66,7 @@ cargo test --workspace
 - [JSON output](docs/json-schemas.md): the envelope, the error codes, and the fields of each result
 - [Editors](docs/editors.md), [MCP](docs/mcp.md), [API server](docs/server-api.md): integrations
 - [Security](docs/security.md) and [versioning](docs/versioning.md)
+- [Publishing](PUBLISHING.md): crate release order, what blocks each crate, and the release log
 
 ## Layout
 
@@ -81,6 +84,7 @@ crates/tpt-lean-tools      import analysis, bisect, CI and SARIF, doctor checks
 crates/tpt-lean-lsp        Lean language-server proxy
 crates/tpt-lean-mcp        Model Context Protocol server
 crates/tpt-lean-server     local JSON-RPC API server
+crates/tpt-lean-pipe       Windows named-pipe transport for the API server (not published)
 crates/tpt-lean-ffi        stable C ABI (cdylib and staticlib)
 crates/tpt-lean-wasm       browser-safe WebAssembly bindings (not published)
 crates/tpt-lean-cli        the tpt-lean and tlean binaries

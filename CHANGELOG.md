@@ -5,9 +5,11 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
-Initial development version `0.1.0`. Nothing has been published yet.
+Initial development version `0.1.0`. Nothing has been published yet; see [PUBLISHING.md](PUBLISHING.md).
 
 ### Added
+- `PUBLISHING.md`: the crates in publish order, what blocks each one, a release checklist, and a
+  release log.
 - `tpt-lean upgrade --to VERSION [--apply]`: plans a `lean-toolchain` change and reports the Mathlib pin
   and manifest to update by hand. With `--apply` it runs `lake build` and restores the original file if
   the build fails. Tested here: dry run, rollback on a real Lean error, and a successful move to v4.36.0.
@@ -87,7 +89,7 @@ Initial development version `0.1.0`. Nothing has been published yet.
   A project with a Lean error produces two results, and both files validate.
 - `init --mathlib` pins Mathlib to the tag v4.36.0 and sets `lean-toolchain` to match. The tag exists
   on the Mathlib repository. A full Mathlib build was not run.
-- Named pipes on Windows (`crates/tpt-lean-pipe`): the API server listens on `\.\pipe	pt-lean-<hash>`
+- Named pipes on Windows (`crates/tpt-lean-pipe`): the API server listens on `\\.\pipe\tpt-lean-<hash>`
   by default there, with the default security descriptor and a refusal of a second server. Tested on
   Windows: connect, exchange, exclusive bind, clean end of a reply.
 - `build.subscribe` over JSON-RPC: the build's events as `build.event` notifications, then
@@ -96,7 +98,7 @@ Initial development version `0.1.0`. Nothing has been published yet.
   the line endings.
 - npm package for the WebAssembly build (`crates/tpt-lean-wasm/npm`): `npm run build` (with the matching
   wasm-bindgen-cli 0.2.126) and `npm run example` both run here; `npm pack --dry-run` lists 7 files. The
-  package stays private. A browser example is not written.
+  package stays private.
 - CI `benchmarks` job: search, formatter and index benchmarks in release mode, results uploaded as an
   artifact. Advisory, so a missed target is reported without failing the build. Not run on GitHub yet.
 - User documentation: install, quickstart, a complete CLI reference, and the JSON output reference.
