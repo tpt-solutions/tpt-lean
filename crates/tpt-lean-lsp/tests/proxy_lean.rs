@@ -3,9 +3,11 @@
 //! is not installed.
 
 use serde_json::{json, Value};
-use std::io::{BufReader, Cursor};
+use std::io::{BufReader, Cursor, Read, Write};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 use tpt_lean_adapter::{discover_toolchain, LspSession};
 use tpt_lean_lsp::framing::{read_message, write_message};
 use tpt_lean_lsp::Proxy;
@@ -27,6 +29,73 @@ fn read_all(bytes: &[u8]) -> Vec<Value> {
     out
 }
 
+/// Output sink the test can read while the proxy is still serving.
+#[derive(Clone, Default)]
+struct SharedOut(Arc<Mutex<Vec<u8>>>);
+
+impl Write for SharedOut {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl SharedOut {
+    /// Every complete message written so far. A frame still being written is left out.
+    fn messages(&self) -> Vec<Value> {
+        let bytes = self.0.lock().unwrap().clone();
+        let mut reader = BufReader::new(Cursor::new(bytes));
+        let mut out = Vec::new();
+        while let Ok(Some(m)) = read_message(&mut reader) {
+            out.push(m);
+        }
+        out
+    }
+}
+
+/// Editor input that stays open until the test sends more: each channel chunk is read in turn,
+/// and the input ends when the sender is dropped.
+struct ChannelReader {
+    rx: mpsc::Receiver<Vec<u8>>,
+    buf: Vec<u8>,
+    pos: usize,
+}
+
+impl Read for ChannelReader {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        while self.pos >= self.buf.len() {
+            match self.rx.recv() {
+                Ok(chunk) => {
+                    self.buf = chunk;
+                    self.pos = 0;
+                }
+                Err(_) => return Ok(0),
+            }
+        }
+        let n = out.len().min(self.buf.len() - self.pos);
+        out[..n].copy_from_slice(&self.buf[self.pos..self.pos + n]);
+        self.pos += n;
+        Ok(n)
+    }
+}
+
+/// Poll the output until `done` holds, failing the test after two minutes.
+fn wait_until(sink: &SharedOut, what: &str, done: impl Fn(&[Value]) -> bool) -> Vec<Value> {
+    let deadline = Instant::now() + Duration::from_secs(120);
+    loop {
+        let msgs = sink.messages();
+        if done(&msgs) {
+            return msgs;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {what}: {msgs:?}");
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 #[test]
 fn hover_goal_and_diagnostics_through_proxy() {
     let tc = discover_toolchain();
@@ -44,18 +113,35 @@ fn hover_goal_and_diagnostics_through_proxy() {
 
     let session =
         LspSession::for_project(&dir, tc.lake.as_ref(), tc.lean.as_ref(), Duration::from_secs(120)).unwrap();
-    let input = frames(&[
-        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
-        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
-            "textDocument": {"uri": uri, "languageId": "lean4", "version": 1, "text": text}}}),
-        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
-            "textDocument": {"uri": uri}, "position": {"line": 1, "character": 2}}}),
-        json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
-        json!({"jsonrpc": "2.0", "method": "exit"}),
-    ]);
-    let mut proxy = Proxy::new(&dir, session, Vec::new());
-    proxy.serve(BufReader::new(Cursor::new(input))).unwrap();
-    let out = read_all(proxy.output());
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    let sink = SharedOut::default();
+    let mut proxy = Proxy::new(&dir, session, sink.clone());
+    let server = thread::spawn(move || {
+        let input = BufReader::new(ChannelReader { rx, buf: Vec::new(), pos: 0 });
+        proxy.serve(input)
+    });
+    let send = |m: Value| tx.send(frames(&[m])).unwrap();
+    send(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}));
+    send(json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+        "textDocument": {"uri": uri, "languageId": "lean4", "version": 1, "text": text}}}));
+    send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
+        "textDocument": {"uri": uri}, "position": {"line": 1, "character": 2}}}));
+
+    // Wait for the hover response and for Lean's diagnostics before the editor shuts down, so
+    // the test does not depend on when Lean publishes them relative to `exit`.
+    wait_until(&sink, "the hover response and diagnostics", |msgs| {
+        msgs.iter().any(|m| m["id"] == 2)
+            && msgs
+                .iter()
+                .rev()
+                .find(|m| m["method"] == "textDocument/publishDiagnostics" && m["params"]["uri"] == uri)
+                .is_some_and(|m| m["params"]["diagnostics"].as_array().is_some_and(|a| !a.is_empty()))
+    });
+    send(json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}));
+    send(json!({"jsonrpc": "2.0", "method": "exit"}));
+    drop(tx);
+    server.join().unwrap().unwrap();
+    let out = sink.messages();
     let _ = std::fs::remove_dir_all(&dir);
 
     let hover = out.iter().find(|m| m["id"] == 2).expect("hover response");
