@@ -1,0 +1,19 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# Hooks for the pre-commit framework (https://pre-commit.com). Each hook runs the tpt-lean
+# binary on the staged .lean files. Install tpt-lean first; see docs/pre-commit.md.
+
+- id: tpt-lean-fmt
+  name: tpt-lean fmt --check
+  description: Fail when a staged Lean file would be changed by tpt-lean fmt.
+  entry: tpt-lean fmt --check
+  language: system
+  files: \.lean$
+  pass_filenames: true
+
+- id: tpt-lean-sorry
+  name: tpt-lean sorry-report --deny-sorry
+  description: Fail when a staged Lean file contains sorry or admit.
+  entry: tpt-lean sorry-report --deny-sorry
+  language: system
+  files: \.lean$
+  pass_filenames: true
