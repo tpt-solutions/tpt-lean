@@ -53,6 +53,8 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
         ["check"] => check(ctx, args),
         ["cache", "status"] => ext::cache_status(ctx, args),
         ["cache", "prune"] => ext::cache_prune(ctx, args),
+        ["cache", "export"] => ext::cache_export(ctx, args),
+        ["cache", "import"] => ext::cache_import(ctx, args),
         ["clean"] => clean(ctx, args),
         ["goals"] => goals(ctx, args),
         ["explain"] if args.flag("--last-error") => ext::explain_last(ctx, args),
@@ -91,7 +93,7 @@ Implemented:
 
 Planned, not built yet (exit code 10):
   goals, explain, context-pack, imports, profile, docgen, lsp, server,
-  bisect, ci, clean, cache prune
+  bisect, ci, clean, cache prune|export DIR|import DIR
 
 Global flags: --json, --ndjson, --project <dir>, --set section.key=value, -v, -q";
     if ctx.mode == Mode::Human {

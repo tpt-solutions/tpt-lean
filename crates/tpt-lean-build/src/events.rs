@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub enum CacheLayer {
     Memory,
     Disk,
+    /// A shared directory (a team share or a CI cache), see `TPT_LEAN_SHARED_CACHE`.
+    Shared,
 }
 
 /// One event in a build's stream. Serialized with the discriminant in `"event"`, for example

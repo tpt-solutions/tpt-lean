@@ -67,7 +67,16 @@ directory, so a warm key computation does not start Lean or Lake.
 - Memory: process-local map of recent successful digests, used by watch mode.
 - Disk: one JSON record per digest under `<global cache>/build/records/`, holding the project root,
   time, duration and file count. A record is accepted only for the same project root.
-- Not implemented: shared team cache and CI cache.
+- Shared: each directory named in `TPT_LEAN_SHARED_CACHE` (separated like `PATH`) holds records
+  written by other machines, such as a team share. The lookup order is memory, local disk, then the
+  shared directories in order. A shared hit is copied into the local disk layer with this project's
+  root. Shared records match on the digest only, because the project path differs between machines.
+  Writes go to the local layer and to every shared directory; a shared directory that cannot be
+  written gives a warning and does not fail the build.
+- CI: `tpt-lean cache export DIR` copies the local records into DIR, which a CI job can keep as an
+  artifact. `tpt-lean cache import DIR` copies valid records back, on a new machine before the
+  build. Invalid files are skipped.
+- Not implemented: a remote (network) cache service.
 
 On a successful build both the digest before and after Lake ran are recorded, because Lake can
 create a key input (for example `lake-manifest.json` on the first build).

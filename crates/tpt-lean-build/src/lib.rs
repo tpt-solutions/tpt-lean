@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //! Build orchestration for Lake projects: calls `lake build` through the adapter (no shell),
 //! turns its progress output into a structured event stream, computes cache keys, and records
-//! successful builds in a disk cache.
+//! successful builds in a disk cache, and in shared directories named by TPT_LEAN_SHARED_CACHE.
 //!
 //! Lake remains the authority on what to rebuild. The cache reports hits and misses and lets
 //! watch mode skip rebuilds whose inputs are unchanged; it never serves outputs on its own.
@@ -101,22 +101,21 @@ pub fn build_cancellable_with_run_id(
 
     let root_str = project_root.display().to_string();
     let disk = DiskCache::default_location();
-    let hit = match &disk {
-        Some(c) => c.lookup(&digest, &root_str).ok().flatten().is_some(),
-        None => false,
-    };
+    let shared = cache::shared_layers();
+    let found = cache::lookup_layers(disk.as_ref(), &shared, &digest, &root_str).ok().flatten();
+    let hit = found.as_ref().map(|(layer, _)| *layer);
 
     sink(&BuildEvent::BuildStarted {
         run_id: run_id.clone(),
         timestamp_ms: t0,
         target: target.map(str::to_string),
     });
-    if hit {
+    if let Some(layer) = hit {
         sink(&BuildEvent::CacheHit {
             run_id: run_id.clone(),
             timestamp_ms: t0,
             digest: digest.clone(),
-            layer: CacheLayer::Disk,
+            layer,
         });
     } else {
         sink(&BuildEvent::CacheMiss {
@@ -202,30 +201,41 @@ pub fn build_cancellable_with_run_id(
         Err(_) => digest.clone(),
     };
     if success {
-        if let Some(cache) = &disk {
-            let mut digests = vec![digest.clone()];
-            if post_digest != digest {
-                digests.push(post_digest.clone());
-            }
-            for d in digests {
-                let record = BuildRecord {
-                    digest: d,
-                    project_root: root_str.clone(),
-                    finished_at_ms: t1,
-                    duration_ms: t1.saturating_sub(t0),
-                    files_built: built,
-                };
-                if let Err(e) = cache.store(&record) {
-                    sink(&BuildEvent::Diagnostic {
-                        run_id: run_id.clone(),
-                        timestamp_ms: t1,
-                        severity: "warning".into(),
-                        file: String::new(),
-                        line: 0,
-                        column: 0,
-                        message: format!("could not record build in cache: {}", e.message()),
-                    });
+        let mut digests = vec![digest.clone()];
+        if post_digest != digest {
+            digests.push(post_digest.clone());
+        }
+        for d in digests {
+            let record = BuildRecord {
+                digest: d,
+                project_root: root_str.clone(),
+                finished_at_ms: t1,
+                duration_ms: t1.saturating_sub(t0),
+                files_built: built,
+            };
+            match cache::store_layers(disk.as_ref(), &shared, &record) {
+                Ok(warnings) => {
+                    for message in warnings {
+                        sink(&BuildEvent::Diagnostic {
+                            run_id: run_id.clone(),
+                            timestamp_ms: t1,
+                            severity: "warning".into(),
+                            file: String::new(),
+                            line: 0,
+                            column: 0,
+                            message,
+                        });
+                    }
                 }
+                Err(e) => sink(&BuildEvent::Diagnostic {
+                    run_id: run_id.clone(),
+                    timestamp_ms: t1,
+                    severity: "warning".into(),
+                    file: String::new(),
+                    line: 0,
+                    column: 0,
+                    message: format!("could not record build in cache: {}", e.message()),
+                }),
             }
         }
     }
@@ -247,7 +257,7 @@ pub fn build_cancellable_with_run_id(
         exit_code: res.output.exit_code,
         digest,
         post_digest,
-        cache_hit: hit,
+        cache_hit: hit.is_some(),
         files_built: built,
         files_failed: failed,
         duration_ms,
@@ -339,8 +349,8 @@ pub fn probe_cache(
             entries: 0,
         });
     };
-    let hit = disk
-        .lookup(&digest, &project_root.display().to_string())?
+    let shared = cache::shared_layers();
+    let hit = cache::lookup_layers(Some(&disk), &shared, &digest, &project_root.display().to_string())?
         .is_some();
     let entries = cache::status(disk.root()).files;
     Ok(CacheProbe {
@@ -354,14 +364,21 @@ pub fn probe_cache(
 /// Record a successful build under `digest`, the same record [`build`] writes when Lake passes.
 /// Does nothing when no cache directory is available.
 pub fn record_success(project_root: &Path, digest: &str, files_built: usize, duration_ms: u64) -> Result<()> {
-    let Some(disk) = cache::DiskCache::default_location() else {
+    let disk = cache::DiskCache::default_location();
+    let shared = cache::shared_layers();
+    if disk.is_none() && shared.is_empty() {
         return Ok(());
-    };
-    disk.store(&cache::BuildRecord {
-        digest: digest.to_string(),
-        project_root: project_root.display().to_string(),
-        finished_at_ms: now_ms(),
-        duration_ms,
-        files_built,
-    })
+    }
+    cache::store_layers(
+        disk.as_ref(),
+        &shared,
+        &cache::BuildRecord {
+            digest: digest.to_string(),
+            project_root: project_root.display().to_string(),
+            finished_at_ms: now_ms(),
+            duration_ms,
+            files_built,
+        },
+    )
+    .map(|_| ())
 }

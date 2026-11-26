@@ -160,9 +160,53 @@ fn cache_dir_or_error() -> Result<PathBuf> {
 }
 
 /// `tpt-lean cache status`.
+/// `tpt-lean cache export DIR`: copy the global cache's build records into DIR, for example as a CI
+/// artifact to restore on another machine.
+pub fn cache_export(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&[], &[])?;
+    let dir = tpt_lean_build::cache::records_dir().ok_or_else(|| Error::new(ErrorCode::Io, "no global cache directory could be determined"))?;
+    let dest = args
+        .positionals(&[])
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("usage: tpt-lean cache export DIR"))?;
+    let local = tpt_lean_build::DiskCache::new(dir);
+    let copied = tpt_lean_build::cache::export_records(&local, Path::new(&dest))?;
+    ctx.emit(
+        "cache.export",
+        &format!("exported {copied} record(s) to {dest}"),
+        &json!({ "directory": dest, "records": copied }),
+    )?;
+    Ok(OK)
+}
+
+/// `tpt-lean cache import DIR`: copy valid build records from DIR into the global cache. Invalid
+/// files are skipped.
+pub fn cache_import(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&[], &[])?;
+    let dir = tpt_lean_build::cache::records_dir().ok_or_else(|| Error::new(ErrorCode::Io, "no global cache directory could be determined"))?;
+    let src = args
+        .positionals(&[])
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("usage: tpt-lean cache import DIR"))?;
+    let local = tpt_lean_build::DiskCache::new(dir);
+    let copied = tpt_lean_build::cache::import_records(Path::new(&src), &local)?;
+    ctx.emit(
+        "cache.import",
+        &format!("imported {copied} record(s) from {src}"),
+        &json!({ "directory": src, "records": copied }),
+    )?;
+    Ok(OK)
+}
+
 pub fn cache_status(ctx: &Ctx, _args: &Args) -> Result<i32> {
     let dir = cache_dir_or_error()?;
     let status = tpt_lean_build::status(&dir);
+    let shared: Vec<String> = tpt_lean_build::cache::shared_layers()
+        .iter()
+        .map(|d| d.root().display().to_string())
+        .collect();
     let human = if status.exists {
         format!(
             "global cache: {} ({} files, {} bytes)",
@@ -170,6 +214,12 @@ pub fn cache_status(ctx: &Ctx, _args: &Args) -> Result<i32> {
         )
     } else {
         format!("global cache: {} (not created yet)", status.directory)
+    };
+    let human = if shared.is_empty() {
+        human
+    } else {
+        format!("{human}
+shared layers: {}", shared.join(", "))
     };
     ctx.emit(
         "cache.status",
@@ -179,6 +229,7 @@ pub fn cache_status(ctx: &Ctx, _args: &Args) -> Result<i32> {
             "exists": status.exists,
             "files": status.files,
             "bytes": status.bytes,
+            "shared": shared,
         }),
     )?;
     Ok(OK)

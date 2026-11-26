@@ -57,6 +57,7 @@ Environment and project:
 - `clean [--timeout S]`: runs `lake clean`
 - `cache status`
 - `cache prune [--days N] [--dry-run]`: removes old files in the global cache only (build records and tool memos included)
+- `cache export DIR` / `cache import DIR`: copy build records to or from DIR, for CI artifacts. `cache status` lists the shared layers named by `TPT_LEAN_SHARED_CACHE`.
 
 Source:
 - `fmt [--check] [--diff] [--verify] [paths...]` (`--verify` needs Lean and is not implemented yet)

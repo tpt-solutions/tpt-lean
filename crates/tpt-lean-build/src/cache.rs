@@ -6,14 +6,119 @@
 //! still decides what needs rebuilding. The memory layer is used by watch mode to skip a rebuild
 //! when a polled change leads back to a key that already built successfully in this process.
 //!
-//! Shared team caches and CI caches are not implemented.
+//! Shared layers: directories listed in `TPT_LEAN_SHARED_CACHE` (separated like `PATH`) hold records
+//! written by other machines, such as a team share or a CI cache restored before a build. A lookup
+//! checks the local layer, then each shared layer in order; a shared hit is copied into the local
+//! layer. Shared records match on the digest alone, because the project path differs between
+//! machines. `export` and `import` move records between directories, for CI artifacts.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use crate::events::CacheLayer;
 use tpt_lean_core::dirs::global_cache_dir;
 use tpt_lean_core::{Error, Result};
+
+/// Environment variable naming shared record directories, separated like `PATH`.
+pub const SHARED_ENV: &str = "TPT_LEAN_SHARED_CACHE";
+
+/// The shared layers named by [`SHARED_ENV`], in order. Empty when the variable is unset.
+pub fn shared_layers() -> Vec<DiskCache> {
+    std::env::var_os(SHARED_ENV)
+        .map(|v| std::env::split_paths(&v).map(DiskCache::new).collect())
+        .unwrap_or_default()
+}
+
+/// Find a successful record for `digest`: the local layer first (matching the project root too),
+/// then each shared layer (matching the digest only). A shared hit is copied into the local layer.
+/// Returns the layer that answered.
+pub fn lookup_layers(
+    local: Option<&DiskCache>,
+    shared: &[DiskCache],
+    digest: &str,
+    project_root: &str,
+) -> Result<Option<(CacheLayer, BuildRecord)>> {
+    if let Some(local) = local {
+        if let Some(record) = local.lookup(digest, project_root)? {
+            return Ok(Some((CacheLayer::Disk, record)));
+        }
+    }
+    for layer in shared {
+        if let Some(record) = layer.lookup_digest(digest)? {
+            if let Some(local) = local {
+                // The local copy describes this project, so it carries this project's root. Best
+                // effort: a failed copy only means the next lookup goes to the shared layer.
+                let mut copy = record.clone();
+                copy.project_root = project_root.to_string();
+                let _ = local.store(&copy);
+            }
+            return Ok(Some((CacheLayer::Shared, record)));
+        }
+    }
+    Ok(None)
+}
+
+/// Record a successful build in the local layer and in every shared layer. Failures in shared
+/// layers are returned as messages instead of errors, so an unavailable share does not fail a
+/// build.
+pub fn store_layers(local: Option<&DiskCache>, shared: &[DiskCache], record: &BuildRecord) -> Result<Vec<String>> {
+    if let Some(local) = local {
+        local.store(record)?;
+    }
+    let mut warnings = Vec::new();
+    for layer in shared {
+        if let Err(e) = layer.store(record) {
+            warnings.push(format!("could not record build in shared cache {}: {}", layer.root().display(), e.message()));
+        }
+    }
+    Ok(warnings)
+}
+
+/// Copy every valid record from `local` into `dest`. Returns how many were copied.
+pub fn export_records(local: &DiskCache, dest: &Path) -> Result<usize> {
+    std::fs::create_dir_all(dest).map_err(|e| Error::from(e).with_path(dest))?;
+    let mut copied = 0;
+    for record in read_records(local.root())? {
+        DiskCache::new(dest).store(&record)?;
+        copied += 1;
+    }
+    Ok(copied)
+}
+
+/// Copy every valid record from `src` into `local`. Invalid files are skipped. Returns how many
+/// were copied.
+pub fn import_records(src: &Path, local: &DiskCache) -> Result<usize> {
+    let mut copied = 0;
+    for record in read_records(src)? {
+        local.store(&record)?;
+        copied += 1;
+    }
+    Ok(copied)
+}
+
+/// Every valid record in `dir`. A missing directory has no records.
+fn read_records(dir: &Path) -> Result<Vec<BuildRecord>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(Error::from(e).with_path(dir)),
+    };
+    let mut out = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(&path) else { continue };
+        let Ok(record) = serde_json::from_str::<BuildRecord>(&text) else { continue };
+        if is_digest(&record.digest) && path == dir.join(format!("{}.json", record.digest)) {
+            out.push(record);
+        }
+    }
+    out.sort_by(|a, b| a.digest.cmp(&b.digest));
+    Ok(out)
+}
 
 /// Metadata of one successful build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +177,14 @@ impl DiskCache {
     /// Find a successful record for `digest` built in `project_root`. Unreadable or mismatched
     /// records count as absent.
     pub fn lookup(&self, digest: &str, project_root: &str) -> Result<Option<BuildRecord>> {
+        Ok(self
+            .lookup_digest(digest)?
+            .filter(|r| r.project_root == project_root))
+    }
+
+    /// Find a successful record for `digest`, whichever project wrote it. Unreadable records count
+    /// as absent.
+    pub fn lookup_digest(&self, digest: &str) -> Result<Option<BuildRecord>> {
         if !is_digest(digest) {
             return Ok(None);
         }
@@ -83,7 +196,7 @@ impl DiskCache {
         };
         Ok(serde_json::from_str::<BuildRecord>(&text)
             .ok()
-            .filter(|r| r.digest == digest && r.project_root == project_root))
+            .filter(|r| r.digest == digest))
     }
 
     /// Delete cache files older than `age` in this cache directory.
@@ -324,5 +437,93 @@ mod tests {
         assert_eq!(m.len(), 1);
         m.clear();
         assert!(m.get(&digest('d')).is_none());
+    }
+}
+
+#[cfg(test)]
+mod layer_tests {
+    use super::*;
+
+    const DIGEST: &str = "ab00000000000000000000000000000000000000000000000000000000000000";
+
+    fn dir(tag: &str) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("tpt-cache-layers-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        d
+    }
+
+    fn record(root: &str) -> BuildRecord {
+        BuildRecord {
+            digest: DIGEST.into(),
+            project_root: root.into(),
+            finished_at_ms: 1,
+            duration_ms: 2,
+            files_built: 3,
+        }
+    }
+
+    #[test]
+    fn shared_hit_matches_on_digest_and_is_copied_local() {
+        let base = dir("shared-hit");
+        let local = DiskCache::new(base.join("local"));
+        let shared = vec![DiskCache::new(base.join("share"))];
+        // A teammate built this project at another path and wrote to the share.
+        shared[0].store(&record("/other/machine/project")).unwrap();
+
+        let (layer, found) = lookup_layers(Some(&local), &shared, DIGEST, "/this/machine/project")
+            .unwrap()
+            .expect("shared hit");
+        assert_eq!(layer, CacheLayer::Shared);
+        assert_eq!(found.project_root, "/other/machine/project");
+        // The next lookup finds it locally.
+        let (layer, _) = lookup_layers(Some(&local), &shared, DIGEST, "/this/machine/project")
+            .unwrap()
+            .unwrap();
+        assert_eq!(layer, CacheLayer::Disk);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn local_hit_needs_the_same_project_root() {
+        let base = dir("local-root");
+        let local = DiskCache::new(base.join("local"));
+        local.store(&record("/a")).unwrap();
+        assert!(lookup_layers(Some(&local), &[], DIGEST, "/a").unwrap().is_some());
+        assert!(lookup_layers(Some(&local), &[], DIGEST, "/b").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn store_writes_every_layer_and_reports_a_failing_share() {
+        let base = dir("store");
+        let local = DiskCache::new(base.join("local"));
+        let good = DiskCache::new(base.join("share"));
+        // A file where a directory should be: the share cannot be written.
+        std::fs::create_dir_all(&base).unwrap();
+        std::fs::write(base.join("not-a-dir"), "x").unwrap();
+        let bad = DiskCache::new(base.join("not-a-dir").join("sub"));
+        let warnings = store_layers(Some(&local), &[good.clone(), bad], &record("/a")).unwrap();
+        assert!(good.lookup_digest(DIGEST).unwrap().is_some());
+        assert!(local.lookup_digest(DIGEST).unwrap().is_some());
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].contains("shared cache"), "{warnings:?}");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn export_and_import_round_trip_and_skip_invalid_files() {
+        let base = dir("export");
+        let src = DiskCache::new(base.join("src"));
+        src.store(&record("/a")).unwrap();
+        std::fs::write(base.join("src").join("garbage.json"), "{not json").unwrap();
+        std::fs::write(base.join("src").join("notes.txt"), "hello").unwrap();
+
+        let artifact = base.join("artifact");
+        assert_eq!(export_records(&src, &artifact).unwrap(), 1);
+        let ci = DiskCache::new(base.join("ci"));
+        assert_eq!(import_records(&artifact, &ci).unwrap(), 1);
+        assert!(ci.lookup_digest(DIGEST).unwrap().is_some());
+        assert_eq!(import_records(&base.join("missing"), &ci).unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

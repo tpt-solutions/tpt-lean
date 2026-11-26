@@ -38,6 +38,9 @@ Initial development version `0.1.0`. Nothing has been published yet.
   `POST /v1/rpc` with a Host check that refuses non-loopback names.
 - `tpt-lean build` reports Lake's progress as it runs: file and diagnostic events are emitted live
   (`tpt-lean-adapter::run_streaming` passes output lines to the build as they are read).
+- Shared cache layer: `TPT_LEAN_SHARED_CACHE` names directories of build records (a team share).
+  Lookups go memory, local disk, then shared; shared hits match on the digest and are copied locally.
+  `tpt-lean cache export DIR` and `cache import DIR` move records for CI artifacts.
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the
