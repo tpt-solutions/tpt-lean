@@ -5,7 +5,7 @@ All notable changes to `tpt-lean-docgen` are documented here. The format follows
 
 ## [Unreleased]
 
-Initial development version `0.1.0`. Nothing has been published yet.
+Initial development version `0.1.0`. Not yet published; see [PUBLISHING.md](../../PUBLISHING.md).
 
 ### Added
 - Static HTML site generation from syntax facts; no Lean process and no network access.

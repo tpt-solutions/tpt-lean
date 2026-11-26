@@ -5,7 +5,7 @@ All notable changes to `tpt-lean-syntax` are documented here. The format follows
 
 ## [Unreleased]
 
-Initial development version `0.1.0`. Nothing has been published yet.
+Initial development version `0.1.0`. Not yet published; see [PUBLISHING.md](../../PUBLISHING.md).
 
 ### Added
 - Lexer with keywords, namespaced and guillemet identifiers, numbers, strings, Unicode

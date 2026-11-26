@@ -64,7 +64,9 @@ tpt-lean-fmt = "0.1"
 ## Limits
 
 - `fmt --verify` (checking the formatted file with Lean) is not implemented.
-- The benchmark target (a 5,000-line file in under 100 ms) has not been measured.
+- Measured: a release build formats a 6,255-line file in a median of 76 ms
+  (`cargo test -p tpt-lean-fmt --release --test bench -- --ignored`). The target of 100 ms for a
+  5,000-line file has not been measured directly.
 - Only the rules listed above are applied; there is no general layout engine.
 
 ## Dependencies

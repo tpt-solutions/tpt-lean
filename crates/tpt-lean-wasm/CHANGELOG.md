@@ -5,8 +5,8 @@ All notable changes to `tpt-lean-wasm` are documented here. The format follows
 
 ## [Unreleased]
 
-Initial development version `0.1.0`. Nothing has been published yet. This crate is not published
-to crates.io (`publish = false`); it is distributed through npm.
+Initial development version `0.1.0`. Not yet published; see [PUBLISHING.md](../../PUBLISHING.md).
+This crate is never published to crates.io (`publish = false`); it is distributed through npm.
 
 ### Added
 - WebAssembly exports: `version`, `tokenize`, `formatText`, `cstTree`.

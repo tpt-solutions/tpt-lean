@@ -12,7 +12,8 @@ parses, elaborates, or checks Lean code.
 
 Early development (version `0.1.0`, not yet published). The configuration model, error
 codes, discovery, and path handling are implemented and tested. The process policy types are
-implemented; memory limits are part of the policy but are not enforced by the runner yet.
+implemented. The memory limit in the policy is enforced by the sampling watchdog in
+`tpt-lean-adapter`'s runner, not by the operating system.
 
 ## What it provides
 

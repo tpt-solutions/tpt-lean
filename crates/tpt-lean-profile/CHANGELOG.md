@@ -5,7 +5,7 @@ All notable changes to `tpt-lean-profile` are documented here. The format follow
 
 ## [Unreleased]
 
-Initial development version `0.1.0`. Nothing has been published yet.
+Initial development version `0.1.0`. Not yet published; see [PUBLISHING.md](../../PUBLISHING.md).
 
 ### Added
 - Per-file profiling by running Lean with trace output.

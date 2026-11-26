@@ -5,7 +5,7 @@ All notable changes to `tpt-lean-fmt` are documented here. The format follows
 
 ## [Unreleased]
 
-Initial development version `0.1.0`. Nothing has been published yet.
+Initial development version `0.1.0`. Not yet published; see [PUBLISHING.md](../../PUBLISHING.md).
 
 ### Added
 - Whitespace normalization: trailing whitespace, whitespace-only lines, final newline.
@@ -15,7 +15,9 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - Refusal to write when the syntax tree is invalid or uncertain.
 - Unified diff output and per-hunk line ranges.
 - Golden and idempotency tests.
+- Benchmark (`tests/bench.rs`, run with `--release -- --ignored`): median 76 ms on a 6,255-line
+  file.
 
 ### Known limitations
-- `fmt --verify` is not implemented (needs the Lean adapter).
+- `fmt --verify` is not implemented (it needs `tpt-lean-adapter`).
 - Tab indentation is refused, not converted.

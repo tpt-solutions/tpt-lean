@@ -5,7 +5,7 @@ All notable changes to `tpt-lean-core` are documented here. The format follows
 
 ## [Unreleased]
 
-Initial development version `0.1.0`. Nothing has been published yet.
+Initial development version `0.1.0`. Not yet published; see [PUBLISHING.md](../../PUBLISHING.md).
 
 ### Added
 - Configuration model (`project`, `build`, `index`, `server`, `security`) with loading and
@@ -24,4 +24,5 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - Logging initialization controlled by `TPT_LEAN_LOG`.
 
 ### Known limitations
-- Memory limits are part of the process policy but are not enforced by any runner yet.
+- The memory limit is enforced by the sampling watchdog in `tpt-lean-adapter` (checked every
+  100 ms, so a process can briefly overshoot). It is not enforced by the operating system.

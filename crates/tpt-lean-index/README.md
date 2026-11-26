@@ -13,8 +13,8 @@ confirmed by Lean.
 ## Status
 
 Early development (`0.1.0`, not yet published). Scanning, incremental refresh, the FTS5
-search table, status reporting, and the health check used by `tpt-lean doctor` work. Several
-planned pieces are still missing (see Limits).
+search table, status reporting, the health check used by `tpt-lean doctor`, and the Lean sidecar
+storage are implemented and tested. The limits are listed below.
 
 ## What it stores
 
@@ -37,7 +37,8 @@ The database runs in **WAL mode**, so readers keep working while a writer refres
 
 - **Scanning** (`collect_lean_files`, `default_scan_roots`, `ScanRoot`): finds `.lean` files
   under the project and under `.lake/packages`. Directories named `.lake`, `build`, and
-  `target` are skipped.
+  `target` are skipped, and `.gitignore` files in the project and its subdirectories are
+  honoured (`ignore` module).
 - **Index handle** (`Index`): open, refresh, status, clear. `refresh` is incremental: files
   whose content hash has not changed are not reparsed. `RefreshStats` reports what changed.
 - **Status** (`Status`): counts and schema information, used by `tpt-lean index status` and
@@ -71,7 +72,7 @@ their build outputs; modules that fail are reported and the rest are still store
 
 ## Limits
 
-- No `.gitignore` parsing during scans; only the directory names above are excluded.
+- Scans skip the directory names above and honour `.gitignore`; other ignore files are not read.
 - Invalidation is by content hash plus import closure. A change in an imported project module
   invalidates the sidecar data of everything that imports it, transitively. Imports outside the
   project (for example `Init` or Mathlib) are not hashed; a change in those is caught only by the
