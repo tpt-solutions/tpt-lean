@@ -1,16 +1,17 @@
 # tpt-lean-tools
 
 Library utilities built on the [tpt-lean](https://github.com/tpt-solutions/tpt-lean) components:
-import analysis, git commit bisect, a CI runner with SARIF output, and extra checks for
-`tpt-lean doctor`.
+import analysis, sorry reporting, the toolchain upgrade plan, git commit bisect, a CI runner with
+SARIF output, and the extra checks and fixes behind `tpt-lean doctor`.
 
-Everything here is a library entry point. The CLI crate decides how to wire these up. Nothing in
-this crate writes project files.
+Most functions here are read-only. The exceptions are the explicit write paths: `upgrade` changes
+`lean-toolchain` only when applied, and `fix` rebuilds the symbol index.
 
 ## Status
 
-Early development (`0.1.0`, not yet published). Import analysis, bisect, the CI runner, and the
-doctor checks are implemented and tested. Each part has documented limits.
+Early development (`0.1.0`, not yet published). Import analysis, sorry reporting, the upgrade
+plan, bisect, the CI runner, the doctor checks and fixes are implemented and tested. Each part has
+documented limits.
 
 ## Modules
 
@@ -29,6 +30,18 @@ doctor checks are implemented and tested. Each part has documented limits.
   measured.
 - Modules whose source cannot be found (Lean core, or Mathlib without `.lake/packages`) produce
   an `import_unresolved` info finding and are not analysed. The `.lake` directory is skipped.
+
+### Sorry report (`sorry`)
+
+- Finds every `sorry` and `admit` per declaration. It works on lexer tokens, so comments and
+  strings are ignored. It is textual: it does not show goals.
+- Backs `tpt-lean sorry-report [paths] [--deny-sorry]`.
+
+### Upgrade (`upgrade`)
+
+- Plans a change of the `lean-toolchain` file to a new version. It reports the Mathlib pin and the
+  manifest that must be updated by hand.
+- With `apply`, it runs `lake build` and restores the original file if the build fails.
 
 ### Bisect (`bisect`)
 
@@ -52,15 +65,18 @@ listed in `bisect::NOT_IMPLEMENTED` and in every report's `not_done` field.
 - `to_sarif` converts findings to SARIF 2.1.0. Each `Finding` has a stable machine-readable code,
   a severity (`warning`, `info`, or `error`), a project-relative path with forward slashes, and a
   1-based line (0 when not tied to a line).
-- `validate_sarif_shape` checks structure only. The official SARIF JSON schema is not vendored
-  (licence and size), so output is not validated against it.
+- `validate_sarif_shape` checks structure only. The check against the official OASIS schema is
+  `scripts/validate-sarif.py`, which runs outside the crate.
 
-### Doctor extensions (`doctor`)
+### Doctor extensions (`doctor`) and fixes (`fix`)
 
 - `doctor_extensions` runs the extra checks: server socket health, language server health,
   build status, and global cache age (warning after `CACHE_WARN_DAYS`).
 - The language server check starts `lake serve` or `lean --server` and shuts it down again.
-- Checks are read-only with respect to project files.
+- The checks are read-only with respect to project files.
+- `fix` (`doctor --fix`) prints a plan, then rebuilds the symbol index when it is missing or
+  damaged. A damaged `index.sqlite` is deleted first, because the index is derived data. Other
+  problems are reported only.
 - Symbolic links are not followed while scanning.
 
 ## Usage
@@ -71,9 +87,11 @@ These are exposed through the CLI:
 tpt-lean imports --unused <file>
 tpt-lean imports --suggest "<query>"
 tpt-lean imports --minimize <file>
+tpt-lean sorry-report [paths] [--deny-sorry]
+tpt-lean upgrade --to VERSION [--apply]
 tpt-lean bisect --good REV --bad REV [--timeout S]
 tpt-lean ci [--json] [--sarif] [--timeout S]
-tpt-lean doctor
+tpt-lean doctor [--fix]
 ```
 
 ```toml
@@ -85,17 +103,22 @@ tpt-lean-tools = "0.1"
 
 - Import analysis is textual, not semantic.
 - Bisect is approximate across merges and assumes monotone failure.
-- SARIF is checked structurally only.
-- Memory limits for child processes are not enforced (see `tpt-lean-adapter`).
+- SARIF output is checked structurally in the crate. The official schema check is in
+  `scripts/validate-sarif.py`.
+- CI cache statistics are placeholders.
+- Memory limits for child processes are enforced by the sampling watchdog in `tpt-lean-adapter`
+  (see that crate's limits).
 
 ## Dependencies
 
 | Crate | Purpose |
 | --- | --- |
 | `tpt-lean-core` | configuration, errors, paths |
-| `tpt-lean-syntax` | parsing for import analysis |
-| `tpt-lean-index` | module lookup for suggestions |
+| `tpt-lean-syntax` | parsing for import analysis and sorry reporting |
+| `tpt-lean-index` | module lookup for suggestions and the index fix |
 | `tpt-lean-adapter` | running `git` and `lake` through typed invocations |
+| `tpt-lean-build` | build status for the CI runner and doctor |
+| `tpt-lean-fmt` | formatting support |
 | `serde`, `serde_json` | reports and SARIF output |
 
 ## Testing

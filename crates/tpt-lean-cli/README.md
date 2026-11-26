@@ -7,7 +7,9 @@ Rust toolbox for Lean 4. This crate ships two binaries with the same behavior:
 - `tlean` (short alias)
 
 It wires the library crates in the workspace to commands. It contains almost no logic of its
-own; the behavior described here comes from the components it calls.
+own; the behavior described here comes from the components it calls. The root
+[README](../../README.md) has the same command table, and [docs/cli.md](../../docs/cli.md) lists
+every flag and exit code.
 
 ## Installing
 
@@ -17,36 +19,45 @@ From a checkout of the repository:
 cargo install --path crates/tpt-lean-cli
 ```
 
-Requires Rust 1.82 or newer. Lean and Lake are needed for the commands that run them
-(`check`, `goals`, `explain`, `context-pack`, `build`, `profile`, `ci`, `bisect`, `lsp`).
+Requires Rust 1.82 or newer. Lean and Lake are needed for the commands that run them: `build`,
+`check`, `goals`, `explain`, `context-pack`, `profile`, `ci`, `bisect`, `watch`, `lsp`,
+`index sidecar`, `init --mathlib`, and `upgrade --apply`.
 
 ## Commands
 
 | Command | What it does |
 | --- | --- |
-| `init <dir> [--mathlib]` | create a starter Lean project |
-| `doctor` | check Lean, Lake, project, configuration, index, cache, and server socket |
+| `init <dir> [--mathlib] [--template NAME]` | create a starter Lean project (`--template mathlib` is an alias for `--mathlib`) |
+| `doctor [--fix]` | check Lean, Lake, project, configuration, index, cache, and server socket; `--fix` rebuilds a missing or damaged index |
 | `config show` | print the effective configuration |
-| `fmt [--check \| --diff] [paths]` | conservative, idempotent formatter |
-| `index scan \| refresh \| status \| clear` | SQLite symbol index |
-| `search <query> [--namespace NS] [--near TERM] [--limit N]` | name, prefix, and docstring search |
+| `fmt [--check \| --diff \| --verify] [paths]` | conservative, idempotent formatter (`--verify` is not implemented) |
+| `imports [file] [--unused \| --cost \| --minimize FILE \| --suggest QUERY]` | import analysis |
+| `search <query> [--from FILE] [--namespace NS] [--near TERM] [--limit N]` | name, prefix and docstring search; `--type PATTERN` and `--goal-at FILE:LINE:COL` search by declaration type or goal |
+| `index scan \| refresh \| status \| clear \| sidecar` | SQLite symbol index (incremental); `sidecar` stores Lean declarations |
+| `build [target] [--watch \| --plan \| --report \| --explain-slow]` | `lake build` through typed options, with an event stream and a cache |
 | `check [file]` | `lake build`, or `lean <file>` |
-| `goals FILE:LINE:COL` | proof goal at a position |
-| `explain FILE:LINE:COL` or `explain --last-error` | explain a diagnostic |
-| `context-pack FILE:LINE:COL [--max-tokens N]` | context bundle for a position |
-| `build [target] [--watch] [...]` | `lake build` with an event stream and cache |
-| `cache status \| prune` | global cache location, size, and pruning |
-| `profile FILE [--slowest N]` or `profile --compare A B` | timing reports |
-| `imports --unused \| --suggest \| --minimize` | import analysis |
-| `docgen [--out DIR]` | static HTML documentation |
-| `ci [--sarif]` | build and report failures, optionally as SARIF |
-| `bisect --good REV --bad REV` | find the first failing commit |
-| `lsp` | Lean language-server proxy over stdin and stdout |
-| `mcp stdio \| http` | MCP server |
-| `server start \| status \| stop` | local JSON-RPC API server |
-| `clean` | run `lake clean` for the project |
+| `watch [--once] [--interval-ms N]` | re-check changed files; one diagnostics and `sorry` summary per file |
+| `sorry-report [paths] [--deny-sorry]` | `sorry` and `admit` per declaration; `--deny-sorry` exits 1 when any is found |
+| `goals FILE:LINE:COL [--sidecar]` | goals at a position, from Lean's own info trees |
+| `explain FILE:LINE:COL \| --last-error` | explain an error at a position |
+| `context-pack FILE:LINE:COL [--max-tokens N]` | bounded context for a proof, for an assistant or a person |
+| `profile FILE [--slowest N] [--imports] [--graph \| --compare A B]` | where Lean spends its time (`--flamegraph` is not implemented) |
+| `docgen [--out DIR]` | static HTML documentation from the sources |
+| `ci [--json \| --sarif]` | run the project checks as one CI job |
+| `bisect --good REV --bad REV` | first failing git commit |
+| `upgrade --to VERSION [--apply]` | plan a `lean-toolchain` change; `--apply` builds and restores the file on failure |
+| `clean` | `lake clean` |
+| `cache status \| prune \| export DIR \| import DIR` | the global build cache, and moving its records for CI artifacts |
+| `server start [--port N] [--http PORT] \| status \| stop` | the local JSON-RPC API server |
+| `mcp stdio \| http` | the Model Context Protocol server |
+| `lsp` | the language-server proxy for editors |
+| `setup [--editor NAME]... [--mcp NAME]... [--dry-run]` | write editor and MCP config for the project, showing a diff first |
+| `completions bash \| zsh \| fish \| powershell` | print a shell completion script for `tpt-lean` and `tlean` |
 
 Not yet implemented (these exit with code 10): `profile --flamegraph` and `fmt --verify`.
+
+Other documentation: [pre-commit hooks](../../docs/pre-commit.md) (`tpt-lean-fmt` and
+`tpt-lean-sorry`), and the [GitHub Action](../../docs/github-action.md) (`ci --sarif`).
 
 ## Global flags
 
@@ -70,10 +81,21 @@ Settings are resolved in this order, with later sources overriding earlier ones:
 
 `tpt-lean config show` prints the result.
 
+## Shell completions
+
+```
+tpt-lean completions powershell > tpt-lean.ps1
+tpt-lean completions bash > /etc/bash_completion.d/tpt-lean
+```
+
+The completion scripts are generated from the same command table the help text uses, and a test
+checks the two against each other.
+
 ## Exit codes
 
-Exit codes come from `tpt-lean-core`'s `ErrorCode::exit_code`. Commands that are planned but not
-built fail with `not_implemented` and exit code 10.
+Exit codes come from `tpt-lean-core`'s `ErrorCode::exit_code`. An unknown command is an invalid
+argument (exit 2). Commands that are planned but not built fail with `not_implemented` and exit
+code 10.
 
 ## Output contract
 
