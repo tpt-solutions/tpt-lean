@@ -65,37 +65,49 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
             None => imports(ctx, args),
         },
         ["help"] => help(ctx),
-        [cmd, ..] => not_implemented(cmd),
+        [cmd, ..] => Err(Error::invalid(format!(
+            "unknown command `{cmd}`; run `tpt-lean help`"
+        ))),
         [] => help(ctx),
     }
-}
-
-fn not_implemented(cmd: &str) -> Result<i32> {
-    Err(Error::not_implemented(format!("`tpt-lean {cmd}`")))
 }
 
 fn help(ctx: &Ctx) -> Result<i32> {
     let text = "\
 tpt-lean: tooling around Lean 4 (Lean remains the proof checker)
 
-Implemented:
-  init <dir> [--mathlib]        create a starter Lean project
-  doctor                        check the local Lean environment
-  config show                   print the effective configuration
-  fmt [--check|--diff] [paths]  conservative formatter
-  search <query> [--from FILE] [--namespace NS] [--near TERM]... [--limit N]
-  search --type PATTERN [--namespace NS] [--limit N]
-  index scan|refresh|status|clear
-  build [target]                run `lake build` (typed options only)
-  check [file]                  run `lake build` (no file) or `lean <file>`
-  cache status                  show the global cache location and size
-  mcp stdio                     MCP server over stdin/stdout (read-only tools)
+Project and environment:
+  init <dir> [--mathlib] [--template NAME]    create a starter project
+  doctor                                      check the local Lean environment
+  config show                                 print the effective configuration
+  clean                                       run `lake clean`
+  cache status | prune | export DIR | import DIR
 
-Planned, not built yet (exit code 10):
-  goals, explain, context-pack, imports, profile, docgen, lsp, server,
-  bisect, ci, clean, cache prune|export DIR|import DIR
+Source:
+  fmt [--check|--diff|--verify] [paths]       conservative formatter
+  imports [file] [--unused|--cost|--minimize FILE|--suggest QUERY]
+  search <query> [--from FILE] [--namespace NS] [--near TERM] [--limit N]
+  search --type PATTERN | --goal-at FILE:LINE:COL
+  index scan | refresh | status | clear | sidecar
 
-Global flags: --json, --ndjson, --project <dir>, --set section.key=value, -v, -q";
+Lean (needs `lean` and `lake`):
+  build [target] [--watch|--plan|--explain-slow]
+  check [file]
+  goals FILE:LINE:COL
+  explain FILE:LINE:COL | --last-error
+  context-pack FILE:LINE:COL [--max-tokens N]
+  profile FILE [--imports] [--graph OUT.dot] [--flamegraph OUT.folded] [--compare A B]
+  docgen [--out DIR] [--open]
+  ci [--json|--sarif]
+  bisect --good REV --bad REV
+
+Servers and integrations:
+  server start [--port N] [--http PORT] | status | stop
+  mcp stdio | http [--port N]
+  lsp
+
+Global flags: --json, --ndjson, --project <dir>, --set section.key=value, -v, -q
+See docs/cli.md for every command and flag, and docs/json-schemas.md for the JSON output.";
     if ctx.mode == Mode::Human {
         println!("{text}");
     } else {

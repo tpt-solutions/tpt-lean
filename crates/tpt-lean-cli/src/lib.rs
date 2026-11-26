@@ -3,7 +3,7 @@
 //!
 //! Global flags: `--json`, `--ndjson`, `--project <dir>`, `--set section.key=value`,
 //! `--verbose`, `--quiet`. Exit codes follow `tpt_lean_core::ErrorCode::exit_code`.
-//! Commands that are planned but not built yet fail with `not_implemented` (exit 10).
+//! Unknown commands fail with `invalid_argument` (exit 2).
 
 mod args;
 mod commands;

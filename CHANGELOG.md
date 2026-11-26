@@ -8,6 +8,11 @@ All notable changes to this project are documented here. The format follows
 Initial development version `0.1.0`. Nothing has been published yet.
 
 ### Added
+- LSP proxy: `tpt-lean.proofState` command returns the goals at a position, each split into
+  hypotheses and target, for a proof-state panel.
+- LSP proxy: work-done progress (`$/progress`) while Lean elaborates an open document, from Lean's
+  `$/lean/fileProgress` counts.
+- LSP proxy: a `didChange` or `didOpen` with the text already open does nothing.
 - File scan honours `.gitignore` files in the project and its subdirectories (`tpt-lean-index::ignore`).
 - `docs/security.md`, `docs/versioning.md`, `docs/editors.md`, and a Claude Desktop setup in `docs/mcp.md`.
 - `tpt-lean init --template mathlib` as an alias for `--mathlib`.
@@ -65,6 +70,11 @@ Initial development version `0.1.0`. Nothing has been published yet.
   package stays private. A browser example is not written.
 - CI `benchmarks` job: search, formatter and index benchmarks in release mode, results uploaded as an
   artifact. Advisory, so a missed target is reported without failing the build. Not run on GitHub yet.
+- User documentation: install, quickstart, a complete CLI reference, and the JSON output reference.
+  The examples were run on a fresh project. The reference corrects stale statements: `fmt --verify`
+  exists, build events are streamed live, and SARIF is validated against the official schema.
+- The help text lists the implemented commands. Before, it listed built commands as planned.
+- An unknown command is an invalid argument (exit 2), not "not implemented" (exit 10).
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the

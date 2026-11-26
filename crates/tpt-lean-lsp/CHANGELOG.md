@@ -16,7 +16,12 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - Cancellation handled on the reader thread.
 - `tpt-lean lsp` command.
 
+### Added (since the first draft)
+- `textDocument/definition` from the index for exact names; `textDocument/codeAction` (import
+  quick fix, lemma search, format, explain-error); `textDocument/formatting`.
+- `tpt-lean.proofState` command; work-done progress from Lean's `$/lean/fileProgress`.
+- A `didChange` with the text already open is ignored.
+
 ### Known limitations
-- Definition and code-action responses are forwarded only.
-- No import suggestions, lemma search, or explain-error code actions.
-- No progress reporting; full-text document sync only.
+- Full-text document sync only.
+- Progress reporting is not tested in an editor.

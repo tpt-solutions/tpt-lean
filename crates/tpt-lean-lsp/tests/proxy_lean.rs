@@ -137,3 +137,51 @@ fn code_actions_and_commands_through_proxy_with_lean() {
     let lemmas = out.iter().find(|m| m["id"] == 4).expect("search response");
     assert!(lemmas["result"].is_array(), "{lemmas}");
 }
+
+#[test]
+fn proof_state_command_splits_hypotheses_and_target() {
+    let tc = discover_toolchain();
+    if tc.lean.is_none() || tc.lake.is_none() {
+        eprintln!("skipping: lean/lake not installed");
+        return;
+    }
+    let dir: PathBuf = std::env::temp_dir().join(format!("tpt-lsp-proofstate-e2e-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("Proxy.lean");
+    let text = "theorem t (a b : Nat) : a + b = b + a := by\n  skip\n";
+    std::fs::write(&file, text).unwrap();
+    let uri = tpt_lean_adapter::lsp::path_to_uri(&file);
+
+    let session =
+        LspSession::for_project(&dir, tc.lake.as_ref(), tc.lean.as_ref(), Duration::from_secs(120)).unwrap();
+    let input = frames(&[
+        json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "lean4", "version": 1, "text": text}}}),
+        // The same text again: the proxy should not resend it to Lean or change the state.
+        json!({"jsonrpc": "2.0", "method": "textDocument/didChange", "params": {
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{"text": text}]}}),
+        json!({"jsonrpc": "2.0", "id": 2, "method": "workspace/executeCommand", "params": {
+            "command": "tpt-lean.proofState",
+            "arguments": [{"uri": uri, "line": 1, "character": 2}]}}),
+        json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}),
+        json!({"jsonrpc": "2.0", "method": "exit"}),
+    ]);
+    let mut proxy = Proxy::new(&dir, session, Vec::new());
+    proxy.serve(BufReader::new(Cursor::new(input))).unwrap();
+    let out = read_all(proxy.output());
+    let _ = std::fs::remove_dir_all(&dir);
+
+    let state = out.iter().find(|m| m["id"] == 2).expect("proofState response");
+    let goal = &state["result"]["goals"][0];
+    assert_eq!(goal["target"], "a + b = b + a", "{state}");
+    let hyps: Vec<&str> = goal["hypotheses"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|h| h.as_str())
+        .collect();
+    assert!(hyps.iter().any(|h| h.contains("a b : Nat")), "{hyps:?}");
+}

@@ -60,20 +60,27 @@ Code actions (`textDocument/codeAction`), answered by the proxy:
 - Lean's own code actions are forwarded and appended. If Lean does not answer, the local actions
   are still returned.
 
-`workspace/executeCommand` runs the two commands. Each takes one argument, `{uri, line, character}`.
-Results are returned as the command result. Clients that show nothing for command results will not
+`workspace/executeCommand` runs `tpt-lean.searchLemmas`, `tpt-lean.explainError` and
+`tpt-lean.proofState`. Each takes one argument, `{uri, line, character}`. `tpt-lean.proofState`
+returns `{uri, line, character, goals: [{hypotheses, target, text}]}`; a panel calls it when the
+cursor moves. Results are returned as the command result. Clients that show nothing for command results will not
 show them; the lemma search also logs its count.
 
 Notifications:
 
 - `didOpen`, `didChange` (full text), `didClose` update the session. `didOpen` re-publishes the
-  cached diagnostics when the text is unchanged since they were computed.
+  cached diagnostics when the text is unchanged since they were computed. A `didChange` with the
+  text already open is ignored: no re-sync to Lean, no symbol rebuild.
 - Lean's `publishDiagnostics` are forwarded whenever the set changes.
+- While Lean reports work for an open document (`$/lean/fileProgress`), the proxy sends
+  `window/workDoneProgress/create` and `$/progress` (begin, report with the remaining count, end).
+  The check runs every 50 ms, so short elaborations may not show progress. Not tested in an editor.
 - A failure to start or sync Lean is reported with `window/logMessage`.
 
 Cancellation: `$/cancelRequest` is handled on the reader thread, so it works while the proxy is
 waiting on Lean.
 
-Not done: progress reporting, incremental sync, and running the Lean check of formatting edits. The index-backed definition answer is matched by exact name, so it does not
+Not done: incremental sync (every change sends the whole text), and running the Lean check of
+formatting edits. The index-backed definition answer is matched by exact name, so it does not
 resolve names through `open` or namespaces; those fall through to Lean. Editor setup is in
 [editors.md](editors.md).

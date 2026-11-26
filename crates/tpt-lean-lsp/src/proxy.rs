@@ -63,6 +63,11 @@ struct CachedDiagnostics {
     diagnostics: Vec<Value>,
 }
 
+/// A work-done progress report the proxy has begun for an editor document and not yet ended.
+struct ActiveProgress {
+    token: String,
+}
+
 pub struct Proxy<W: Write> {
     index_path: PathBuf,
     project_root: PathBuf,
@@ -73,6 +78,9 @@ pub struct Proxy<W: Write> {
     /// Diagnostics last sent to the editor, keyed by the editor's URI.
     published: HashMap<String, Vec<Value>>,
     cache: HashMap<String, CachedDiagnostics>,
+    /// Elaboration progress shown to the editor, keyed by the editor's URI.
+    progress: HashMap<String, ActiveProgress>,
+    progress_seq: u64,
     cancels: CancelTable,
 }
 
@@ -87,6 +95,8 @@ impl<W: Write> Proxy<W> {
             documents: HashMap::new(),
             published: HashMap::new(),
             cache: HashMap::new(),
+            progress: HashMap::new(),
+            progress_seq: 0,
             cancels: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -112,6 +122,7 @@ impl<W: Write> Proxy<W> {
                 Err(RecvTimeoutError::Disconnected) => break,
             }
             self.forward_new_diagnostics()?;
+            self.forward_progress()?;
         }
         self.session.stop();
         Ok(())
@@ -217,6 +228,11 @@ impl<W: Write> Proxy<W> {
         let Some(path) = uri_to_path(editor_uri) else {
             return self.log(&format!("unsupported document URI: {editor_uri}"));
         };
+        // Editors often resend the same text (save, focus, no-op edits). Nothing changes then:
+        // the cached symbols, the text Lean has, and the diagnostics already shown all stay.
+        if self.documents.get(editor_uri).is_some_and(|d| d.text == text) {
+            return Ok(());
+        }
         let text_hash = hash_text(text);
         let upstream_uri = path_to_uri(&path);
         self.documents.insert(
@@ -250,7 +266,77 @@ impl<W: Write> Proxy<W> {
             }
         }
         self.published.remove(editor_uri);
+        self.end_progress(editor_uri, "Closed")?;
         Ok(())
+    }
+
+    /// Show Lean's elaboration of each open document as work-done progress: a `begin` when Lean
+    /// starts processing it, a `report` when the remaining count changes, and an `end` when it
+    /// reports nothing left. The counts come from Lean's `$/lean/fileProgress`.
+    fn forward_progress(&mut self) -> Result<()> {
+        let open: Vec<(String, String)> = self
+            .documents
+            .values()
+            .map(|d| (d.editor_uri.clone(), d.upstream_uri.clone()))
+            .collect();
+        for (editor_uri, upstream_uri) in open {
+            let remaining = self.session.file_progress(&upstream_uri);
+            let active = self.progress.get(&editor_uri).map(|a| a.token.clone());
+            match (remaining, active) {
+                (Some(n), None) if n > 0 => {
+                    self.progress_seq += 1;
+                    let token = format!("tpt-lean/elaborate/{}", self.progress_seq);
+                    self.send(json!({
+                        "jsonrpc": "2.0",
+                        "id": token,
+                        "method": "window/workDoneProgress/create",
+                        "params": { "token": token }
+                    }))?;
+                    let name = uri_to_path(&editor_uri)
+                        .and_then(|p| p.file_name().map(|f| f.to_string_lossy().into_owned()))
+                        .unwrap_or_else(|| editor_uri.clone());
+                    self.send_progress(
+                        &token,
+                        json!({
+                            "kind": "begin",
+                            "title": format!("Lean: elaborating {name}"),
+                            "message": format!("{n} item(s) left"),
+                            "cancellable": false
+                        }),
+                    )?;
+                    self.progress
+                        .insert(editor_uri, ActiveProgress { token: token.clone() });
+                }
+                (Some(0), Some(_)) => self.end_progress(&editor_uri, "Elaboration finished")?,
+                (Some(n), Some(token)) => {
+                    self.send_progress(
+                        &token,
+                        json!({
+                            "kind": "report",
+                            "message": format!("{n} item(s) left")
+                        }),
+                    )?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// End the progress report for a document, if one is running.
+    fn end_progress(&mut self, editor_uri: &str, message: &str) -> Result<()> {
+        if let Some(active) = self.progress.remove(editor_uri) {
+            self.send_progress(&active.token, json!({ "kind": "end", "message": message }))?;
+        }
+        Ok(())
+    }
+
+    fn send_progress(&mut self, token: &str, value: Value) -> Result<()> {
+        self.send(json!({
+            "jsonrpc": "2.0",
+            "method": "$/progress",
+            "params": { "token": token, "value": value }
+        }))
     }
 
     /// Send Lean's diagnostics to the editor for every open document whose set has changed.
@@ -468,6 +554,19 @@ impl<W: Write> Proxy<W> {
                     "goals": goals,
                 }))
             }
+            PROOF_STATE => {
+                // The goals at the position, each split into hypotheses and target, for a
+                // proof-state panel to show. A client calls this again when the cursor moves.
+                let goals = self.goals_at(&position_params, cancel)?;
+                let goals: Vec<Value> = goals
+                    .iter()
+                    .map(|g| {
+                        let (hypotheses, target) = split_goal(g);
+                        json!({ "hypotheses": hypotheses, "target": target, "text": g })
+                    })
+                    .collect();
+                Ok(json!({ "uri": uri, "line": line, "character": character, "goals": goals }))
+            }
             other => Err(Error::new(
                 ErrorCode::InvalidArgument,
                 format!("unknown command {other:?}"),
@@ -583,6 +682,8 @@ fn reader_loop<R: BufRead>(mut input: R, tx: Sender<Value>, cancels: CancelTable
 pub const SEARCH_LEMMAS: &str = "tpt-lean.searchLemmas";
 /// Command that explains the error at a position, with the goal there.
 pub const EXPLAIN_ERROR: &str = "tpt-lean.explainError";
+/// Command that returns the proof state at a position as structured goals (hypotheses and target).
+pub const PROOF_STATE: &str = "tpt-lean.proofState";
 
 /// The name in a Lean "unknown identifier 'x'" or "unknown constant 'x'" message.
 pub fn unknown_name(message: &str) -> Option<String> {
@@ -621,7 +722,7 @@ fn initialize_result() -> Value {
             "hoverProvider": true,
             "documentFormattingProvider": true,
             "codeActionProvider": { "codeActionKinds": ["quickfix", "source"] },
-            "executeCommandProvider": { "commands": [SEARCH_LEMMAS, EXPLAIN_ERROR] }
+            "executeCommandProvider": { "commands": [SEARCH_LEMMAS, EXPLAIN_ERROR, PROOF_STATE] }
         },
         "serverInfo": { "name": "tpt-lean-lsp", "version": env!("CARGO_PKG_VERSION") }
     })

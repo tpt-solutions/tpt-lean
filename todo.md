@@ -299,12 +299,12 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 
 ### tpt-lean-lsp
 - [x] Rust LSP proxy to official Lean LSP
-- [ ] Faster document sync, cached symbols, cached diagnostics
-- [ ] Instant project search
-- [ ] Better progress reporting
+- [x] Faster document sync, cached symbols, cached diagnostics (symbols are rebuilt only when the text changes; diagnostics are cached per text; a `didChange` with unchanged text does no work; no timing measured)
+- [ ] Instant project search (the index is opened per request and not measured; not changed)
+- [x] Better progress reporting (`$/progress` for Lean's elaboration per open document, from `$/lean/fileProgress`; not tested in an editor)
 - [x] Request cancellation
 - [x] Lightweight syntax features before elaboration finishes
-- [ ] Features: go-to-definition, hover, document/workspace symbols, diagnostics, goal display, proof-state panel support
+- [x] Features: go-to-definition, hover, document/workspace symbols, diagnostics, goal display, proof-state panel support (`tpt-lean.proofState` command)
 - [x] Code actions: import suggestions, lemma search, formatting, explain-error (import quick fix, lemma search and explain-error as commands, formatting as a document action and `textDocument/formatting`)
 - [x] `tpt-lean lsp`
 - [x] Editor setup docs (VS Code, Neovim, Emacs, Helix) (`docs/editors.md`; settings not yet tried in each editor)
@@ -363,7 +363,7 @@ Crate: `tpt-lean-wasm`
 - [x] Per-release `cargo deny` / `cargo audit` gate
 - [x] Versioning policy (crate semver vs ABI version) (`docs/versioning.md`)
 - [x] CHANGELOG
-- [ ] User docs (install, quickstart, every command, JSON schemas)
+- [x] User docs (install, quickstart, every command, JSON schemas): `docs/install.md`, `docs/quickstart.md` (run on a fresh project), `docs/cli.md` (flags taken from the argument checks), `docs/json-schemas.md` (envelope, error codes, kinds checked against real output); linked from the README
 - [x] Security model docs (permission classes, path safety, command safety, resource limits) (`docs/security.md`)
 - [x] Integration docs: FFI, JSON-RPC API, MCP
 - [ ] Generated client SDKs (decide languages)
@@ -384,3 +384,50 @@ Crate: `tpt-lean-wasm`
 - [x] No Apache-only (or other disallowed) dependency in the tree
 - [x] Unit, golden, integration, FFI, and MCP/API schema tests in place (spec section 17) (unit and golden present; no Lean integration, FFI or MCP tests)
 - [ ] Windows, Linux, macOS all green in CI (workflow written, never run)
+
+---
+
+## Phase 10 — Review follow-ups and adoption (from project review)
+
+### Docs and stale statements
+- [ ] README: drop the "planned commands exit with code 10" paragraph and the short command table; list every implemented command and link `docs/cli.md`
+- [ ] Profile: `NOT_MEASURED` in `crates/tpt-lean-profile/src/run.rs` still says build-step timing is not implemented (remove once the build-timing item below lands)
+- [ ] `docs/install.md` and README: one-line install commands, marked "after first release"
+
+### Open items to close
+- [ ] Build-step timing and cache hit/miss report (`profile --build`, `build --report`), from `tpt-lean-build` events
+- [ ] `imports --cost`: attach compile-time estimate per import (reuse `profile --imports` timings)
+- [ ] `bisect --axis commits|imports|flags` (currently commits only)
+- [ ] Search ranking: recency and dependency-distance factors, weights in config
+- [ ] LSP: keep the index handle open in the proxy instead of opening per request; add a benchmark for instant project search
+- [ ] Index: store last diagnostics per file hash (acceleration only; invalidated on hash change)
+- [ ] docgen: `--from-sidecar` input source
+- [ ] MCP: resources for ast, goals and build log; schema validation, permission, cancellation and timeout tests
+- [ ] wasm: browser example in `crates/tpt-lean-wasm/npm/examples/`; `private` stays until a publish decision is made
+- [ ] Sidecar: goals for theorem statements and `sorry` (schema v2, reads v1)
+- [ ] LSP: idle and health timeout; memory cap where supported (job objects need `unsafe`, so deferred)
+
+### Release and install
+- [ ] `.github/workflows/release.yml`: on tag `v*`, build `tpt-lean-cli` for Windows, Linux and macOS (x86_64 and aarch64); archive with `tpt-lean` and `tlean`; publish `SHA256SUMS` to the GitHub Release
+- [ ] `scripts/install.sh` and `scripts/install.ps1`: detect OS and arch, download, verify checksum, install to a user directory, print PATH hint; support `--version` and `--dry-run`
+- [ ] Package manifests under `packaging/`: winget, Homebrew formula, Scoop manifest, plus `scripts/update-manifests.sh` to fill version, URL and hash from a release
+- [ ] `[package.metadata.binstall]` in `tpt-lean-cli/Cargo.toml` so `cargo binstall` works against the same assets
+- [ ] `tpt-lean completions <bash|zsh|fish|powershell>`
+- [ ] `doctor --fix`: apply safe fixes (create config, build sidecar, refresh index) after printing a plan
+
+### New commands (ease of use)
+- [ ] `tpt-lean setup [--editor vscode|neovim|helix|emacs] [--mcp claude|cursor] [--dry-run]`: writes editor LSP config and MCP server entries from `docs/editors.md` and `docs/mcp.md`; merges without clobbering and shows a diff first
+- [ ] `tpt-lean watch`: re-check changed files and print a compact diagnostics and proof-state summary; `--json` streams ndjson (reuse `tpt-lean-build/src/watch.rs`)
+- [ ] `tpt-lean fix [file] [--apply]`: apply safe mechanical fixes (missing imports from `imports --suggest`, unused imports from `imports --unused`, formatting) as a reviewable patch; dry-run by default; roll back if Lean reports more errors afterwards
+- [ ] `tpt-lean sorry-report [--deny-sorry]`: list `sorry` and `admit` per declaration with goals where the sidecar provides them; non-zero exit in CI mode
+
+### Proposals only (not built; record decision later)
+- [ ] VS Code extension wrapper around the LSP proxy
+- [ ] GitHub Action (`tpt/tpt-lean-action`) for `ci --sarif`
+- [ ] Generated TypeScript client from `crates/tpt-lean-server/schemas`
+
+### Explicitly open, not doable in this environment
+- [ ] Cache-hit build under 200 ms (needs Lake skipped on a hit; design decision)
+- [ ] Go cgo FFI test (no C compiler installed)
+- [ ] CI green on Windows, Linux and macOS (needs a GitHub run)
+- [ ] Windows job objects for process limits (workspace forbids `unsafe`)

@@ -40,6 +40,15 @@ cargo build --workspace
 cargo test --workspace
 ```
 
+## Documentation
+
+- [Install](docs/install.md): what you need, and how to build the `tpt-lean` binary
+- [Quickstart](docs/quickstart.md): a new project to search, format and build, in a few commands
+- [CLI reference](docs/cli.md): every command, flag and exit code
+- [JSON output](docs/json-schemas.md): the envelope, the error codes, and the fields of each result
+- [Editors](docs/editors.md), [MCP](docs/mcp.md), [API server](docs/server-api.md): integrations
+- [Security](docs/security.md) and [versioning](docs/versioning.md)
+
 ## Layout
 
 ```
