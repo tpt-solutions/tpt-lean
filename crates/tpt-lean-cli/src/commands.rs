@@ -412,7 +412,7 @@ fn write_default_config(root: &Path) -> Result<String> {
     }
     dirs.ensure()?;
     let text = config::to_toml(&Config::default())?;
-    std::fs::write(dirs.config(), text).map_err(|e| Error::from(e).with_path(&dirs.config()))?;
+    std::fs::write(dirs.config(), text).map_err(|e| Error::from(e).with_path(dirs.config()))?;
     Ok(format!("wrote {}", dirs.config().display()))
 }
 
@@ -496,8 +496,7 @@ fn fix(ctx: &Ctx, args: &Args) -> Result<i32> {
             .map_err(|_| Error::invalid("--timeout must be seconds"))?,
         None => cfg.security.command_timeout_seconds,
     };
-    let outcome =
-        tpt_lean_tools::fix::fix_file(&root, Path::new(&file), timeout, args.flag("--apply"))?;
+    let outcome = tpt_lean_tools::fix::fix_file(&root, Path::new(&file), timeout, args.flag("--apply"))?;
     let plan = &outcome.plan;
     let mut human: Vec<String> = Vec::new();
     if plan.steps.is_empty() {
@@ -526,11 +525,7 @@ fn fix(ctx: &Ctx, args: &Args) -> Result<i32> {
         human.push("dry run: rerun with --apply to write these changes".to_string());
     }
     ctx.emit("fix", &human.join("\n"), &outcome)?;
-    Ok(if outcome.rolled_back {
-        CHECK_FAILED
-    } else {
-        OK
-    })
+    Ok(if outcome.rolled_back { CHECK_FAILED } else { OK })
 }
 
 /// `sorry-report [paths] [--deny-sorry] [--sidecar [--exe PATH] [--timeout S]]`: every `sorry` and
@@ -890,9 +885,10 @@ fn search(ctx: &Ctx, args: &Args) -> Result<i32> {
         Some(file) => {
             let ws = WorkspaceRoot::new(&root)?;
             let path = ws.resolve(&file)?;
-            origin_module = path.strip_prefix(ws.path()).ok().and_then(|rel| {
-                tpt_lean_index::module_name_of(&rel.to_string_lossy().replace('\\', "/"))
-            });
+            origin_module = path
+                .strip_prefix(ws.path())
+                .ok()
+                .and_then(|rel| tpt_lean_index::module_name_of(&rel.to_string_lossy().replace('\\', "/")));
             let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
             tpt_lean_syntax::parse(&text)
                 .imports

@@ -215,7 +215,7 @@ fn now_millis() -> i64 {
 /// `0.5^(age / half_life)` with age in days: 1 when changed now, halving every half life.
 /// Monotone non-increasing in age. Returns 0 for a half life that is not positive.
 fn recency_factor(now_ms: i64, changed_ms: i64, half_life_days: f64) -> f64 {
-    if !(half_life_days > 0.0) {
+    if half_life_days.is_nan() || half_life_days <= 0.0 {
         return 0.0;
     }
     let age_days = (now_ms - changed_ms).max(0) as f64 / 86_400_000.0;
@@ -444,7 +444,10 @@ mod tests {
             &[
                 ("Far.lean", "theorem shared_far : True := trivial\n"),
                 ("Near.lean", "theorem shared_near : True := trivial\n"),
-                ("Origin.lean", "import Near\ntheorem origin_only : True := trivial\n"),
+                (
+                    "Origin.lean",
+                    "import Near\ntheorem origin_only : True := trivial\n",
+                ),
             ],
         )
     }

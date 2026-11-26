@@ -277,18 +277,34 @@ mod tests {
         assert!(m.imports.is_empty(), "the sidecar does not report imports");
         assert_eq!(m.declarations.len(), 4);
 
-        let add = m.declarations.iter().find(|d| d.name == "Geometry.Point.add").unwrap();
+        let add = m
+            .declarations
+            .iter()
+            .find(|d| d.name == "Geometry.Point.add")
+            .unwrap();
         assert_eq!(add.namespace, "Geometry.Point");
         assert_eq!(add.short_name.as_deref(), Some("add"));
         assert_eq!(add.kind, "definition");
-        assert_eq!(add.docstring.as_deref(), Some("Adds points."), "docstring is trimmed");
+        assert_eq!(
+            add.docstring.as_deref(),
+            Some("Adds points."),
+            "docstring is trimmed"
+        );
         assert_eq!(add.signature, "Geometry.Point.add : Point -> Point -> Point");
         assert_eq!(add.line, 0);
 
-        let zero = m.declarations.iter().find(|d| d.name == "Geometry.Point.zero").unwrap();
+        let zero = m
+            .declarations
+            .iter()
+            .find(|d| d.name == "Geometry.Point.zero")
+            .unwrap();
         assert_eq!(zero.docstring, None);
 
-        let point = m.declarations.iter().find(|d| d.name == "Geometry.Point").unwrap();
+        let point = m
+            .declarations
+            .iter()
+            .find(|d| d.name == "Geometry.Point")
+            .unwrap();
         assert_eq!(point.namespace, "Geometry");
         assert_eq!(point.short_name.as_deref(), Some("Point"));
 
@@ -296,7 +312,10 @@ mod tests {
         assert_eq!(thm.namespace, "");
         assert_eq!(thm.docstring, None, "an empty docstring is no docstring");
 
-        assert_eq!(m.namespaces, vec!["Geometry".to_string(), "Geometry.Point".to_string()]);
+        assert_eq!(
+            m.namespaces,
+            vec!["Geometry".to_string(), "Geometry.Point".to_string()]
+        );
     }
 
     #[test]

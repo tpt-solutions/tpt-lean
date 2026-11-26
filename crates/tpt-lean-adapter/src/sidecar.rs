@@ -236,8 +236,7 @@ pub fn run_sidecar_goals(
     policy: &ProcessPolicy,
     cancel: &CancelToken,
 ) -> Result<Vec<String>> {
-    run_sidecar_goals_report(exe, sysroot, site, cwd, lean_path, policy, cancel)
-        .map(|report| report.goals)
+    run_sidecar_goals_report(exe, sysroot, site, cwd, lean_path, policy, cancel).map(|report| report.goals)
 }
 
 /// Like [`run_sidecar_goals`], but returns the whole report, including what kind of position it is

@@ -86,5 +86,8 @@ fn instant_project_search() {
     );
     assert_eq!(opens, 1);
     assert_eq!(answered, REQUESTS);
-    assert!(average < MAX_AVERAGE, "average {average:?} exceeds {MAX_AVERAGE:?}");
+    assert!(
+        average < MAX_AVERAGE,
+        "average {average:?} exceeds {MAX_AVERAGE:?}"
+    );
 }

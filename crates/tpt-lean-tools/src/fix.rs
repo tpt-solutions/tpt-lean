@@ -275,7 +275,7 @@ pub fn fix_file(project_root: &Path, file: &Path, timeout_secs: u64, apply: bool
         }
         let modules: Vec<String> = suggest_imports(project_root, &name, 20)?
             .into_iter()
-            .filter(|s| s.examples.iter().any(|e| *e == name))
+            .filter(|s| s.examples.contains(&name))
             .map(|s| s.module)
             .collect();
         match modules.as_slice() {

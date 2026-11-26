@@ -258,8 +258,7 @@ fn sidecar_check(root: &Path) -> ProjectCheck {
         return ProjectCheck {
             name: "sidecar",
             status: "skipped",
-            detail: "no sidecar source in this project; set TPT_LEAN_SIDECAR to a built tpt_sidecar"
-                .into(),
+            detail: "no sidecar source in this project; set TPT_LEAN_SIDECAR to a built tpt_sidecar".into(),
         };
     }
     let exe = built_sidecar_exe(root);

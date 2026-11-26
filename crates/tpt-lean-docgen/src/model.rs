@@ -4,8 +4,8 @@
 use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
-use tpt_lean_core::{Error, ErrorCode, Result};
 use tpt_lean_adapter::sidecar::SidecarReport;
+use tpt_lean_core::{Error, ErrorCode, Result};
 use tpt_lean_index::{collect_lean_files, default_scan_roots};
 use tpt_lean_syntax::parse;
 

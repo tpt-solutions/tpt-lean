@@ -479,7 +479,9 @@ pub fn docgen_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             let run = super::sidecar_run(args, &root, &cfg)?;
             let mut policy = run.policy.clone();
             if let Some(lean_path) = &run.lean_path {
-                policy.extra_env.push(("LEAN_PATH".to_string(), lean_path.clone()));
+                policy
+                    .extra_env
+                    .push(("LEAN_PATH".to_string(), lean_path.clone()));
             }
             Some(adapter::sidecar::run_sidecar(
                 &run.exe,
@@ -579,8 +581,24 @@ pub fn ci_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
 /// The `imports` and `flags` axes rewrite FILE for each probe and restore it afterwards.
 pub fn bisect_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(
-        &["--project", "--axis", "--good", "--bad", "--file", "--flags", "--timeout"],
-        &["--project", "--axis", "--good", "--bad", "--file", "--flags", "--timeout"],
+        &[
+            "--project",
+            "--axis",
+            "--good",
+            "--bad",
+            "--file",
+            "--flags",
+            "--timeout",
+        ],
+        &[
+            "--project",
+            "--axis",
+            "--good",
+            "--bad",
+            "--file",
+            "--flags",
+            "--timeout",
+        ],
     )?;
     let axis = tpt_lean_tools::bisect::Axis::parse(args.value("--axis")?.as_deref().unwrap_or("commits"))?;
     let root = project_root(args)?;
@@ -588,7 +606,9 @@ pub fn bisect_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
     if axis == tpt_lean_tools::bisect::Axis::Commits {
         if args.value("--file")?.is_some() || args.value("--flags")?.is_some() {
-            return Err(Error::invalid("--file and --flags apply to --axis imports or flags"));
+            return Err(Error::invalid(
+                "--file and --flags apply to --axis imports or flags",
+            ));
         }
         let good = args
             .value("--good")?
@@ -648,7 +668,10 @@ pub fn bisect_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             candidates.len(),
             report.probes.len()
         ),
-        None => format!("no failing {label} among {} candidate(s) in {file}", candidates.len()),
+        None => format!(
+            "no failing {label} among {} candidate(s) in {file}",
+            candidates.len()
+        ),
     };
     ctx.emit("bisect", &human, &report)?;
     Ok(OK)
@@ -716,9 +739,7 @@ fn imports_analysis_run(ctx: &Ctx, args: &Args) -> Result<i32> {
             .positionals(&["--project", "--timeout"])
             .into_iter()
             .next()
-            .ok_or_else(|| {
-                Error::invalid("usage: tpt-lean imports --cost --timed FILE [--timeout S]")
-            })?;
+            .ok_or_else(|| Error::invalid("usage: tpt-lean imports --cost --timed FILE [--timeout S]"))?;
         let cfg = load_config(args, &root)?;
         let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
         let ws = tpt_lean_core::paths::WorkspaceRoot::new(&root)?;

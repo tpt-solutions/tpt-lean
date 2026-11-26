@@ -1217,7 +1217,9 @@ mod tests {
         let mut messages: Vec<Value> = (1..=5).map(|id| workspace_query(id, "reuse_check")).collect();
         messages.push(json!({"jsonrpc": "2.0", "method": "exit"}));
         let mut proxy = Proxy::new(&dir, unreachable_session(&dir), Vec::new());
-        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        proxy
+            .serve(BufReader::new(Cursor::new(frames(&messages))))
+            .unwrap();
         let opens = proxy.index_opens();
         let out = read_back(proxy.output());
         drop(proxy);
@@ -1225,7 +1227,10 @@ mod tests {
 
         assert_eq!(opens, 1);
         for id in 1..=5 {
-            let reply = out.iter().find(|m| m["id"] == id).expect("workspace/symbol response");
+            let reply = out
+                .iter()
+                .find(|m| m["id"] == id)
+                .expect("workspace/symbol response");
             assert_eq!(reply["result"][0]["name"], "reuse_check_ok", "{reply}");
         }
     }
@@ -1233,12 +1238,20 @@ mod tests {
     #[test]
     fn missing_index_answers_empty_and_opens_nothing() {
         let dir = fresh_dir("tpt-lsp-index-missing");
-        let messages = [workspace_query(1, "anything"), json!({"jsonrpc": "2.0", "method": "exit"})];
+        let messages = [
+            workspace_query(1, "anything"),
+            json!({"jsonrpc": "2.0", "method": "exit"}),
+        ];
         let mut proxy = Proxy::new(&dir, unreachable_session(&dir), Vec::new());
-        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        proxy
+            .serve(BufReader::new(Cursor::new(frames(&messages))))
+            .unwrap();
         let out = read_back(proxy.output());
         assert_eq!(proxy.index_opens(), 0);
-        let reply = out.iter().find(|m| m["id"] == 1).expect("workspace/symbol response");
+        let reply = out
+            .iter()
+            .find(|m| m["id"] == 1)
+            .expect("workspace/symbol response");
         assert_eq!(reply["result"], json!([]));
     }
 
@@ -1248,9 +1261,14 @@ mod tests {
         let db = ProjectDirs::new(&dir).index_db();
         std::fs::create_dir_all(db.parent().unwrap()).unwrap();
         std::fs::write(&db, b"this is not a sqlite database, not even close").unwrap();
-        let messages = [workspace_query(1, "anything"), json!({"jsonrpc": "2.0", "method": "exit"})];
+        let messages = [
+            workspace_query(1, "anything"),
+            json!({"jsonrpc": "2.0", "method": "exit"}),
+        ];
         let mut proxy = Proxy::new(&dir, unreachable_session(&dir), Vec::new());
-        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        proxy
+            .serve(BufReader::new(Cursor::new(frames(&messages))))
+            .unwrap();
         let out = read_back(proxy.output());
         drop(proxy);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1264,7 +1282,11 @@ mod tests {
         let idle = Duration::from_secs(900);
         assert!(!idle_expired(t0, t0 + Duration::from_secs(899), idle));
         assert!(idle_expired(t0, t0 + Duration::from_secs(900), idle));
-        assert!(!idle_expired(t0, t0 + Duration::from_secs(100_000), Duration::ZERO));
+        assert!(!idle_expired(
+            t0,
+            t0 + Duration::from_secs(100_000),
+            Duration::ZERO
+        ));
     }
 
     #[test]
@@ -1286,7 +1308,10 @@ mod tests {
         );
         config.lsp.idle_timeout_seconds = 0;
         config.lsp.health_timeout_seconds = Some(30);
-        assert_eq!(lifecycle_timeouts(&config), (Duration::ZERO, Duration::from_secs(30)));
+        assert_eq!(
+            lifecycle_timeouts(&config),
+            (Duration::ZERO, Duration::from_secs(30))
+        );
     }
 
     /// A program that starts but never answers the LSP `initialize` request.
@@ -1294,7 +1319,11 @@ mod tests {
         if cfg!(windows) {
             (
                 PathBuf::from("powershell"),
-                vec!["-NoProfile".into(), "-Command".into(), "Start-Sleep -Seconds 60".into()],
+                vec![
+                    "-NoProfile".into(),
+                    "-Command".into(),
+                    "Start-Sleep -Seconds 60".into(),
+                ],
             )
         } else {
             (PathBuf::from("sleep"), vec!["60".into()])
@@ -1312,12 +1341,17 @@ mod tests {
             json!({"jsonrpc": "2.0", "method": "exit"}),
         ];
         let mut proxy = Proxy::new(&dir, session, Vec::new());
-        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        proxy
+            .serve(BufReader::new(Cursor::new(frames(&messages))))
+            .unwrap();
         let out = read_back(proxy.output());
         drop(proxy);
         let _ = std::fs::remove_dir_all(&dir);
 
-        let reply = out.iter().find(|m| m["id"] == 1).expect("response to the timed out request");
+        let reply = out
+            .iter()
+            .find(|m| m["id"] == 1)
+            .expect("response to the timed out request");
         assert_eq!(reply["error"]["code"], REQUEST_FAILED, "{reply}");
         assert_eq!(reply["error"]["data"]["kind"], "timeout", "{reply}");
         assert!(out.iter().any(|m| m["method"] == "window/logMessage"));

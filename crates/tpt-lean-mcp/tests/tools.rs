@@ -563,7 +563,11 @@ fn violations(schema: &Value, value: &Value, at: &str) -> Vec<String> {
         }
     }
     if let Some(obj) = value.as_object() {
-        let required = schema.get("required").and_then(Value::as_array).into_iter().flatten();
+        let required = schema
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten();
         for key in required.filter_map(Value::as_str) {
             if !obj.contains_key(key) {
                 out.push(format!("{at}: missing required property `{key}`"));
@@ -588,7 +592,11 @@ fn violations(schema: &Value, value: &Value, at: &str) -> Vec<String> {
 /// A value that satisfies `schema`: its required properties, each the smallest allowed value of
 /// its type. Optional properties are left out.
 fn sample(schema: &Value) -> Value {
-    if let Some(first) = schema.get("enum").and_then(Value::as_array).and_then(|a| a.first()) {
+    if let Some(first) = schema
+        .get("enum")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+    {
         return first.clone();
     }
     match schema.get("type").and_then(Value::as_str) {
@@ -599,7 +607,12 @@ fn sample(schema: &Value) -> Value {
         Some("object") => {
             let mut obj = serde_json::Map::new();
             let props = schema.get("properties").and_then(Value::as_object);
-            for key in schema.get("required").and_then(Value::as_array).into_iter().flatten() {
+            for key in schema
+                .get("required")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
                 let key = key.as_str().unwrap();
                 let sub = props.and_then(|p| p.get(key)).cloned().unwrap_or(json!({}));
                 obj.insert(key.to_string(), sample(&sub));
@@ -644,17 +657,26 @@ fn schema_rejects_out_of_range_and_wrong_typed_values() {
     let check = tools.iter().find(|t| t["name"] == "tpt_lean_check_file").unwrap();
     let schema = &check["inputSchema"];
     assert!(violations(schema, &json!({"file": "A.lean"}), "args").is_empty());
-    assert!(!violations(schema, &json!({"file": 7}), "args").is_empty(), "file must be a string");
+    assert!(
+        !violations(schema, &json!({"file": 7}), "args").is_empty(),
+        "file must be a string"
+    );
     assert!(!violations(schema, &json!({"file": "A.lean", "timeout_seconds": 0}), "args").is_empty());
     assert!(!violations(schema, &json!({"file": "A.lean", "timeout_seconds": "5"}), "args").is_empty());
-    assert!(!violations(schema, &json!("A.lean"), "args").is_empty(), "arguments must be an object");
+    assert!(
+        !violations(schema, &json!("A.lean"), "args").is_empty(),
+        "arguments must be an object"
+    );
 }
 
 #[test]
 fn server_answers_missing_required_arguments_with_a_tool_error() {
     // Every permission granted, so a refusal can only come from the arguments.
     let mut files = owned(&[("A.lean", "def a := 1\n")]);
-    with_config(&mut files, "allow_write = true\nallow_build = true\nallow_profile = true");
+    with_config(
+        &mut files,
+        "allow_write = true\nallow_build = true\nallow_profile = true",
+    );
     let dir = project_owned("missing-args", files);
     let server = Server::new(&dir).unwrap();
     for tool in listed_tools(&server) {
@@ -664,7 +686,11 @@ fn server_answers_missing_required_arguments_with_a_tool_error() {
         }
         let r = call(&server, name, json!({}));
         assert_eq!(r["isError"], true, "{name} accepted no arguments: {r}");
-        assert!(!text_of(&r).contains("permission denied"), "{name}: {}", text_of(&r));
+        assert!(
+            !text_of(&r).contains("permission denied"),
+            "{name}: {}",
+            text_of(&r)
+        );
     }
 }
 
@@ -691,7 +717,10 @@ fn every_tool_outside_the_granted_permissions_is_refused_before_it_runs() {
         let r = call(&server, name, args);
         let text = text_of(&r).to_string();
         if read_only.contains(&name) {
-            assert!(!text.contains("permission denied"), "{name} needs no permission: {text}");
+            assert!(
+                !text.contains("permission denied"),
+                "{name} needs no permission: {text}"
+            );
         } else {
             assert_eq!(r["isError"], true, "{name} ran without its permission");
             assert!(text.starts_with("permission denied"), "{name}: {text}");
@@ -709,7 +738,10 @@ fn check_file_with_a_one_second_timeout_returns_instead_of_hanging() {
         return;
     }
     // Elaboration of this file takes minutes; the call must come back after about one second.
-    let dir = project("timeout", &[("Slow.lean", "#eval (List.range 400000000).foldl (· + ·) 0\n")]);
+    let dir = project(
+        "timeout",
+        &[("Slow.lean", "#eval (List.range 400000000).foldl (· + ·) 0\n")],
+    );
     let server = Server::new(&dir).unwrap();
     let started = std::time::Instant::now();
     let r = call(
@@ -717,7 +749,11 @@ fn check_file_with_a_one_second_timeout_returns_instead_of_hanging() {
         "tpt_lean_check_file",
         json!({"file": "Slow.lean", "timeout_seconds": 1}),
     );
-    assert!(started.elapsed() < std::time::Duration::from_secs(90), "took {:?}", started.elapsed());
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(90),
+        "took {:?}",
+        started.elapsed()
+    );
     let body = body_of(&r);
     assert_eq!(body["timed_out"], true, "{}", text_of(&r));
     assert_eq!(body["success"], false);

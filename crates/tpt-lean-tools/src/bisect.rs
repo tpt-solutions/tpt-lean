@@ -139,9 +139,12 @@ where
     Ok((first, probes))
 }
 
+/// The `(position, bad)` pairs that [`search_positions`] asked about, in order.
+type ProbeLog = Vec<(usize, bool)>;
+
 /// Binary search over positions `0..len` for the first position where `is_bad` is true.
 /// Returns the first bad position (None when there is none) and `(position, bad)` per probe.
-fn search_positions<F>(len: usize, mut is_bad: F) -> Result<(Option<usize>, Vec<(usize, bool)>)>
+fn search_positions<F>(len: usize, mut is_bad: F) -> Result<(Option<usize>, ProbeLog)>
 where
     F: FnMut(usize) -> Result<bool>,
 {
@@ -293,7 +296,12 @@ fn item_scope(axis: Axis) -> &'static str {
 ///
 /// `check` receives the applied prefix and returns `Ok(true)` when it passes. The first failing
 /// candidate is the last one of the smallest failing prefix. Assumes monotone failure.
-pub fn bisect_items<F>(axis: Axis, file: &str, candidates: &[String], mut check: F) -> Result<ItemBisectReport>
+pub fn bisect_items<F>(
+    axis: Axis,
+    file: &str,
+    candidates: &[String],
+    mut check: F,
+) -> Result<ItemBisectReport>
 where
     F: FnMut(&[String]) -> Result<bool>,
 {
@@ -574,10 +582,17 @@ mod tests {
                     Ok(applied.len() <= first)
                 })
                 .unwrap();
-                assert_eq!(report.first_bad.as_deref(), Some(list[first].as_str()), "n={n} first={first}");
+                assert_eq!(
+                    report.first_bad.as_deref(),
+                    Some(list[first].as_str()),
+                    "n={n} first={first}"
+                );
                 assert_eq!(report.candidates, list);
                 assert_eq!(report.axis, "imports");
-                assert!(report.probes.iter().all(|p| p.enabled == list.iter().position(|x| *x == p.item).unwrap() + 1));
+                assert!(report
+                    .probes
+                    .iter()
+                    .all(|p| p.enabled == list.iter().position(|x| *x == p.item).unwrap() + 1));
                 assert_eq!(report.not_done, NOT_IMPLEMENTED.to_vec());
             }
         }
@@ -636,7 +651,10 @@ mod tests {
         );
         let src = "import A";
         let imports = tpt_lean_syntax::parse(src).imports;
-        assert_eq!(render_flags(src, &imports, &flags), "import A\nset_option pp.all true\n");
+        assert_eq!(
+            render_flags(src, &imports, &flags),
+            "import A\nset_option pp.all true\n"
+        );
     }
 
     #[test]
@@ -645,7 +663,10 @@ mod tests {
             parse_flag("maxHeartbeats=400000").unwrap(),
             ("maxHeartbeats".to_string(), "400000".to_string())
         );
-        assert_eq!(parse_flag("pp.all").unwrap(), ("pp.all".to_string(), "true".to_string()));
+        assert_eq!(
+            parse_flag("pp.all").unwrap(),
+            ("pp.all".to_string(), "true".to_string())
+        );
         assert_eq!(
             parse_flag(" linter.unusedVariables = false ").unwrap(),
             ("linter.unusedVariables".to_string(), "false".to_string())
@@ -711,7 +732,11 @@ mod tests {
     fn file_import_candidates_lists_imports_in_order() {
         let dir = std::env::temp_dir().join(format!("tpt-tools-bisect-imports-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("Main.lean"), "import Mathlib.Tactic\nimport A.B\n\ntheorem t : True := trivial\n").unwrap();
+        fs::write(
+            dir.join("Main.lean"),
+            "import Mathlib.Tactic\nimport A.B\n\ntheorem t : True := trivial\n",
+        )
+        .unwrap();
         let got = file_import_candidates(&dir, "Main.lean").unwrap();
         assert_eq!(got, vec!["Mathlib.Tactic".to_string(), "A.B".to_string()]);
         let _ = fs::remove_dir_all(&dir);

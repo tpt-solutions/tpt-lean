@@ -239,7 +239,10 @@ const ENV_KEYS: &[(&str, &str)] = &[
         "security.command_timeout_seconds",
     ),
     ("TPT_LEAN_LSP_IDLE_TIMEOUT_SECONDS", "lsp.idle_timeout_seconds"),
-    ("TPT_LEAN_LSP_HEALTH_TIMEOUT_SECONDS", "lsp.health_timeout_seconds"),
+    (
+        "TPT_LEAN_LSP_HEALTH_TIMEOUT_SECONDS",
+        "lsp.health_timeout_seconds",
+    ),
 ];
 
 /// Where each configuration value came from. Useful for `doctor` and debugging.

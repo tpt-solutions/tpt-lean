@@ -726,7 +726,10 @@ impl Index {
             .map_err(|e| db_err(e, &self.path))?;
         let rows = stmt
             .query_map([], |r| {
-                Ok(((r.get::<_, String>(0)?, r.get::<_, String>(1)?), r.get::<_, i64>(2)?))
+                Ok((
+                    (r.get::<_, String>(0)?, r.get::<_, String>(1)?),
+                    r.get::<_, i64>(2)?,
+                ))
             })
             .map_err(|e| db_err(e, &self.path))?;
         rows.collect::<rusqlite::Result<HashMap<_, _>>>()
@@ -748,7 +751,9 @@ impl Index {
             )
             .map_err(|e| db_err(e, &self.path))?;
         let rows = stmt
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))
+            .query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+            })
             .map_err(|e| db_err(e, &self.path))?;
         let mut graph: HashMap<String, Vec<String>> = HashMap::new();
         for row in rows {
@@ -800,7 +805,12 @@ impl Index {
     /// Store the last diagnostics (as JSON text, produced by the caller) for `path` at
     /// `content_hash`. Any earlier row for the same path is dropped, so at most one hash per path
     /// is kept. `path` should be a stable project-relative path chosen by the caller.
-    pub fn store_diagnostics(&mut self, path: &str, content_hash: &str, diagnostics_json: &str) -> Result<()> {
+    pub fn store_diagnostics(
+        &mut self,
+        path: &str,
+        content_hash: &str,
+        diagnostics_json: &str,
+    ) -> Result<()> {
         let map = |e| db_err(e, &self.path);
         let tx = self.conn.transaction().map_err(map)?;
         tx.execute("DELETE FROM diagnostics_cache WHERE path = ?1", params![path])
@@ -1266,7 +1276,8 @@ mod tests {
     fn diagnostics_are_returned_only_for_the_same_hash() {
         let mut idx = Index::open_in_memory().unwrap();
         assert!(idx.cached_diagnostics("Main.lean", "h1").unwrap().is_none());
-        idx.store_diagnostics("Main.lean", "h1", "[{\"message\":\"a\"}]").unwrap();
+        idx.store_diagnostics("Main.lean", "h1", "[{\"message\":\"a\"}]")
+            .unwrap();
         assert_eq!(
             idx.cached_diagnostics("Main.lean", "h1").unwrap().as_deref(),
             Some("[{\"message\":\"a\"}]")
@@ -1284,7 +1295,10 @@ mod tests {
         // Storing for the new hash replaces the old row rather than adding a second one.
         idx.store_diagnostics("Main.lean", "h2", "[2]").unwrap();
         assert!(idx.cached_diagnostics("Main.lean", "h1").unwrap().is_none());
-        assert_eq!(idx.cached_diagnostics("Main.lean", "h2").unwrap().as_deref(), Some("[2]"));
+        assert_eq!(
+            idx.cached_diagnostics("Main.lean", "h2").unwrap().as_deref(),
+            Some("[2]")
+        );
         let rows: i64 = idx
             .conn
             .query_row(
@@ -1296,7 +1310,10 @@ mod tests {
         assert_eq!(rows, 1, "one row per path");
         // Other paths are unaffected.
         idx.store_diagnostics("Other.lean", "x", "[3]").unwrap();
-        assert_eq!(idx.cached_diagnostics("Other.lean", "x").unwrap().as_deref(), Some("[3]"));
+        assert_eq!(
+            idx.cached_diagnostics("Other.lean", "x").unwrap().as_deref(),
+            Some("[3]")
+        );
     }
 
     #[test]
@@ -1309,7 +1326,10 @@ mod tests {
         idx.store_diagnostics("Main.lean", "h", "[]").unwrap();
         idx.refresh(&roots).unwrap();
         assert_eq!(idx.status().unwrap().files, files_before);
-        assert_eq!(idx.cached_diagnostics("Main.lean", "h").unwrap().as_deref(), Some("[]"));
+        assert_eq!(
+            idx.cached_diagnostics("Main.lean", "h").unwrap().as_deref(),
+            Some("[]")
+        );
         idx.clear().unwrap();
         assert!(idx.cached_diagnostics("Main.lean", "h").unwrap().is_none());
         let _ = std::fs::remove_dir_all(&dir);
@@ -1344,7 +1364,10 @@ mod tests {
             assert_eq!(st.schema_version, SCHEMA_VERSION);
             assert_eq!(st.symbols, 1, "symbol rows survive the upgrade");
             idx.store_diagnostics("Main.lean", "h", "[]").unwrap();
-            assert_eq!(idx.cached_diagnostics("Main.lean", "h").unwrap().as_deref(), Some("[]"));
+            assert_eq!(
+                idx.cached_diagnostics("Main.lean", "h").unwrap().as_deref(),
+                Some("[]")
+            );
         }
         let _ = std::fs::remove_file(&path);
     }
