@@ -873,9 +873,12 @@ fn mcp_stdio(_ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&["--project"], &["--project"])?;
     let root = project_root(args)?;
     let server = tpt_lean_mcp::Server::new(&root)?;
-    let stdin = std::io::stdin();
-    let stdout = std::io::stdout();
-    tpt_lean_mcp::serve_stdio(&server, stdin.lock(), stdout.lock())?;
+    // The unlocked handles are Send, so the server can read on one thread and answer on another.
+    tpt_lean_mcp::serve_stdio(
+        &server,
+        std::io::BufReader::new(std::io::stdin()),
+        std::io::stdout(),
+    )?;
     Ok(OK)
 }
 

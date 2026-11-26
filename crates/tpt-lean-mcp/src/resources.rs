@@ -5,7 +5,7 @@
 //! `tpt-lean://index/status`, `tpt-lean://profiles`. Templates: `tpt-lean://file/{path}/symbols`,
 //! `tpt-lean://profile/{id}`.
 
-use crate::{RpcError, Server, INTERNAL_ERROR, RESOURCE_NOT_FOUND};
+use crate::{RpcError, Server, INTERNAL_ERROR, INVALID_REQUEST, RESOURCE_NOT_FOUND};
 use serde_json::{json, Value};
 use tpt_lean_adapter as adapter;
 use tpt_lean_core::dirs::ProjectDirs;
@@ -17,6 +17,7 @@ const FILE_PREFIX: &str = "tpt-lean://file/";
 const FILE_SUFFIX: &str = "/symbols";
 const PROFILES: &str = "tpt-lean://profiles";
 const PROFILE_PREFIX: &str = "tpt-lean://profile/";
+const BUILD_LOG: &str = "tpt-lean://build/log";
 
 /// `resources/list`.
 pub(crate) fn list() -> Value {
@@ -41,6 +42,12 @@ pub(crate) fn list() -> Value {
                 "mimeType": "application/json"
             },
             {
+                "uri": BUILD_LOG,
+                "name": "Build log",
+                "description": "The latest `tpt_lean_build_project` result in this server process: success, exit code, diagnostics and the tail of the output. `ran` is false before any build.",
+                "mimeType": "application/json"
+            },
+            {
                 "uri": PROFILES,
                 "name": "Stored profiles",
                 "description": "Ids of profile reports stored under .tpt-lean/profiles (newest first).",
@@ -61,6 +68,18 @@ pub(crate) fn templates() -> Value {
                 "mimeType": "application/json"
             },
             {
+                "uriTemplate": "tpt-lean://file/{path}/ast",
+                "name": "File syntax",
+                "description": "Imports, declarations, tactic blocks and uncertain regions of one .lean file, from the syntax layer (no Lean process). The path is percent-encoded and workspace-relative.",
+                "mimeType": "application/json"
+            },
+            {
+                "uriTemplate": "tpt-lean://file/{path}/goals/{line}/{column}",
+                "name": "Goals at a position",
+                "description": "The goals at a 1-based line and column of one .lean file, from the Lean language server. Needs the build permission.",
+                "mimeType": "application/json"
+            },
+            {
                 "uriTemplate": "tpt-lean://profile/{id}",
                 "name": "Stored profile",
                 "description": "One stored profile report, by id from tpt-lean://profiles.",
@@ -77,9 +96,14 @@ pub(crate) fn read(server: &Server, uri: &str) -> Result<Value, RpcError> {
         PROJECT_DIAGNOSTICS => Ok(project_diagnostics(server)),
         INDEX_STATUS => server.index_status().map_err(|e| (INTERNAL_ERROR, e)),
         PROFILES => Ok(profile_ids(server)),
+        BUILD_LOG => Ok(build_log(server)),
         _ => {
             if let Some(path) = file_symbols_path(uri) {
                 file_symbols(server, &path)
+            } else if let Some(path) = file_ast_path(uri) {
+                file_ast(server, &path)
+            } else if let Some((path, line, column)) = file_goals_position(uri) {
+                file_goals(server, &path, line, column)
             } else if let Some(id) = uri.strip_prefix(PROFILE_PREFIX) {
                 stored_profile(server, id)
             } else {
@@ -167,6 +191,88 @@ fn valid_profile_id(id: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// The last build, or `{"ran": false}` before one ran in this process.
+fn build_log(server: &Server) -> Value {
+    match server.last_build() {
+        Some(report) => json!({ "ran": true, "build": report }),
+        None => json!({ "ran": false, "build": null }),
+    }
+}
+
+/// The `{path}` of a `tpt-lean://file/{path}/ast` URI, percent-decoded.
+pub(crate) fn file_ast_path(uri: &str) -> Option<String> {
+    let inner = uri.strip_prefix(FILE_PREFIX)?.strip_suffix("/ast")?;
+    if inner.is_empty() {
+        return None;
+    }
+    percent_decode(inner)
+}
+
+/// The `{path}`, line and column of a `tpt-lean://file/{path}/goals/{line}/{column}` URI.
+pub(crate) fn file_goals_position(uri: &str) -> Option<(String, usize, usize)> {
+    let inner = uri.strip_prefix(FILE_PREFIX)?;
+    let (head, tail) = inner.rsplit_once("/goals/")?;
+    let (line, column) = tail.split_once('/')?;
+    let line: usize = line.parse().ok().filter(|n| *n >= 1)?;
+    let column: usize = column.parse().ok().filter(|n| *n >= 1)?;
+    let path = percent_decode(head).filter(|p| !p.is_empty())?;
+    Some((path, line, column))
+}
+
+/// Imports, symbols, tactic blocks and uncertain regions of a file, from the syntax layer. No Lean
+/// process runs for this.
+fn file_ast(server: &Server, path: &str) -> Result<Value, RpcError> {
+    let (_, rel, text) = server.lean_file(path).map_err(|e| (RESOURCE_NOT_FOUND, e))?;
+    let parse = tpt_lean_syntax::parse(&text);
+    let imports: Vec<Value> = parse
+        .imports
+        .iter()
+        .map(|i| json!({ "module": i.module, "line": i.line }))
+        .collect();
+    let symbols: Vec<Value> = parse
+        .symbols
+        .iter()
+        .map(|s| {
+            json!({
+                "name": s.name,
+                "short_name": s.short_name,
+                "kind": s.kind,
+                "namespace": s.namespace,
+                "line": s.line,
+                "docstring": s.docstring,
+                "is_private": s.is_private,
+            })
+        })
+        .collect();
+    let tactic_blocks: Vec<Value> = parse
+        .tactic_blocks
+        .iter()
+        .map(|b| json!({ "kind": format!("{:?}", b.kind), "start_line": b.start_line, "end_line": b.end_line }))
+        .collect();
+    let uncertain: Vec<Value> = parse
+        .uncertain
+        .iter()
+        .map(|u| json!({ "start": u.range.start, "end": u.range.end, "reason": u.reason }))
+        .collect();
+    Ok(json!({
+        "file": rel,
+        "certain": parse.is_certain(),
+        "imports": imports,
+        "symbols": symbols,
+        "tactic_blocks": tactic_blocks,
+        "uncertain": uncertain,
+    }))
+}
+
+/// The goals at a position, from the same Lean call as the `tpt_lean_goals_at` tool. Needs the
+/// build permission, like that tool.
+fn file_goals(server: &Server, path: &str, line: usize, column: usize) -> Result<Value, RpcError> {
+    crate::permission::check(&server.config().security, crate::permission::Permission::Build)
+        .map_err(|e| (INVALID_REQUEST, e))?;
+    let args = json!({ "file": path, "line": line, "column": column });
+    server.tool_goals_at(&args).map_err(|e| (INTERNAL_ERROR, e))
+}
+
 /// The `{path}` of a `tpt-lean://file/{path}/symbols` URI, percent-decoded.
 pub(crate) fn file_symbols_path(uri: &str) -> Option<String> {
     let inner = uri.strip_prefix(FILE_PREFIX)?.strip_suffix(FILE_SUFFIX)?;
@@ -235,6 +341,58 @@ mod tests {
     }
 
     #[test]
+    fn goals_and_ast_uris_are_parsed() {
+        assert_eq!(
+            file_ast_path("tpt-lean://file/src%2FMain.lean/ast").as_deref(),
+            Some("src/Main.lean")
+        );
+        assert!(file_ast_path("tpt-lean://file//ast").is_none());
+        assert_eq!(
+            file_goals_position("tpt-lean://file/src%2FMain.lean/goals/12/7"),
+            Some(("src/Main.lean".to_string(), 12, 7))
+        );
+        assert!(file_goals_position("tpt-lean://file/Main.lean/goals/0/7").is_none());
+        assert!(file_goals_position("tpt-lean://file/Main.lean/goals/x/7").is_none());
+        assert!(file_goals_position("tpt-lean://file/Main.lean/goals/7").is_none());
+    }
+
+    #[test]
+    fn ast_resource_reports_imports_symbols_and_blocks() {
+        let dir = temp_project("ast");
+        std::fs::write(
+            dir.join("Sub").join("A.lean"),
+            "import Std\nnamespace N\ntheorem t : True := by\n  trivial\nend N\n",
+        )
+        .unwrap();
+        let s = Server::new(&dir).unwrap();
+        let r = read(&s, "tpt-lean://file/Sub%2FA.lean/ast").unwrap();
+        let body: Value = serde_json::from_str(r["contents"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["file"], "Sub/A.lean");
+        assert_eq!(body["imports"][0]["module"], "Std");
+        assert!(body["symbols"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["kind"] == "theorem"));
+        assert!(!body["tactic_blocks"].as_array().unwrap().is_empty());
+        assert_eq!(body["certain"], true);
+    }
+
+    #[test]
+    fn build_log_is_empty_until_a_build_runs() {
+        let dir = temp_project("buildlog");
+        let s = Server::new(&dir).unwrap();
+        let r = read(&s, BUILD_LOG).unwrap();
+        let body: Value = serde_json::from_str(r["contents"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["ran"], false);
+        s.remember_build(json!({"success": true, "exit_code": 0}));
+        let r = read(&s, BUILD_LOG).unwrap();
+        let body: Value = serde_json::from_str(r["contents"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(body["ran"], true);
+        assert_eq!(body["build"]["success"], true);
+    }
+
+    #[test]
     fn percent_decoding_rejects_bad_escapes() {
         assert_eq!(percent_decode("a%20b").as_deref(), Some("a b"));
         assert_eq!(percent_decode("a%zz"), None);
@@ -252,15 +410,29 @@ mod tests {
             .collect();
         assert_eq!(
             uris,
-            vec![PROJECT_INFO, PROJECT_DIAGNOSTICS, INDEX_STATUS, PROFILES]
+            vec![
+                PROJECT_INFO,
+                PROJECT_DIAGNOSTICS,
+                INDEX_STATUS,
+                BUILD_LOG,
+                PROFILES
+            ]
         );
+        let listed = templates();
+        let templates: Vec<&str> = listed["resourceTemplates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|t| t["uriTemplate"].as_str().unwrap())
+            .collect();
         assert_eq!(
-            templates()["resourceTemplates"][0]["uriTemplate"],
-            "tpt-lean://file/{path}/symbols"
-        );
-        assert_eq!(
-            templates()["resourceTemplates"][1]["uriTemplate"],
-            "tpt-lean://profile/{id}"
+            templates,
+            vec![
+                "tpt-lean://file/{path}/symbols",
+                "tpt-lean://file/{path}/ast",
+                "tpt-lean://file/{path}/goals/{line}/{column}",
+                "tpt-lean://profile/{id}",
+            ]
         );
     }
 

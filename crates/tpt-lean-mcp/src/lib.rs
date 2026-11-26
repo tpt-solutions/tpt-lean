@@ -30,7 +30,40 @@ use tpt_lean_core::policy::CancelToken;
 use tpt_lean_core::Result;
 
 /// Protocol revision this server implements.
-pub const PROTOCOL_VERSION: &str = "2024-11-05";
+use std::collections::VecDeque;
+use std::sync::mpsc::{self, TryRecvError};
+use std::thread;
+use std::time::Duration;
+
+/// The revision the server negotiates when a client names none (the newest one that uses the
+/// `initialize` handshake).
+pub const PROTOCOL_VERSION: &str = "2025-11-25";
+
+/// The newest revision the server knows. It has no `initialize` handshake: capabilities come from
+/// `server/discover`, and every request names its version in `_meta`.
+pub const LATEST_PROTOCOL_VERSION: &str = "2026-07-28";
+
+/// Every revision the server speaks, newest first. Features are the same in each: tools, resources,
+/// prompts, progress and cancellation. Tasks and subscriptions are not implemented.
+pub const SUPPORTED_PROTOCOL_VERSIONS: &[&str] = &[
+    "2026-07-28",
+    "2025-11-25",
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
+
+/// `_meta` key that carries the protocol version of each request in the newest revision.
+const META_PROTOCOL_VERSION: &str = "io.modelcontextprotocol/protocolVersion";
+
+/// Error code for a request whose protocol version the server does not support.
+pub(crate) const UNSUPPORTED_PROTOCOL_VERSION: i64 = -32022;
+
+/// Instructions returned with `initialize` and `server/discover`.
+const INSTRUCTIONS: &str = "tpt-lean: Lean project tools. Read tools search the index and format text; \
+build and profile tools run Lake and Lean and need the build or profile permission. Resources \
+expose project info, cached diagnostics, the index status, file symbols and syntax (ast), goals \
+at a position, the last build log and stored profiles.";
 
 pub(crate) const PARSE_ERROR: i64 = -32700;
 pub(crate) const INVALID_REQUEST: i64 = -32600;
@@ -61,6 +94,8 @@ pub struct Server {
     /// Latest diagnostics per workspace-relative file, from check and build runs.
     diagnostics: Mutex<BTreeMap<String, Vec<Value>>>,
     requests: Mutex<Requests>,
+    /// Result of the latest `tpt_lean_build_project` call in this process.
+    last_build: Mutex<Option<Value>>,
 }
 
 impl Server {
@@ -74,6 +109,7 @@ impl Server {
             config,
             diagnostics: Mutex::new(BTreeMap::new()),
             requests: Mutex::new(Requests::default()),
+            last_build: Mutex::new(None),
         })
     }
 
@@ -94,6 +130,12 @@ impl Server {
     /// Handle one JSON-RPC message. Returns `None` for notifications and for requests whose
     /// client cancelled them before the reply was due.
     pub fn handle(&self, msg: &Value) -> Option<Value> {
+        self.handle_with(msg, &mut |_| {})
+    }
+
+    /// Like [`Server::handle`]. While a tool call that carries a `_meta.progressToken` runs, its
+    /// `notifications/progress` messages go to `progress` before the reply.
+    pub fn handle_with(&self, msg: &Value, progress: &mut dyn FnMut(Value)) -> Option<Value> {
         if msg.is_array() {
             return Some(error_response(
                 Value::Null,
@@ -126,12 +168,32 @@ impl Server {
             return None;
         };
 
+        // The newest revision names its version in every request. Refuse versions we do not speak,
+        // and say which ones we do.
+        if let Some(requested) = params
+            .get("_meta")
+            .and_then(|m| m.get(META_PROTOCOL_VERSION))
+            .and_then(Value::as_str)
+        {
+            if !SUPPORTED_PROTOCOL_VERSIONS.contains(&requested) {
+                return Some(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": UNSUPPORTED_PROTOCOL_VERSION,
+                        "message": format!("unsupported protocol version {requested}"),
+                        "data": { "supported": SUPPORTED_PROTOCOL_VERSIONS, "requested": requested }
+                    }
+                }));
+            }
+        }
+
         let key = id.to_string();
         let token = CancelToken::new();
         if !self.begin_request(&key, &token) {
             return None;
         }
-        let result = self.dispatch(method, &params, &token);
+        let result = self.dispatch(method, &params, &token, progress);
         if self.finish_request(&key) {
             return None;
         }
@@ -197,12 +259,28 @@ impl Server {
         method: &str,
         params: &Value,
         cancel: &CancelToken,
+        progress: &mut dyn FnMut(Value),
     ) -> std::result::Result<Value, RpcError> {
         match method {
-            "initialize" => Ok(json!({
-                "protocolVersion": PROTOCOL_VERSION,
-                "capabilities": { "tools": {}, "resources": {}, "prompts": {} },
-                "serverInfo": { "name": "tpt-lean", "version": env!("CARGO_PKG_VERSION") }
+            "initialize" => {
+                // Answer with the requested revision when we speak it, and otherwise with ours.
+                let requested = str_param(params, "protocolVersion");
+                let version = requested
+                    .as_deref()
+                    .and_then(|r| SUPPORTED_PROTOCOL_VERSIONS.iter().find(|v| **v == r))
+                    .copied()
+                    .unwrap_or(PROTOCOL_VERSION);
+                Ok(json!({
+                    "protocolVersion": version,
+                    "capabilities": capabilities(),
+                    "serverInfo": { "name": "tpt-lean", "version": env!("CARGO_PKG_VERSION") },
+                    "instructions": INSTRUCTIONS,
+                }))
+            }
+            "server/discover" => Ok(json!({
+                "supportedVersions": SUPPORTED_PROTOCOL_VERSIONS,
+                "capabilities": capabilities(),
+                "instructions": INSTRUCTIONS,
             })),
             "ping" => Ok(json!({})),
             "tools/list" => Ok(json!({ "tools": tool_descriptors() })),
@@ -212,7 +290,17 @@ impl Server {
                 if tools::find(&name).is_none() {
                     return Err((INVALID_PARAMS, format!("unknown tool {name}")));
                 }
-                Ok(self.call_tool(&name, params, cancel))
+                // With a progress token, report that the call started and that it finished. A
+                // single tool call has no finer steps to report.
+                let token = params.get("_meta").and_then(|m| m.get("progressToken")).cloned();
+                if let Some(token) = &token {
+                    progress(progress_note(token, 0.0, 1.0, &format!("running {name}")));
+                }
+                let result = self.call_tool(&name, params, cancel);
+                if let Some(token) = &token {
+                    progress(progress_note(token, 1.0, 1.0, &format!("{name} finished")));
+                }
+                Ok(result)
             }
             "resources/list" => Ok(resources::list()),
             "resources/templates/list" => Ok(resources::templates()),
@@ -225,6 +313,16 @@ impl Server {
             "prompts/get" => prompts::get(params),
             _ => Err((METHOD_NOT_FOUND, format!("unknown method {method}"))),
         }
+    }
+
+    /// Remember the result of the latest build, for the build-log resource.
+    pub(crate) fn remember_build(&self, result: Value) {
+        *self.last_build.lock().unwrap_or_else(|e| e.into_inner()) = Some(result);
+    }
+
+    /// The result of the latest build in this process, if one ran.
+    pub(crate) fn last_build(&self) -> Option<Value> {
+        self.last_build.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Run a tool after its permission check. Failures are tool errors (`isError: true`),
@@ -270,36 +368,156 @@ fn str_param(params: &Value, key: &str) -> Option<String> {
     params.get(key).and_then(Value::as_str).map(str::to_string)
 }
 
+/// The capabilities this server offers. None of them change while it runs, so `listChanged` is false
+/// everywhere and nothing is subscribable.
+fn capabilities() -> Value {
+    json!({
+        "tools": { "listChanged": false },
+        "resources": { "subscribe": false, "listChanged": false },
+        "prompts": { "listChanged": false },
+    })
+}
+
+/// A `notifications/progress` message for `token`.
+fn progress_note(token: &Value, progress: f64, total: f64, message: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/progress",
+        "params": { "progressToken": token, "progress": progress, "total": total, "message": message },
+    })
+}
+
 pub(crate) fn error_response(id: Value, code: i64, message: &str) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } })
 }
 
-/// Serve JSON-RPC over newline-delimited stdio until EOF.
+/// Serve JSON-RPC over newline-delimited stdio until the input ends.
 ///
-/// Requests are answered in order on the calling thread. The loop is synchronous, so a
-/// cancellation can only refer to a request that has already been answered; it is accepted
-/// and has no effect. In-flight cancellation applies to the HTTP transport.
-pub fn serve_stdio<R: BufRead, W: Write>(server: &Server, input: R, mut output: W) -> std::io::Result<()> {
-    for line in input.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let reply = match serde_json::from_str::<Value>(&line) {
-            Ok(msg) => {
-                if let Some(id) = msg.get("id").filter(|_| msg.get("method").is_some()) {
-                    server.note_received(&id.to_string());
+/// Replies go out in the order the requests arrived. Each request runs on a worker thread, while
+/// the calling thread keeps reading input. A `notifications/cancelled` that arrives during a tool call
+/// therefore stops that call. A tool call with a progress token gets `notifications/progress`
+/// messages before its reply.
+pub fn serve_stdio<R: BufRead + Send, W: Write + Send>(
+    server: &Server,
+    input: R,
+    output: W,
+) -> std::io::Result<()> {
+    let output = Mutex::new(output);
+    let failure: Mutex<Option<std::io::Error>> = Mutex::new(None);
+    let (line_tx, line_rx) = mpsc::channel::<std::io::Result<String>>();
+    std::thread::scope(|scope| {
+        scope.spawn(move || {
+            for line in input.lines() {
+                let failed = line.is_err();
+                if line_tx.send(line).is_err() || failed {
+                    break;
                 }
-                server.handle(&msg)
             }
-            Err(e) => Some(error_response(Value::Null, PARSE_ERROR, &e.to_string())),
-        };
-        if let Some(reply) = reply {
-            writeln!(output, "{reply}")?;
-            output.flush()?;
+        });
+
+        let mut queue: VecDeque<String> = VecDeque::new();
+        let mut input_open = true;
+        // Signalled (by disconnect) when the worker for the current request has finished.
+        let mut busy: Option<mpsc::Receiver<()>> = None;
+        loop {
+            // Read what is available. A cancellation is applied at once, even while a request runs;
+            // everything else waits its turn in the queue.
+            while input_open {
+                match line_rx.try_recv() {
+                    Ok(Ok(line)) => {
+                        if line.trim().is_empty() {
+                            continue;
+                        }
+                        if is_cancellation(&line) {
+                            if let Ok(msg) = serde_json::from_str::<Value>(&line) {
+                                server.handle(&msg);
+                            }
+                        } else {
+                            if let Some(id) = serde_json::from_str::<Value>(&line)
+                                .ok()
+                                .and_then(|m| m.get("id").filter(|_| m.get("method").is_some()).cloned())
+                            {
+                                server.note_received(&id.to_string());
+                            }
+                            queue.push_back(line);
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        *failure.lock().unwrap_or_else(|x| x.into_inner()) = Some(e);
+                        input_open = false;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => input_open = false,
+                }
+            }
+
+            if let Some(done) = &busy {
+                if !matches!(done.try_recv(), Err(TryRecvError::Empty)) {
+                    busy = None;
+                }
+            }
+            if busy.is_none() {
+                if let Some(line) = queue.pop_front() {
+                    let (done_tx, done_rx) = mpsc::channel::<()>();
+                    let output = &output;
+                    let failure = &failure;
+                    scope.spawn(move || {
+                        // Dropping `done_tx` at the end tells the loop the worker has finished.
+                        let _done = done_tx;
+                        serve_one(server, &line, output, failure);
+                    });
+                    busy = Some(done_rx);
+                }
+            }
+            if busy.is_none() && queue.is_empty() && !input_open {
+                break;
+            }
+            thread::sleep(Duration::from_millis(2));
+        }
+    });
+    match failure.into_inner().unwrap_or_else(|e| e.into_inner()) {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
+}
+
+/// Whether a line is a `notifications/cancelled` message.
+fn is_cancellation(line: &str) -> bool {
+    serde_json::from_str::<Value>(line)
+        .ok()
+        .and_then(|m| {
+            m.get("method")
+                .and_then(Value::as_str)
+                .map(|s| s == "notifications/cancelled")
+        })
+        .unwrap_or(false)
+}
+
+/// Answer one line: its reply, and any progress messages before it.
+fn serve_one<W: Write>(
+    server: &Server,
+    line: &str,
+    output: &Mutex<W>,
+    failure: &Mutex<Option<std::io::Error>>,
+) {
+    let reply = match serde_json::from_str::<Value>(line) {
+        Ok(msg) => server.handle_with(&msg, &mut |note| write_line(output, failure, &note)),
+        Err(e) => Some(error_response(Value::Null, PARSE_ERROR, &e.to_string())),
+    };
+    if let Some(reply) = reply {
+        write_line(output, failure, &reply);
+    }
+}
+
+/// Write one message and flush. The first write error is kept for [`serve_stdio`] to return.
+fn write_line<W: Write>(output: &Mutex<W>, failure: &Mutex<Option<std::io::Error>>, value: &Value) {
+    let mut out = output.lock().unwrap_or_else(|e| e.into_inner());
+    if let Err(e) = writeln!(out, "{value}").and_then(|()| out.flush()) {
+        let mut slot = failure.lock().unwrap_or_else(|x| x.into_inner());
+        if slot.is_none() {
+            *slot = Some(e);
         }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -310,6 +528,90 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("tpt-mcp-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         Server::new(&dir).unwrap()
+    }
+
+    #[test]
+    fn initialize_negotiates_the_requested_version() {
+        let s = server();
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26"}}))
+            .unwrap();
+        assert_eq!(r["result"]["protocolVersion"], "2025-03-26");
+        // A version we do not speak gets the server's default, which the client may then reject.
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":2,"method":"initialize","params":{"protocolVersion":"2099-01-01"}}))
+            .unwrap();
+        assert_eq!(r["result"]["protocolVersion"], PROTOCOL_VERSION);
+        assert!(r["result"]["capabilities"]["tools"].is_object());
+        assert!(r["result"]["instructions"].as_str().unwrap().contains("tpt-lean"));
+    }
+
+    #[test]
+    fn server_discover_lists_every_supported_revision() {
+        let r = server()
+            .handle(&json!({"jsonrpc":"2.0","id":3,"method":"server/discover","params":{}}))
+            .unwrap();
+        let versions: Vec<&str> = r["result"]["supportedVersions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert_eq!(versions, SUPPORTED_PROTOCOL_VERSIONS);
+        assert_eq!(versions[0], LATEST_PROTOCOL_VERSION);
+        assert_eq!(r["result"]["capabilities"]["prompts"]["listChanged"], false);
+    }
+
+    #[test]
+    fn a_request_for_an_unsupported_version_is_refused_with_the_supported_list() {
+        let s = server();
+        let meta = json!({ "io.modelcontextprotocol/protocolVersion": "2099-01-01" });
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":4,"method":"ping","params":{"_meta": meta}}))
+            .unwrap();
+        assert_eq!(r["error"]["code"], UNSUPPORTED_PROTOCOL_VERSION);
+        assert_eq!(r["error"]["data"]["requested"], "2099-01-01");
+        assert!(r["error"]["data"]["supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "2026-07-28"));
+
+        let meta = json!({ "io.modelcontextprotocol/protocolVersion": LATEST_PROTOCOL_VERSION });
+        let r = s
+            .handle(&json!({"jsonrpc":"2.0","id":5,"method":"ping","params":{"_meta": meta}}))
+            .unwrap();
+        assert_eq!(r["result"], json!({}));
+    }
+
+    #[test]
+    fn a_tool_call_with_a_progress_token_reports_progress_before_the_reply() {
+        let s = server();
+        let mut notes: Vec<Value> = Vec::new();
+        let reply = s.handle_with(
+            &json!({"jsonrpc":"2.0","id":6,"method":"tools/call","params":{
+                "name":"tpt_lean_format_text",
+                "arguments":{"text":"x  
+"},
+                "_meta":{"progressToken":"tok-1"}}}),
+            &mut |n| notes.push(n),
+        );
+        assert!(reply.unwrap()["result"]["isError"] == false);
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert_eq!(notes[0]["method"], "notifications/progress");
+        assert_eq!(notes[0]["params"]["progressToken"], "tok-1");
+        assert_eq!(notes[0]["params"]["progress"], 0.0);
+        assert_eq!(notes[1]["params"]["progress"], 1.0);
+
+        // Without a token there are no progress messages.
+        let mut none: Vec<Value> = Vec::new();
+        s.handle_with(
+            &json!({"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
+                "name":"tpt_lean_format_text","arguments":{"text":"x
+"}}}),
+            &mut |n| none.push(n),
+        );
+        assert!(none.is_empty());
     }
 
     #[test]

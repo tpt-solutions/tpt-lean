@@ -1,6 +1,9 @@
 # MCP server
 
-`tpt-lean-mcp` implements the Model Context Protocol (revision `2024-11-05`) over JSON-RPC 2.0.
+`tpt-lean-mcp` implements the Model Context Protocol over JSON-RPC 2.0. It speaks revisions
+`2026-07-28`, `2025-11-25`, `2025-06-18`, `2025-03-26` and `2024-11-05` (checked against the
+official schemas in `modelcontextprotocol/modelcontextprotocol`). The same tools, resources,
+prompts, progress and cancellation work in each revision.
 It exposes tools, read-only resources, and prompt templates for a single project.
 
 ## Running it
@@ -112,6 +115,9 @@ Notes:
 | `tpt-lean://project/diagnostics` | diagnostics cached from the latest check and build runs (empty until one runs) |
 | `tpt-lean://index/status` | same as `tpt_lean_index_status` |
 | `tpt-lean://file/{path}/symbols` | top-level declarations of one `.lean` file; `{path}` is percent-encoded and workspace-relative |
+| `tpt-lean://file/{path}/ast` | the syntax layer's view of one file: imports, symbols, tactic blocks and uncertain regions. No Lean process runs |
+| `tpt-lean://file/{path}/goals/{line}/{column}` | the goals at a 1-based position, from the same Lean call as `tpt_lean_goals_at`. Needs the build permission |
+| `tpt-lean://build/log` | the latest `tpt_lean_build_project` result in this server process (`ran: false` before a build) |
 | `tpt-lean://profiles` | ids of profile reports stored in `.tpt-lean/profiles` by the server's `profile.run` method, newest first |
 | `tpt-lean://profile/{id}` | one stored profile report; ids are validated, so no other file can be read |
 
@@ -128,16 +134,27 @@ Each fills `{{argument}}` placeholders and points the model at the tools to use.
 
 ## Protocol behaviour
 
-- `initialize`, `ping`, `tools/*`, `resources/*`, `prompts/*`.
-- An unknown tool name is a JSON-RPC error (`-32602`). Failed tool calls are tool errors.
-- Batch requests are rejected.
-- `notifications/cancelled` is honoured for requests still pending on the HTTP transport:
-  a cancelled request's reply is dropped. `tpt_lean_check_file` and `tpt_lean_build_project`
-  pass their cancellation token to the adapter's process runner, which is meant to stop the
-  process (not yet verified by a test). Language-server calls cannot be interrupted and run to
-  their timeout. Over stdio the loop is synchronous, so a cancel can only refer to a request already
-  answered and has no effect.
-- Progress notifications are not sent.
+- Lifecycle. `initialize` answers with the revision the client asked for when the server speaks
+  it, and with the default (`2025-11-25`) otherwise; the client decides whether to continue.
+  `server/discover` (required by the newest revision) lists `supportedVersions`, the capabilities
+  and instructions.
+- Per-request version. In the newest revision every request carries
+  `_meta["io.modelcontextprotocol/protocolVersion"]`. A version the server does not speak is refused
+  with error `-32022`, whose `data.supported` lists the versions it does speak.
+- Methods: `initialize`, `server/discover`, `ping`, `tools/list`, `tools/call`, `resources/list`,
+  `resources/templates/list`, `resources/read`, `prompts/list`, `prompts/get`.
+- Not implemented: tasks (`tasks/*`), subscriptions (`resources/subscribe`, `subscriptions/listen`),
+  logging, completion, sampling and elicitation, pagination, and the `list_changed` notifications.
+  The capabilities say so (`listChanged` and `subscribe` are false).
+- Progress. A `tools/call` with `_meta.progressToken` gets a `notifications/progress` message when it
+  starts (progress 0 of 1) and another when it finishes (1 of 1), before its reply. A tool has no
+  finer steps to report, so the progress is coarse. Over HTTP the messages are not sent.
+- Cancellation. Over stdio, requests run one after another on a worker thread while the input is
+  still read. A `notifications/cancelled` that arrives during a tool call stops that call: the Lean or
+  Lake process is killed, and no reply is sent for the cancelled request. Requests after it are still
+  answered. The stdio test starts a real Lean check and cancels it (`crates/tpt-lean-mcp/tests/stdio.rs`).
+- Errors. An unknown tool name is a JSON-RPC error (`-32602`). A failed tool call is a tool result with
+  `isError: true`, so the model can read the message. Batch requests are rejected.
 
 ## HTTP transport
 

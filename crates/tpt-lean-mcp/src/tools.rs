@@ -604,7 +604,7 @@ impl Server {
         }
         let output = &result.output;
         let combined = format!("{}{}", output.stdout, output.stderr);
-        Ok(json!({
+        let report = json!({
             "target": target,
             "success": output.success(),
             "timed_out": output.timed_out,
@@ -613,10 +613,13 @@ impl Server {
             "duration_ms": output.duration.as_millis() as u64,
             "diagnostics": diagnostics,
             "output_tail": tail_chars(&combined, OUTPUT_TAIL_CHARS),
-        }))
+        });
+        // Kept for the build-log resource (`tpt-lean://build/log`).
+        self.remember_build(report.clone());
+        Ok(report)
     }
 
-    fn tool_goals_at(&self, args: &Value) -> Result<Value, String> {
+    pub(crate) fn tool_goals_at(&self, args: &Value) -> Result<Value, String> {
         let (path, rel, text) = self.lean_file_arg(args)?;
         let line = arg_position(args, "line")?;
         let column = arg_position(args, "column")?;

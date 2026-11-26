@@ -231,8 +231,8 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 ## Phase 4 — MCP server
 Crate: `tpt-lean-mcp` (hand-written over serde_json)
 
-- [ ] MCP protocol implementation (initialize, capabilities, tools/list, tools/call, resources, prompts, cancellation, progress)
-- [ ] Verify target MCP protocol version(s)
+- [x] MCP protocol implementation (initialize, capabilities, tools/list, tools/call, resources, prompts, cancellation, progress; server/discover and the per-request version of the newest revision; tasks, subscriptions, logging, sampling, elicitation and completion are not implemented, see docs/mcp.md)
+- [x] Verify target MCP protocol version(s) (checked against the official schemas: 2026-07-28 is the latest and needs no initialize; 2025-11-25 is the default when a client names no version; 2025-06-18, 2025-03-26 and 2024-11-05 are also spoken)
 - [x] stdio transport (first)
 - [x] `tpt-lean mcp stdio`
 - [x] Tool `tpt_lean_search`
@@ -247,11 +247,11 @@ Crate: `tpt-lean-mcp` (hand-written over serde_json)
 - [x] Tool `tpt_lean_imports_suggest`
 - [x] Tool `tpt_lean_index_status`
 - [x] Tool input/output JSON schemas
-- [ ] Resources: project info, diagnostics, index status, file symbols/ast/goals, build log, profile (done: project info, diagnostics, index status, file symbols, stored profiles; missing: ast/goals, build log)
+- [x] Resources: project info, diagnostics, index status, file symbols, file syntax (`ast`), goals at a position, build log, stored profiles
 - [x] Optional prompts: explain_lean_error, find_lemma_for_goal, reduce_proof_timeout, suggest_imports, summarize_proof_state
 - [x] Local HTTP/SSE transport
 - [x] Permission model (default read-only, explicit write/build/profile)
-- [ ] Tests: schema validation, permission enforcement, streaming cancellation, timeouts
+- [ ] Tests: schema validation, permission enforcement, streaming cancellation, timeouts (done: unit tests for negotiation, discovery, the unsupported-version error and progress; permissions; a stdio test cancels a running Lean check. Not done: validating messages against the official JSON schemas, and timeouts as a test)
 - [x] Client setup docs (Claude Code, Claude Desktop, other MCP clients) (`docs/mcp.md`; Desktop config not yet tested)
 
 ---

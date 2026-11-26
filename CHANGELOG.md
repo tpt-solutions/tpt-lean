@@ -79,6 +79,14 @@ Initial development version `0.1.0`. Nothing has been published yet.
   and prints the goals before the innermost tactic at a position, read from the info trees. `tpt-lean
   goals FILE:LINE:COL --sidecar` uses it without a language server. The sidecar now links with
   `supportInterpreter`, which needed the toolchain's `bin` on `PATH` at run time.
+- MCP protocol revisions 2026-07-28, 2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. `initialize`
+  negotiates; `server/discover` lists the versions; a request naming an unsupported version gets
+  error -32022 with the supported list.
+- MCP progress: a `tools/call` with a progress token gets progress messages before its reply.
+- MCP stdio cancellation: requests run on a worker while input is still read, so a cancellation stops a
+  running tool (a Lean check is killed). Tested with a real slow check.
+- MCP resources: `tpt-lean://file/{path}/ast`, `tpt-lean://file/{path}/goals/{line}/{column}` and
+  `tpt-lean://build/log`.
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the

@@ -483,7 +483,7 @@ fn stdio_session_lists_resources_prompts_and_denies_writes() {
     let dir = project_owned("stdio-session", files);
     let server = Server::new(&dir).unwrap();
     let input = [
-        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}).to_string(),
+        json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}).to_string(),
         json!({"jsonrpc":"2.0","method":"notifications/initialized"}).to_string(),
         json!({"jsonrpc":"2.0","id":2,"method":"resources/list"}).to_string(),
         json!({"jsonrpc":"2.0","id":3,"method":"prompts/get","params":{"name":"find_lemma_for_goal","arguments":{"goal":"⊢ True"}}}).to_string(),
@@ -499,7 +499,7 @@ fn stdio_session_lists_resources_prompts_and_denies_writes() {
         .collect();
     assert_eq!(replies.len(), 4, "notifications get no reply");
     assert_eq!(replies[0]["result"]["protocolVersion"], "2024-11-05");
-    assert_eq!(replies[1]["result"]["resources"].as_array().unwrap().len(), 4);
+    assert_eq!(replies[1]["result"]["resources"].as_array().unwrap().len(), 5);
     assert!(replies[2]["result"]["messages"][0]["content"]["text"]
         .as_str()
         .unwrap()
