@@ -438,24 +438,30 @@ mod tests {
                 ],
             )
         };
-        let policy = ProcessPolicy {
-            timeout: Duration::from_secs(3),
-            ..ProcessPolicy::default()
-        };
-        let started = Instant::now();
-        let out = run(&prog, &args, None, &policy, &CancelToken::new()).unwrap();
-        assert!(out.timed_out);
-        // The grandchild sleeps 60 s and holds the output pipes; `run` must not wait for it.
-        assert!(
-            started.elapsed() < Duration::from_secs(20),
-            "run blocked on the grandchild for {:?}",
-            started.elapsed()
-        );
-        let pid: u32 = out
-            .stdout
-            .lines()
-            .find_map(|l| l.trim().parse().ok())
-            .unwrap_or_else(|| panic!("no grandchild pid in output: {out:?}"));
+        // The timeout clock starts at spawn. A cold PowerShell start can take longer than a short
+        // timeout on a loaded machine, and then the shell is killed before it prints its pid. That
+        // says nothing about the kill, so retry with a longer timeout until the pid arrives.
+        let mut found = None;
+        for timeout_secs in [3, 15, 45] {
+            let policy = ProcessPolicy {
+                timeout: Duration::from_secs(timeout_secs),
+                ..ProcessPolicy::default()
+            };
+            let started = Instant::now();
+            let out = run(&prog, &args, None, &policy, &CancelToken::new()).unwrap();
+            assert!(out.timed_out);
+            // The grandchild sleeps 60 s and holds the output pipes; `run` must not wait for it.
+            assert!(
+                started.elapsed() < Duration::from_secs(timeout_secs + 15),
+                "run blocked on the grandchild for {:?}",
+                started.elapsed()
+            );
+            if let Some(pid) = out.stdout.lines().find_map(|l| l.trim().parse::<u32>().ok()) {
+                found = Some(pid);
+                break;
+            }
+        }
+        let pid = found.expect("no grandchild pid printed even with a 45 s timeout");
         std::thread::sleep(Duration::from_millis(300));
         let alive = pid_alive(pid);
         if alive {
