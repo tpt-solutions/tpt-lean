@@ -61,7 +61,13 @@ writes cache entries yet; the lookup is defined so callers can rely on the shape
   every header declaration resolves in the library.
 - C: `crates/tpt-lean-ffi/tests/c/harness.c`. `build_msvc.bat` (MSVC; verified here) or
   `build.sh` (gcc/clang; not run, no such compiler was available).
-- Go cgo: not written.
+- Go, without cgo: `crates/tpt-lean-ffi/tests/go` loads the Windows DLL with `syscall.LoadDLL` and
+  checks the ABI version, context lifecycle, formatting, error reporting, parsing and index open.
+  Run `cargo build -p tpt-lean-ffi` and then `go test ./...` in that directory. Go's `vet` reports
+  `possible misuse of unsafe.Pointer` for the one `uintptr` to pointer conversion that reads C
+  strings; that conversion is the usual way to read foreign memory without cgo.
+- Go with cgo: not written. This machine has no C compiler, so a cgo package could not be built
+  or run here.
 
 ## Not in ABI 1
 

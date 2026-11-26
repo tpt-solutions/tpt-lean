@@ -198,7 +198,7 @@ Crates: `tpt-lean-ffi`, `tpt-lean-server`
 - [x] No panic unwinding across boundary (`catch_unwind` on every export)
 - [ ] No Rust types across boundary; explicit lengths; explicit ownership
 - [x] Document thread safety per handle type
-- [ ] Tests: C harness, Python ctypes, Go cgo
+- [ ] Tests: C harness, Python ctypes, Go cgo (C harness and Python ctypes run; Go runs without cgo through `syscall.LoadDLL` on Windows; Go with cgo needs a C compiler, which is not installed)
 - [x] FFI tests: memory frees, invalid args, error handling, ABI version, concurrent reads (`tests/abi.rs`, `tests/ffi/test_ffi.py`, `tests/c/harness.c`; C harness not run in this environment, no compiler found)
 - [ ] Windows/Linux/macOS build of shared lib
 - [ ] Later (tracked, not MVP): build orchestration, profiling, goals, async callbacks, event streams

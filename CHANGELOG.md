@@ -45,6 +45,8 @@ Initial development version `0.1.0`. Nothing has been published yet.
   locally. The sidecar builds per version (`lake -R build -K buildDirName=.lake/build-v4.35.0`), and
   docstrings are trimmed because 4.35 keeps a trailing space that 4.36 drops. CI gained a
   `lean-integration` job for both versions (not run on GitHub).
+- Go binding tests without cgo (`crates/tpt-lean-ffi/tests/go`): six tests load the Windows DLL with
+  `syscall.LoadDLL` and pass against the debug build.
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the
