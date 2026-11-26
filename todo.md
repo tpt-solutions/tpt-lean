@@ -156,7 +156,7 @@ Crate: `tpt-lean-adapter`
 - [ ] Version compatibility handling across Lean versions (partial: `doctor` reports the tested-version set and pin mismatches; language-server answers carry the Lean version and whether it is tested, and `explain` warns when it is not; features are deliberately not blocked; only 4.36.0 is tested)
 
 ### Level 3 — Lean sidecar
-- [ ] Small Lean package emitting structured JSON (symbols, types, goals) using Lean APIs (done: `lean/tpt-lean-sidecar` emits declarations with kind, pretty type and docstring, schema v1; goals not yet)
+- [x] Small Lean package emitting structured JSON (symbols, types, goals) using Lean APIs (`lean/tpt-lean-sidecar` emits declarations with kind, pretty type and docstring, and goals at a position (`tpt_sidecar goals FILE LINE COL`, schema v1; `goals FILE:LINE:COL --sidecar`); verified against Lean 4.36.0 and the `plainGoal` result for the same position)
 - [x] Sidecar licensed MIT OR Apache-2.0 like the rest (SPDX headers in each file)
 - [x] Sidecar build/versioning against current + previous stable Lean (`lake -R build -K buildDirName=.lake/build-v4.35.0` under `ELAN_TOOLCHAIN=leanprover/lean4:v4.35.0`; tests pick the binary for the active version; docstring whitespace normalised across versions)
 - [x] Semantic enrichment into index (declaration types, docstrings; via `tpt-lean index sidecar`)

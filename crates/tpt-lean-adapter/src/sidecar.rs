@@ -19,6 +19,8 @@ pub const SCHEMA_VERSION: u64 = 1;
 
 /// Exit code the sidecar uses when the module cannot be imported.
 const EXIT_MODULE_NOT_IMPORTED: i32 = 3;
+/// Exit code the sidecar uses when a source file cannot be read or elaborated (goals mode).
+const EXIT_FILE_NOT_ELABORATED: i32 = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SidecarReport {
@@ -83,6 +85,28 @@ pub fn validate_module_name(name: &str) -> Result<&str> {
 /// passed as `LEAN_SYSROOT` so the sidecar finds Lean's own library without needing `lean` on
 /// PATH. `cwd` is the Lake project root when the module comes from a project, so that the
 /// search path set by `lake env` (`LEAN_PATH`) applies.
+/// The policy for a sidecar run: `LEAN_SYSROOT` for Lean's library, and the toolchain's `bin`
+/// directory first on `PATH`. The sidecar links Lean's shared library, which the loader finds
+/// through `PATH` on Windows.
+fn sidecar_policy(policy: &ProcessPolicy, sysroot: &Path, lean_path: Option<&str>) -> ProcessPolicy {
+    let mut policy = policy.clone();
+    policy
+        .extra_env
+        .push(("LEAN_SYSROOT".to_string(), sysroot.display().to_string()));
+    let sep = if cfg!(windows) { ";" } else { ":" };
+    let current = std::env::var("PATH").unwrap_or_default();
+    policy.extra_env.push((
+        "PATH".to_string(),
+        format!("{}{sep}{current}", sysroot.join("bin").display()),
+    ));
+    if let Some(lean_path) = lean_path {
+        policy
+            .extra_env
+            .push(("LEAN_PATH".to_string(), lean_path.to_string()));
+    }
+    policy
+}
+
 pub fn run_sidecar(
     exe: &Path,
     sysroot: &Path,
@@ -92,10 +116,7 @@ pub fn run_sidecar(
     cancel: &CancelToken,
 ) -> Result<SidecarReport> {
     let module = validate_module_name(module)?;
-    let mut policy = policy.clone();
-    policy
-        .extra_env
-        .push(("LEAN_SYSROOT".to_string(), sysroot.display().to_string()));
+    let policy = sidecar_policy(policy, sysroot, None);
     let out: ProcessOutput = run(exe, &[module.to_string()], cwd, &policy, cancel)?;
     if out.timed_out || out.cancelled || out.memory_exceeded || out.output_truncated {
         return Err(Error::new(
@@ -200,6 +221,90 @@ pub fn lean_path_for(
         .stdout
         .lines()
         .find_map(|l| l.strip_prefix("LEAN_PATH=").map(str::to_string))
+}
+
+/// Goals before the innermost tactic at a 1-based `line` and `column` of `file`, from the
+/// sidecar's `goals` mode. `file` is resolved against `cwd`, the project root. `lean_path` is the
+/// project's search path (see [`lean_path_for`]) so that project imports resolve. Empty when no
+/// tactic is at the position.
+pub fn run_sidecar_goals(
+    exe: &Path,
+    sysroot: &Path,
+    site: &GoalSite<'_>,
+    cwd: Option<&Path>,
+    lean_path: Option<&str>,
+    policy: &ProcessPolicy,
+    cancel: &CancelToken,
+) -> Result<Vec<String>> {
+    let policy = sidecar_policy(policy, sysroot, lean_path);
+    let file = site.file;
+    let args = vec![
+        "goals".to_string(),
+        file.display().to_string(),
+        site.line.to_string(),
+        site.column.to_string(),
+    ];
+    let out: ProcessOutput = run(exe, &args, cwd, &policy, cancel)?;
+    if out.timed_out || out.cancelled || out.memory_exceeded || out.output_truncated {
+        return Err(Error::new(
+            ErrorCode::Timeout,
+            format!(
+                "sidecar did not finish for goals at {}:{}:{} (timed_out={}, cancelled={})",
+                file.display(),
+                site.line,
+                site.column,
+                out.timed_out,
+                out.cancelled
+            ),
+        ));
+    }
+    match out.exit_code {
+        Some(0) => {
+            let report: GoalsReport = serde_json::from_str(out.stdout.trim()).map_err(|e| {
+                Error::new(
+                    ErrorCode::Internal,
+                    format!("sidecar goals output is not valid JSON: {e}"),
+                )
+            })?;
+            if report.schema_version != SCHEMA_VERSION {
+                return Err(Error::new(
+                    ErrorCode::Internal,
+                    format!(
+                        "sidecar goals schema version {} is not supported",
+                        report.schema_version
+                    ),
+                ));
+            }
+            Ok(report.goals)
+        }
+        Some(EXIT_FILE_NOT_ELABORATED) => Err(Error::new(
+            ErrorCode::Io,
+            format!("cannot get goals in {}: {}", file.display(), out.stderr.trim()),
+        )),
+        code => Err(Error::new(
+            ErrorCode::Internal,
+            format!("sidecar goals exited with {code:?}: {}", out.stderr.trim()),
+        )),
+    }
+}
+
+/// A position in a source file for the goals mode: the file (relative to the project root) and a
+/// 1-based line and 1-based column, counting characters.
+#[derive(Debug, Clone, Copy)]
+pub struct GoalSite<'a> {
+    pub file: &'a Path,
+    pub line: u64,
+    pub column: u64,
+}
+
+/// Output of the sidecar's `goals` mode.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct GoalsReport {
+    pub schema_version: u64,
+    pub file: String,
+    pub line: u64,
+    pub column: u64,
+    pub goals: Vec<String>,
 }
 
 #[cfg(test)]

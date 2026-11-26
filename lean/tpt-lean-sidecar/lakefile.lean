@@ -12,3 +12,6 @@ package tpt_lean_sidecar where
 @[default_target]
 lean_exe tpt_sidecar where
   root := `Main
+  -- The goals mode imports modules with their syntax extensions, which Lean runs as initializers;
+  -- the executable must export Lean's initializer symbols for that to work.
+  supportInterpreter := true

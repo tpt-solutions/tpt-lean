@@ -122,6 +122,10 @@ These commands run Lean or Lake.
 - `check [file] [--timeout S]`: `lake build` for the project, or `lean <file>` for one file. The
   diagnostics are saved for `explain --last-error`.
 - `goals FILE:LINE:COL [--timeout S]`: the plain goal at a position, from the Lean language server.
+  `goals FILE:LINE:COL --sidecar [--exe PATH]` computes the goals with the Lean sidecar instead: the
+  file is elaborated by Lean's own frontend and the goals come from the tactic info trees. No language
+  server is started. The sidecar must be built for the Lean version in use (see
+  [install.md](install.md)); `--exe` or `TPT_LEAN_SIDECAR` names it.
 - `explain FILE:LINE:COL [--timeout S]`: the error at a position, the goal, and lemma candidates from
   the index when one exists. `explain --last-error`: the diagnostics saved by the last `check`.
 - `context-pack FILE:LINE:COL [--max-tokens N] [--timeout S]`: a bundle for an AI agent: a source

@@ -1041,10 +1041,88 @@ fn parse_position(spec: &str) -> Result<(String, usize, usize)> {
 
 /// `tpt-lean goals FILE:LINE:COL`: plain goals at a position, from the Lean language server.
 /// Line and column are 1-based; the column counts characters.
+/// `goals FILE:LINE:COL --sidecar [--exe PATH]`: the goals from the Lean sidecar, which elaborates the
+/// file with Lean's own frontend. No language server is started. The sidecar must be built for the
+/// Lean version in use (see `lean/tpt-lean-sidecar`).
+fn goals_with_sidecar(
+    ctx: &Ctx,
+    args: &Args,
+    root: &Path,
+    cfg: &Config,
+    file: &str,
+    line: usize,
+    column: usize,
+) -> Result<i32> {
+    let exe = match args.value("--exe")? {
+        Some(path) => PathBuf::from(path),
+        None => std::env::var_os("TPT_LEAN_SIDECAR")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                Error::invalid(
+                    "sidecar not found: pass --exe or set TPT_LEAN_SIDECAR to the built tpt_sidecar binary (build lean/tpt-lean-sidecar with `lake -R build`)",
+                )
+            })?,
+    };
+    let timeout = match args.value("--timeout")? {
+        Some(t) => t
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
+        None => cfg.security.command_timeout_seconds,
+    };
+    let tc = adapter::discover_toolchain();
+    if tc.lean.is_none() || tc.lake.is_none() {
+        return Err(Error::new(
+            ErrorCode::LeanNotFound,
+            "lean and lake are required (install with elan)",
+        ));
+    }
+    let policy = adapter::lean_policy(timeout);
+    let cancel = tpt_lean_core::policy::CancelToken::new();
+    let sysroot = adapter::lean_sysroot(&tc, &policy, &cancel)?;
+    let lean_path = adapter::sidecar::lean_path_for(&tc, root, &policy, &cancel);
+    let site = adapter::sidecar::GoalSite {
+        file: Path::new(file),
+        line: line as u64,
+        column: column as u64,
+    };
+    let goals = adapter::sidecar::run_sidecar_goals(
+        &exe,
+        &sysroot,
+        &site,
+        Some(root),
+        lean_path.as_deref(),
+        &policy,
+        &cancel,
+    )?;
+    let human = if goals.is_empty() {
+        format!("no goals at {file}:{line}:{column}")
+    } else {
+        goals.join(
+            "
+
+",
+        )
+    };
+    ctx.emit(
+        "goals",
+        &human,
+        &GoalsReport {
+            file: file.to_string(),
+            line,
+            column,
+            goals,
+        },
+    )?;
+    Ok(OK)
+}
+
 fn goals(ctx: &Ctx, args: &Args) -> Result<i32> {
-    args.reject_unknown(&["--project", "--timeout"], &["--project", "--timeout"])?;
+    args.reject_unknown(
+        &["--project", "--timeout", "--sidecar", "--exe"],
+        &["--project", "--timeout", "--exe"],
+    )?;
     let spec = args
-        .positionals(&["--project", "--timeout"])
+        .positionals(&["--project", "--timeout", "--exe"])
         .into_iter()
         .next()
         .ok_or_else(|| Error::invalid("usage: tpt-lean goals FILE:LINE:COL"))?;
@@ -1053,6 +1131,9 @@ fn goals(ctx: &Ctx, args: &Args) -> Result<i32> {
     let cfg = load_config(args, &root)?;
     let ws = WorkspaceRoot::new(&root)?;
     let path = ws.resolve(&file)?;
+    if args.flag("--sidecar") {
+        return goals_with_sidecar(ctx, args, &root, &cfg, &file, line, column);
+    }
     let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
     let index = tpt_lean_syntax::position::LineIndex::new(&text);
     let offset = index

@@ -75,6 +75,10 @@ Initial development version `0.1.0`. Nothing has been published yet.
   exists, build events are streamed live, and SARIF is validated against the official schema.
 - The help text lists the implemented commands. Before, it listed built commands as planned.
 - An unknown command is an invalid argument (exit 2), not "not implemented" (exit 10).
+- Lean sidecar goals mode: `tpt_sidecar goals FILE LINE COL` elaborates a source file with Lean's frontend
+  and prints the goals before the innermost tactic at a position, read from the info trees. `tpt-lean
+  goals FILE:LINE:COL --sidecar` uses it without a language server. The sidecar now links with
+  `supportInterpreter`, which needed the toolchain's `bin` on `PATH` at run time.
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the
