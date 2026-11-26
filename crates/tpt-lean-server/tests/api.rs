@@ -935,6 +935,11 @@ fn http_transport_serves_rpc_and_refuses_other_hosts_and_methods() {
 
 #[test]
 fn build_events_stream_as_server_sent_events_and_end_with_done() {
+    let toolchain = discover_toolchain();
+    if toolchain.lean.is_none() || toolchain.lake.is_none() {
+        eprintln!("skipping: lean and lake not found");
+        return;
+    }
     let project = TempProject::new("events", None);
     let root = project.path().to_path_buf();
     let runner = {
@@ -1029,6 +1034,11 @@ fn named_pipe_lifecycle_refuses_a_second_server_and_stops() {
 fn build_subscription_sends_notifications_and_then_finished() {
     use std::io::Read as _;
 
+    let toolchain = discover_toolchain();
+    if toolchain.lean.is_none() || toolchain.lake.is_none() {
+        eprintln!("skipping: lean and lake not found");
+        return;
+    }
     let project = TempProject::new("subscribe", None);
     let root = project.path().to_path_buf();
     let runner = {
