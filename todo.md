@@ -334,7 +334,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 - [ ] Import dependency cost / heavy import detection / compile-time estimate (`imports --cost` gives static fan-in and transitive counts; no compile-time estimate yet)
 - [ ] `tpt-lean bisect --good --bad` (commits, dependency versions, Mathlib updates, flags, imports) (commits only: `bisect` runs over git commits; the other axes are not done)
 - [x] `tpt-lean ci --json --sarif`
-- [ ] SARIF output + schema validation
+- [x] SARIF output + schema validation (`scripts/validate-sarif.py` checks output against the official OASIS 2.1.0 schema, downloaded on demand; not run in CI)
 - [x] Machine-readable failure summaries, cache stats in CI output (cache stats are the build cache's hit/miss and entry count; cache hits never skip the build)
 - [x] Doctor extensions (server socket health, LSP health, cache age warnings)
 - [x] Security hardening pass (path safety fuzzing, symlink escape, device files, timeouts)
