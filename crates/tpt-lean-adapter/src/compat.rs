@@ -11,7 +11,7 @@ use crate::{execute, parse_version, Command, Toolchain};
 
 /// Lean versions this release has been tested against. Keep this to versions that were actually
 /// run. The previous stable release should be added once it has been installed and tested.
-pub const TESTED_LEAN_VERSIONS: &[&str] = &["4.36.0"];
+pub const TESTED_LEAN_VERSIONS: &[&str] = &["4.35.0", "4.36.0"];
 
 /// How a Lean version compares with [`TESTED_LEAN_VERSIONS`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -131,8 +131,10 @@ mod tests {
 
     #[test]
     fn between_is_only_possible_with_several_tested_versions() {
-        // With one tested version, anything else is newer or older, never between.
-        assert!(TESTED_LEAN_VERSIONS.len() == 1);
+        // With the two tested versions 4.35.0 and 4.36.0, a version in between is `between`,
+        // and one past the newest tested version is `newer`, never `between`.
+        assert!(TESTED_LEAN_VERSIONS.len() >= 2);
+        assert_eq!(classify("4.35.5"), Compatibility::Between);
         assert_ne!(classify("4.36.1"), Compatibility::Between);
     }
 

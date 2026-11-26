@@ -128,7 +128,9 @@ pub fn to_records(report: &SidecarReport) -> Vec<DeclRecord> {
             name: d.name.clone(),
             kind: d.kind.clone(),
             type_text: d.type_.clone(),
-            docstring: d.doc.clone(),
+            // Lean versions differ in trailing whitespace on docstrings (4.35 keeps a final space,
+            // 4.36 does not), so the stored text is trimmed at both ends.
+            docstring: d.doc.as_deref().map(|t| t.trim().to_string()),
         })
         .collect()
 }

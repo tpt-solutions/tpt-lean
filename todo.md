@@ -158,7 +158,7 @@ Crate: `tpt-lean-adapter`
 ### Level 3 — Lean sidecar
 - [ ] Small Lean package emitting structured JSON (symbols, types, goals) using Lean APIs (done: `lean/tpt-lean-sidecar` emits declarations with kind, pretty type and docstring, schema v1; goals not yet)
 - [x] Sidecar licensed MIT OR Apache-2.0 like the rest (SPDX headers in each file)
-- [ ] Sidecar build/versioning against current + previous stable Lean (pinned to v4.36.0 only; previous stable not yet)
+- [x] Sidecar build/versioning against current + previous stable Lean (`lake -R build -K buildDirName=.lake/build-v4.35.0` under `ELAN_TOOLCHAIN=leanprover/lean4:v4.35.0`; tests pick the binary for the active version; docstring whitespace normalised across versions)
 - [x] Semantic enrichment into index (declaration types, docstrings; via `tpt-lean index sidecar`)
 
 ### Level 4 — Native artifact reader
@@ -174,7 +174,7 @@ Crate: `tpt-lean-adapter`
 - [x] Type-shaped search (`--type`): declarations whose sidecar type contains every identifier of the pattern as a whole token; verified end to end with Lean 4.36.0 (goal-based search `--goal-at` is also done)
 - [x] `fmt --verify`
 - [ ] Cached diagnostics / safe cached goals in index
-- [ ] Integration tests against current + previous stable Lean (nightly optional)
+- [x] Integration tests against current + previous stable Lean (v4.36.0 and v4.35.0: the full suite passes on both locally; CI job `lean-integration` runs both, not verified on GitHub)
 - [x] Context pack perf target (p50 < 100 ms, p95 < 500 ms excl. elaboration): through the server's warm session, p50 1 ms for repeated text and p50 231 ms / p95 234 ms after an edit (10 edits). The first call starts Lean and took 4.7-6.0 s; the CLI starts Lean on every call (7-9 s). Measured by `crates/tpt-lean-server/tests/bench.rs`.
 
 ---

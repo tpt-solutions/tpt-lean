@@ -64,3 +64,32 @@ jobs:
         with:
           name: license-report
           path: licenses-report.txt
+
+  lean-integration:
+    name: Lean ${{ matrix.lean }} integration (ubuntu)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        lean: [v4.35.0, v4.36.0]
+    env:
+      ELAN_TOOLCHAIN: leanprover/lean4:${{ matrix.lean }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install elan
+        run: |
+          curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Install Lean ${{ matrix.lean }}
+        run: elan toolchain install leanprover/lean4:${{ matrix.lean }}
+      - name: Build the sidecar for this Lean version
+        working-directory: lean/tpt-lean-sidecar
+        run: |
+          if [ "${{ matrix.lean }}" = "v4.36.0" ]; then
+            lake -R build
+          else
+            lake -R build -K buildDirName=.lake/build-${{ matrix.lean }}
+          fi
+      - name: Tests against this Lean version
+        run: cargo test --workspace

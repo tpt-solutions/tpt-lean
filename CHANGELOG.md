@@ -41,6 +41,10 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - Shared cache layer: `TPT_LEAN_SHARED_CACHE` names directories of build records (a team share).
   Lookups go memory, local disk, then shared; shared hits match on the digest and are copied locally.
   `tpt-lean cache export DIR` and `cache import DIR` move records for CI artifacts.
+- Lean 4.35.0 (the previous stable release) is tested alongside 4.36.0: the full suite passes on both
+  locally. The sidecar builds per version (`lake -R build -K buildDirName=.lake/build-v4.35.0`), and
+  docstrings are trimmed because 4.35 keeps a trailing space that 4.36 drops. CI gained a
+  `lean-integration` job for both versions (not run on GitHub).
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the

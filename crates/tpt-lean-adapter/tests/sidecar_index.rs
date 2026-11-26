@@ -31,13 +31,23 @@ impl Drop for TempProject {
 }
 
 fn sidecar_exe() -> Option<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lean/tpt-lean-sidecar/.lake/build/bin");
-    let exe = if cfg!(windows) {
-        "tpt_sidecar.exe"
+    // The sidecar is built per Lean version (see the sidecar lakefile): `.lake/build` for the
+    // default toolchain, `.lake/build-v<version>` for others.
+    let tc = tpt_lean_adapter::discover_toolchain();
+    let (version, _) = tpt_lean_adapter::compat::installed(
+        &tc,
+        &tpt_lean_adapter::lean_policy(60),
+        &tpt_lean_core::policy::CancelToken::new(),
+    );
+    let version = version?;
+    let base = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../lean/tpt-lean-sidecar/.lake");
+    let dir = if version == "4.36.0" {
+        base.join("build")
     } else {
-        "tpt_sidecar"
+        base.join(format!("build-v{version}"))
     };
-    let path = root.join(exe);
+    let exe = if cfg!(windows) { "tpt_sidecar.exe" } else { "tpt_sidecar" };
+    let path = dir.join("bin").join(exe);
     path.is_file().then_some(path)
 }
 
