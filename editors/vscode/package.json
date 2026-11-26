@@ -1,0 +1,90 @@
+{
+  "name": "tpt-lean",
+  "displayName": "tpt-lean",
+  "description": "Lean 4 language features from tpt-lean: diagnostics, goals, lemma search, error explanations and a proof-state panel.",
+  "version": "0.1.0",
+  "publisher": "tpt-solutions",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/tpt-solutions/tpt-lean"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:lean4"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lean4",
+        "aliases": [
+          "Lean 4",
+          "lean4"
+        ],
+        "extensions": [
+          ".lean"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "tpt-lean.showProofState",
+        "title": "tpt-lean: Show proof state panel"
+      },
+      {
+        "command": "tpt-lean.searchLemmas",
+        "title": "tpt-lean: Search lemmas for the goal at cursor"
+      },
+      {
+        "command": "tpt-lean.explainError",
+        "title": "tpt-lean: Explain the error at cursor"
+      },
+      {
+        "command": "tpt-lean.restartServer",
+        "title": "tpt-lean: Restart language server"
+      }
+    ],
+    "configuration": {
+      "title": "tpt-lean",
+      "properties": {
+        "tpt-lean.path": {
+          "type": "string",
+          "default": "tpt-lean",
+          "description": "The tpt-lean executable. A name is looked up on PATH; a path is used as given."
+        },
+        "tpt-lean.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the tpt-lean language server for Lean files."
+        },
+        "tpt-lean.proofStatePanel.followCursor": {
+          "type": "boolean",
+          "default": true,
+          "description": "Update the proof-state panel when the cursor moves."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "test": "npm run compile && node --test test/render.test.js",
+    "package": "npx --yes @vscode/vsce package --no-dependencies"
+  },
+  "dependencies": {
+    "vscode-languageclient": "9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "1.85.0",
+    "typescript": "5.4.5"
+  }
+}

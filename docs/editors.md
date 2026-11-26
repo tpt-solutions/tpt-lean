@@ -33,6 +33,13 @@ tpt-lean lsp --project ${workspaceFolder}
 
 with the file type `lean` and the root markers `lakefile.lean` and `lakefile.toml`.
 
+The repository has a VS Code extension in `editors/vscode/`. It starts `tpt-lean lsp` for Lean files
+and adds the commands `tpt-lean: Show proof state panel`, `Search lemmas for the goal at cursor` (the
+chosen name is copied to the clipboard), `Explain the error at cursor` (output channel) and `Restart
+language server`. It is built from source and is not published: `npm install && npm run compile` in
+`editors/vscode`, then package it yourself if you want a `.vsix`. Settings: `tpt-lean.path` (the
+executable) and `tpt-lean.enable`.
+
 Lean's own VS Code extension already runs Lean's server. Running both on the same project will
 duplicate diagnostics, so disable one of them for the workspace.
 

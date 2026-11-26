@@ -423,7 +423,7 @@ Crate: `tpt-lean-wasm`
 - [x] `tpt-lean sorry-report [--deny-sorry]`: list `sorry` and `admit` per declaration with goals where the sidecar provides them; non-zero exit in CI mode (done: `--sidecar` adds goals, one elaboration per file)
 
 ### Proposals only (not built; record decision later)
-- [ ] VS Code extension wrapper around the LSP proxy
+- [x] VS Code extension wrapper around the LSP proxy (`editors/vscode/`; compiles and render tests pass; not run in a VS Code host; not published)
 - [ ] GitHub Action (`tpt/tpt-lean-action`) for `ci --sarif`
 - [ ] Generated TypeScript client from `crates/tpt-lean-server/schemas`
 
