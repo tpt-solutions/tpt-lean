@@ -24,9 +24,12 @@ fn five_thousand_lines() -> String {
 fn format_five_thousand_lines_under_target() {
     let src = five_thousand_lines();
     let lines = src.lines().count();
-    let _ = format_text(&src).unwrap(); // warm up
+    for _ in 0..3 {
+        // Warm up so the first runs do not skew the median on a cold runner.
+        std::hint::black_box(format_text(&src).unwrap());
+    }
     let mut times = Vec::new();
-    for _ in 0..10 {
+    for _ in 0..25 {
         let t = Instant::now();
         let out = format_text(&src).unwrap();
         times.push(t.elapsed().as_secs_f64() * 1000.0);
