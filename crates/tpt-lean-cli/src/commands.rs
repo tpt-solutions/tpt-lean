@@ -142,6 +142,10 @@ struct InitResult {
     files: Vec<String>,
 }
 
+/// The Mathlib tag `init --mathlib` pins, and with it the Lean toolchain. Mathlib tags follow Lean
+/// releases (`v4.36.0` is Lean 4.36.0). Update this with a tested Lean release.
+const MATHLIB_PIN: &str = "v4.36.0";
+
 fn init(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(&["--mathlib", "--template"], &["--template"])?;
     let name = args
@@ -200,14 +204,23 @@ def main : IO Unit :=
     let mut lakefile = String::from("import Lake\nopen Lake DSL\n\n");
     if mathlib {
         lakefile
-            .push_str("require mathlib from git \"https://github.com/leanprover-community/mathlib4\"\n\n");
+            .push_str(&format!(
+                "require mathlib from git \"https://github.com/leanprover-community/mathlib4\" @ \"{MATHLIB_PIN}\"\n\n"
+            ));
     }
     lakefile.push_str(&format!(
         "package «{name}» where\n\n@[default_target]\nlean_exe «{name}» where\n  root := `Main\n"
     ));
     let files: Vec<(&str, String)> = vec![
         ("lakefile.lean", lakefile),
-        ("lean-toolchain", "leanprover/lean4:stable\n".into()),
+        (
+            "lean-toolchain",
+            if mathlib {
+                format!("leanprover/lean4:{MATHLIB_PIN}\n")
+            } else {
+                "leanprover/lean4:stable\n".into()
+            },
+        ),
         ("Main.lean", main_body),
         (
             "tpt-lean.toml",
@@ -226,7 +239,9 @@ def main : IO Unit :=
         written.push((*file).to_string());
     }
     if mathlib {
-        ctx.note("note: pin lean-toolchain to the version your Mathlib revision requires before building");
+        ctx.note(&format!(
+            "note: Mathlib is pinned to {MATHLIB_PIN}, the Lean release this tool is tested against; update lean-toolchain and the require line together"
+        ));
     }
     let human = format!("created {name} ({} files)", written.len());
     ctx.emit(

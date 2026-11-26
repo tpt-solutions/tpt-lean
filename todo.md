@@ -325,7 +325,7 @@ Crates: `tpt-lean-profile`, `tpt-lean-lsp`, `tpt-lean-docgen`
 
 ## Phase 7 — Remaining CLI utilities (not in spec phase list)
 - [x] `tpt-lean init <name>` with generated lakefile.lean, lean-toolchain, Main.lean, tpt-lean.toml, .gitignore, README.md
-- [ ] `init --mathlib` (lakefile requires mathlib; toolchain not pinned to Mathlib revision)
+- [x] `init --mathlib`: pinned to the Mathlib tag v4.36.0 (`MATHLIB_PIN`), with `lean-toolchain` set to v4.36.0 to match. The tag exists; a full Mathlib build (hours, several GB) was not run here, so the generated project is unverified end to end.
 - [x] Templates: theorem, mathlib, teaching, library (`mathlib` is an alias for `--mathlib` with the default starter; the pinned Mathlib toolchain is still open below)
 - [x] `tpt-lean imports` (list graph)
 - [x] `imports --unused`

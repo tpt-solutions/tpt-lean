@@ -51,6 +51,8 @@ Initial development version `0.1.0`. Nothing has been published yet.
   did not read, so `build` and `ci` reported a failed build with no diagnostics. Both orders parse now.
 - SARIF validation: `scripts/validate-sarif.py` checks `ci --sarif` output against the OASIS schema.
   A project with a Lean error produces two results, and both files validate.
+- `init --mathlib` pins Mathlib to the tag v4.36.0 and sets `lean-toolchain` to match. The tag exists
+  on the Mathlib repository. A full Mathlib build was not run.
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the
