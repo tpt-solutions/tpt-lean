@@ -25,11 +25,17 @@ struct TempProject {
 
 impl TempProject {
     fn new(tag: &str, config: Option<&str>) -> Self {
+        Self::new_under(&std::env::temp_dir(), tag, config)
+    }
+
+    /// Like [`TempProject::new`], but creates the directory under `base`. Use a short `base`
+    /// when the project path must fit a Unix socket path (`sun_path`, about 100 bytes).
+    fn new_under(base: &Path, tag: &str, config: Option<&str>) -> Self {
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        let dir = std::env::temp_dir().join(format!("tpt-server-{tag}-{}-{nanos}", std::process::id()));
+        let dir = base.join(format!("tpt-server-{tag}-{}-{nanos}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("lakefile.toml"), "name = \"probe\"\n").unwrap();
         if let Some(cfg) = config {
@@ -380,7 +386,8 @@ fn unix_socket_lifecycle_uses_an_owner_only_socket() {
     use std::os::unix::fs::PermissionsExt;
     use tpt_lean_server::Transport;
 
-    let project = TempProject::new("unix-socket", None);
+    // macOS $TMPDIR is long enough that the socket path would exceed the limit, so use /tmp.
+    let project = TempProject::new_under(Path::new("/tmp"), "unix-socket", None);
     let root = project.path().to_path_buf();
     let runner = {
         let root = root.clone();
