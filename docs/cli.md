@@ -35,6 +35,29 @@ The `[security]` section controls what the MCP server and API server may do:
 `allow_write`, `allow_build` (default true), `allow_profile`, and `command_timeout_seconds`
 (default 120). See [security.md](security.md).
 
+The `[search]` section sets the optional ranking factors of `search` (see below). All three
+weights default to 0, which keeps the default ordering. Set them in `.tpt-lean/config.toml` or
+`tpt-lean.toml`, or with `--set search.recency_weight=2.5`; environment variables are not read for
+these keys.
+
+```toml
+[search]
+recency_weight = 5.0          # bonus for a recently changed file, scaled by 0.5^(age / half life)
+recency_half_life_days = 30.0 # age at which the recency bonus halves
+distance_weight = 5.0         # bonus of weight / (1 + hops) along import edges from the origin
+```
+
+Weights are in the same raw points as the name and kind bonuses (a prefix match adds 40 to 50 points;
+the score is capped at 1 after dividing by 200). Negative weights, a non-finite value, and a half life
+that is not positive are configuration errors.
+
+The `[lsp]` section sets the language server behind `tpt-lean lsp`:
+`idle_timeout_seconds` (default 900; the server is shut down after that many seconds without an
+editor request, and 0 disables this) and `health_timeout_seconds` (unset by default, which means
+`security.command_timeout_seconds`; a request with no answer in that time restarts the server and
+fails with a timeout). Environment variables: `TPT_LEAN_LSP_IDLE_TIMEOUT_SECONDS` and
+`TPT_LEAN_LSP_HEALTH_TIMEOUT_SECONDS`. See [lsp.md](lsp.md).
+
 ## Exit codes
 
 | Code | Meaning |
@@ -67,11 +90,16 @@ the same exit code.
   language server starts and stops. A `lean-version` check warns when the Lean on `PATH` differs
   from the pin, or is not one of the tested versions (currently 4.35.0 and 4.36.0). Exits 3 when a
   check fails.
-  `--fix` prints a plan first, then applies the fixes it can make safely. The only fix is for the
-  index: when it is missing it is built, and when its database is damaged the `index.sqlite` file
-  (and its `-wal` and `-shm` files) is deleted and rebuilt from the sources. Anything else, such as
-  a missing toolchain or a broken configuration, is reported and not changed. Each applied fix is
-  listed as a `fix` check.
+  The `config-file` check warns when there is no configuration file. The `sidecar` check reports
+  the Lean sidecar: `TPT_LEAN_SIDECAR` when set, or the build in `lean/tpt-lean-sidecar` when this
+  is a checkout of the tool itself.
+  `--fix` prints a plan first, then applies the fixes it can make safely. The fixes are: build the
+  index when it is missing, and when its database is damaged delete the `index.sqlite` file (and its
+  `-wal` and `-shm` files) and rebuild it from the sources; write the default configuration to
+  `.tpt-lean/config.toml` when there is none (it records today's defaults, so later default changes
+  do not reach it); and run `lake build` in `lean/tpt-lean-sidecar` when that source is present but
+  not built. Anything else, such as a missing toolchain or a broken configuration, is reported and
+  not changed. Each applied fix is listed as a `fix` check.
 - `setup [--editor NAME]... [--mcp NAME]... [--dry-run]`: writes the editor and MCP client config
   for the project. Editors: `helix` (merges into `.helix/languages.toml`), `vscode`
   (`.vscode/tpt-lean-lsp.json`), `neovim` and `emacs` (`.tpt-lean/editors/`). MCP clients: `claude`
@@ -104,14 +132,34 @@ the same exit code.
 - `imports --minimize FILE`: the proposed import removals, as a diff. The file is not written.
 - `imports --cost`: direct and transitive import counts per module. This is a structural estimate,
   not a compile time.
-- `sorry-report [paths...] [--deny-sorry]`: lists every `sorry` and `admit` with its file, line,
-  column and the declaration it is in. Only code is searched: words inside comments and strings are
-  ignored. Without paths it covers the project (not `lakefile.lean`). `--deny-sorry` exits 1 when
-  there is any. This is a textual report. It does not show the goal at each `sorry`; that needs the
-  sidecar and is not done.
+- `imports --cost --timed FILE [--timeout S]`: the compile-time estimate per import of one file. Lean
+  loads each direct import on its own and the extra wall time is reported per import (the same
+  timings as `profile --imports`; one run per import, so treat small differences as noise). Each
+  entry also shows the module's transitive project import count, when the module is a project file.
+- `sorry-report [paths...] [--deny-sorry] [--sidecar [--exe PATH] [--timeout S]]`: lists every
+  `sorry` and `admit` with its file, line, column and the declaration it is in. Only code is
+  searched: words inside comments and strings are ignored. Without paths it covers the project (not
+  `lakefile.lean`). `--deny-sorry` exits 1 when there is any. The scan itself does not elaborate the
+  file. With `--sidecar` each hit also gets the goal at its position from the Lean sidecar, in one
+  elaboration per file (see the `goals` section for the targets); a file the sidecar cannot elaborate
+  gets a `goals_error` instead.
+- `fix FILE [--apply] [--timeout S]`: plans three mechanical fixes for one file and prints the diff:
+  remove imports that nothing in the file uses; add `import M` for an unknown identifier that exactly
+  one indexed module declares (Lean names the identifier; the index says where it is declared; an
+  identifier with no single module is listed as unresolved); and format the file, when the formatter
+  can read it. Nothing is written without `--apply`. With `--apply` the file is written, Lean is run
+  on it again, and if Lean reports more errors than before the original text is restored and the exit
+  status is 1. Needs Lean; the unknown-identifier step needs an index.
 - `search <query> [--from FILE] [--namespace NS] [--near TERM]... [--limit N]`: names and
   docstrings in the index. `--from FILE` ranks symbols from modules that the file imports higher.
   `--near` keeps only files that also declare a name matching each term.
+  Two more factors apply when their weights in `[search]` are non-zero. Recency: a file whose
+  contents changed more recently in the index (the time the index stored the change, not git time)
+  ranks higher. Distance: a project module closer to the origin ranks higher, where the origin is
+  the module of the `--from` file, and when there is no `--from` the distance is measured from the
+  project's root modules (those that no project module imports). With no origin and no project
+  modules in the index, the distance factor adds nothing. The MCP tools, the API server and the FFI
+  use zero weights, so their ordering is unchanged.
 - `search --type PATTERN [--namespace NS] [--limit N]`: declarations whose type contains every
   identifier of the pattern as a whole token, for example `Nat → Nat` or `List Nat`. Types come from
   `index sidecar`, so this needs Lean. Arrows and punctuation are ignored; words in the same order
@@ -154,7 +202,12 @@ These commands run Lean or Lake.
   `goals FILE:LINE:COL --sidecar [--exe PATH]` computes the goals with the Lean sidecar instead: the
   file is elaborated by Lean's own frontend and the goals come from the tactic info trees. No language
   server is started. The sidecar must be built for the Lean version in use (see
-  [install.md](install.md)); `--exe` or `TPT_LEAN_SIDECAR` names it.
+  [install.md](install.md)); `--exe` or `TPT_LEAN_SIDECAR` names it. The output has `target`, which
+  says what the goals are about: `tactic` (the goals before the innermost tactic containing the
+  position), `term` (the expected type of the innermost term, with the hypotheses in scope, as in
+  `theorem t : P := sorry`), `statement` (the type of the declaration whose name is at the position),
+  or `none`. The sidecar's `sites` mode answers several positions of one file in one elaboration.
+  Language-server goals have no `target`.
 - `explain FILE:LINE:COL [--timeout S]`: the error at a position, the goal, and lemma candidates from
   the index when one exists. `explain --last-error`: the diagnostics saved by the last `check`.
 - `context-pack FILE:LINE:COL [--max-tokens N] [--timeout S]`: a bundle for an AI agent: a source
@@ -164,20 +217,42 @@ These commands run Lean or Lake.
 - `profile FILE [--slowest N] [--json] [--imports] [--graph OUT.dot] [--graph-depth N]
   [--flamegraph OUT.folded] [--timeout S]`: the wall time, the peak memory of the Lean process tree
   (sampled), the time per declaration from Lean's trace, tactic totals, and suggested actions.
-  `--imports` times each direct import, with one `lean` run per import. `--graph` writes a Graphviz
+  `--imports` times each direct import, with one `lean` run per import. `profile --build [--timeout S]`
+  runs the project build and prints the same report as `build --report` (cache outcome, time per step,
+  slowest files). `--graph` writes a Graphviz
   graph of the imports; `--graph-depth` (1 to 4) expands project modules too. `--flamegraph` writes
   folded stacks for `flamegraph.pl` or `inferno`. `profile --compare A.json B.json` shows the
   differences between two saved reports.
 - `docgen [--out DIR] [--open] [--json] [--include-deps]`: a static HTML site (default
   `.tpt-lean/docs`) with declaration pages, a namespace tree, source links, dark mode, a search index,
   and an import graph. The site needs an HTTP server for its search.
+  `docgen --from-sidecar Module.Name [--exe PATH] [--timeout S]` documents one built module from the
+  Lean sidecar instead of the source parser: names, kinds, pretty types and docstrings come from
+  Lean's own elaborated environment. The exe is `--exe` or `TPT_LEAN_SIDECAR`, as for `index sidecar`.
+  The module must be built (`lake build`). The sidecar reports no imports or source lines, so the
+  site shows no import graph for that module, its declarations have no line numbers, and the source
+  page is shown only when the module's `.lean` file exists. `--include-deps` is refused with it.
 - `ci [--json] [--sarif] [--timeout S]`: builds the project, collects the diagnostics, and reports
   the result. `--json` prints the CI report; `--sarif` prints a SARIF 2.1.0 log for code-scanning
   tools. Exit 1 when the build failed. `scripts/validate-sarif.py` checks the SARIF output against
   the official schema.
-- `bisect --good REV --bad REV [--timeout S]`: the first failing commit between two revisions. Each
-  step runs `lake build` in a temporary worktree. Dependency versions, Mathlib updates, flags and
-  imports are not bisected.
+- `bisect [--axis commits|imports|flags] [--timeout S]`: finds the first failing candidate with a
+  `lake build` check per probe. Any other `--axis` value is an invalid argument (exit 2).
+  - `--axis commits` (default): `--good REV --bad REV`. The first failing commit between two
+    revisions. Each step runs `lake build` in a temporary worktree.
+  - `--axis imports --file FILE`: the imports of a project file, in file order. Probe `k` keeps the
+    first `k` imports and removes the rest, then runs `lake build <module of FILE>`. The first
+    failing import is the last one of the smallest failing prefix. The state with no imports is
+    assumed to pass.
+  - `--axis flags --file FILE --flags "a=1,b,c=false"`: Lean options in the order given. A bare name
+    means `true`. Names may contain letters, digits, `.` and `_`; values may also contain `-`. Probe
+    `k` writes the first `k` as `set_option` lines after the last import, then builds. The state
+    with no options is assumed to pass.
+  - `imports` and `flags` rewrite FILE for each probe and restore the original text afterwards (also
+    on error). Do not edit FILE while the bisect runs. The probes run `lake build` once each, so
+    the search costs about `log2(n) + 1` builds.
+  - The output is an `ItemBisectReport` (see [json-schemas.md](json-schemas.md)). Dependency versions
+    and Mathlib updates are not bisected; they are listed in `not_done`.
 
 ## Servers and integrations
 

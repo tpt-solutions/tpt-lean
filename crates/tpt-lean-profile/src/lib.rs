@@ -3,8 +3,9 @@
 //! `trace.profiler` output, tactic totals, slowest-declaration ranking, JSON reports, and
 //! comparison of two reports.
 //!
-//! Not implemented: memory tracking, flamegraphs, slow-import detection, dependency graphs,
-//! build-step and cache reports. Each is listed in [`ProfileReport::notes`].
+//! Not implemented: memory tracking, flamegraphs, slow-import detection, dependency graphs.
+//! Build-step and cache reports are produced by the CLI (`profile --build`), not by this crate.
+//! The gaps are listed in [`ProfileReport::notes`].
 
 mod analysis;
 mod report;

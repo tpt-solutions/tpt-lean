@@ -70,6 +70,18 @@ impl LspSession {
         }
     }
 
+    /// True when a server process has been started and not stopped. A server that has exited
+    /// still counts until a request notices it.
+    pub fn server_started(&self) -> bool {
+        self.client.is_some()
+    }
+
+    /// Replace the server process now (kill it, start a new one, replay open documents). Used
+    /// when the server is judged unhealthy, for example after a request timed out.
+    pub fn restart_server(&mut self) -> Result<()> {
+        self.restart()
+    }
+
     /// URIs of the documents currently open in this session.
     pub fn open_uris(&self) -> Vec<String> {
         self.docs.keys().cloned().collect()

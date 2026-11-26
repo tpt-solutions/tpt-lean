@@ -50,6 +50,12 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
         ],
         &["--project", "--timeout", "--poll-ms"],
     )?;
+    run_build(ctx, args, args.flag("--report"))
+}
+
+/// The build itself, shared by `build` and `profile --build`. With `report` set, the build report
+/// (cache outcome, time per step, slowest files) follows the summary.
+fn run_build(ctx: &Ctx, args: &Args, report: bool) -> Result<i32> {
     let root = project_root(args)?;
     let cfg = load_config(args, &root)?;
     if !cfg.security.allow_build {
@@ -156,7 +162,7 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     } else if args.flag("--explain-slow") {
         ctx.emit("build.explain_slow", "", &slow)?;
     }
-    if args.flag("--report") {
+    if report {
         print_build_report(ctx, &build_report(&events, &outcome))?;
     }
     Ok(OK)
@@ -327,6 +333,7 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--imports",
             "--graph",
             "--graph-depth",
+            "--build",
         ],
         &[
             "--project",
@@ -337,6 +344,10 @@ pub fn profile_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--graph-depth",
         ],
     )?;
+    if args.flag("--build") {
+        // Build-step timing and the cache hit/miss outcome come from the build's own events.
+        return run_build(ctx, args, true);
+    }
     if args.flag("--compare") {
         let paths = args.positionals(&["--project", "--timeout", "--slowest", "--flamegraph"]);
         let [a, b] = paths.as_slice() else {
@@ -436,16 +447,56 @@ fn open_path(path: &Path) -> Result<()> {
         .map_err(|e| Error::from(e).with_path(path))
 }
 
-/// `tpt-lean docgen [--out DIR] [--open] [--json] [--include-deps]`.
+/// `tpt-lean docgen [--out DIR] [--open] [--json] [--include-deps]`, or
+/// `tpt-lean docgen --from-sidecar Module.Name [--exe PATH] [--timeout S] [--out DIR] [--open] [--json]`.
 pub fn docgen_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(
-        &["--project", "--out", "--open", "--json", "--include-deps"],
-        &["--project", "--out"],
+        &[
+            "--project",
+            "--out",
+            "--open",
+            "--json",
+            "--include-deps",
+            "--from-sidecar",
+            "--exe",
+            "--timeout",
+        ],
+        &["--project", "--out", "--from-sidecar", "--exe", "--timeout"],
     )?;
     let root = project_root(args)?;
     let include_deps = args.flag("--include-deps");
+    let sidecar_module = args.value("--from-sidecar")?;
+    if sidecar_module.is_some() && include_deps {
+        return Err(Error::invalid(
+            "--include-deps cannot be combined with --from-sidecar (the sidecar documents one module)",
+        ));
+    }
+    // The sidecar report is fetched first so that a missing sidecar or a failing module is
+    // reported before any output is written.
+    let sidecar_report = match sidecar_module {
+        Some(module) => {
+            let cfg = super::load_config(args, &root)?;
+            let run = super::sidecar_run(args, &root, &cfg)?;
+            let mut policy = run.policy.clone();
+            if let Some(lean_path) = &run.lean_path {
+                policy.extra_env.push(("LEAN_PATH".to_string(), lean_path.clone()));
+            }
+            Some(adapter::sidecar::run_sidecar(
+                &run.exe,
+                &run.sysroot,
+                &module,
+                Some(&root),
+                &policy,
+                &run.cancel,
+            )?)
+        }
+        None => None,
+    };
     if args.flag("--json") {
-        let body = tpt_lean_docgen::export_json(&root, include_deps)?;
+        let body = match &sidecar_report {
+            Some(report) => tpt_lean_docgen::export_json_from_sidecar(&root, report)?,
+            None => tpt_lean_docgen::export_json(&root, include_deps)?,
+        };
         println!("{body}");
         return Ok(OK);
     }
@@ -453,7 +504,10 @@ pub fn docgen_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
         Some(p) => PathBuf::from(p),
         None => root.join(".tpt-lean").join("docs"),
     };
-    let summary = tpt_lean_docgen::generate(&root, &out, include_deps)?;
+    let summary = match &sidecar_report {
+        Some(report) => tpt_lean_docgen::generate_from_sidecar(&root, &out, report)?,
+        None => tpt_lean_docgen::generate(&root, &out, include_deps)?,
+    };
     let human = format!(
         "documented {} module(s), {} declaration(s) in {}",
         summary.modules,
@@ -515,31 +569,86 @@ pub fn ci_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
 
 // ---------------------------------------------------------------- bisect
 
-/// `tpt-lean bisect --good REV --bad REV [--timeout S]`: find the first failing commit with a
-/// `lake build` check in a temporary worktree per probe.
+/// `tpt-lean bisect [--axis commits|imports|flags] ...`: find the first failing candidate with a
+/// `lake build` check per probe.
+///
+/// - `commits` (default): `--good REV --bad REV`; one temporary worktree per probe.
+/// - `imports`: `--file FILE`; probes the file's imports in order, keeping a growing prefix.
+/// - `flags`: `--file FILE --flags "a=1,b,c=false"`; probes Lean options in order.
+///
+/// The `imports` and `flags` axes rewrite FILE for each probe and restore it afterwards.
 pub fn bisect_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(
-        &["--project", "--good", "--bad", "--timeout"],
-        &["--project", "--good", "--bad", "--timeout"],
+        &["--project", "--axis", "--good", "--bad", "--file", "--flags", "--timeout"],
+        &["--project", "--axis", "--good", "--bad", "--file", "--flags", "--timeout"],
     )?;
+    let axis = tpt_lean_tools::bisect::Axis::parse(args.value("--axis")?.as_deref().unwrap_or("commits"))?;
     let root = project_root(args)?;
     let cfg = load_config(args, &root)?;
-    let good = args
-        .value("--good")?
-        .ok_or_else(|| Error::invalid("--good REV is required"))?;
-    let bad = args
-        .value("--bad")?
-        .ok_or_else(|| Error::invalid("--bad REV is required"))?;
     let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
+    if axis == tpt_lean_tools::bisect::Axis::Commits {
+        if args.value("--file")?.is_some() || args.value("--flags")?.is_some() {
+            return Err(Error::invalid("--file and --flags apply to --axis imports or flags"));
+        }
+        let good = args
+            .value("--good")?
+            .ok_or_else(|| Error::invalid("--good REV is required"))?;
+        let bad = args
+            .value("--bad")?
+            .ok_or_else(|| Error::invalid("--bad REV is required"))?;
+        let tc = toolchain_or_error()?;
+        let check = tpt_lean_tools::bisect::lake_build_check(tc, ".", timeout)?;
+        let report = tpt_lean_tools::bisect::bisect_commits(&root, &good, &bad, check)?;
+        let human = match &report.first_bad {
+            Some(c) => format!(
+                "first failing commit: {c} ({} commit(s) between)",
+                report.commits_between
+            ),
+            None => format!("no failing commit between {good} and {bad}"),
+        };
+        ctx.emit("bisect", &human, &report)?;
+        return Ok(OK);
+    }
+    if args.value("--good")?.is_some() || args.value("--bad")?.is_some() {
+        return Err(Error::invalid("--good and --bad apply to --axis commits"));
+    }
+    let file = args
+        .value("--file")?
+        .ok_or_else(|| Error::invalid("--file FILE is required for this axis"))?;
+    let (candidates, label) = match axis {
+        tpt_lean_tools::bisect::Axis::Imports => {
+            if args.value("--flags")?.is_some() {
+                return Err(Error::invalid("--flags applies to --axis flags"));
+            }
+            let imports = tpt_lean_tools::bisect::file_import_candidates(&root, &file)?;
+            (imports, "import")
+        }
+        _ => {
+            let raw = args
+                .value("--flags")?
+                .ok_or_else(|| Error::invalid("--flags \"a=1,b,c\" is required for --axis flags"))?;
+            let flags: Vec<String> = raw
+                .split(',')
+                .map(str::trim)
+                .filter(|f| !f.is_empty())
+                .map(String::from)
+                .collect();
+            for f in &flags {
+                tpt_lean_tools::bisect::parse_flag(f)?;
+            }
+            (flags, "flag")
+        }
+    };
     let tc = toolchain_or_error()?;
-    let check = tpt_lean_tools::bisect::lake_build_check(tc, ".", timeout)?;
-    let report = tpt_lean_tools::bisect::bisect_commits(&root, &good, &bad, check)?;
+    let check = tpt_lean_tools::bisect::lake_build_variant_check(tc, &root, &file, axis, timeout)?;
+    let report = tpt_lean_tools::bisect::bisect_items(axis, &file, &candidates, check)?;
     let human = match &report.first_bad {
-        Some(c) => format!(
-            "first failing commit: {c} ({} commit(s) between)",
-            report.commits_between
+        Some(item) => format!(
+            "first failing {label}: {item} ({} candidate(s), {} probe(s)); {file} was restored",
+            candidates.len(),
+            report.probes.len()
         ),
-        None => format!("no failing commit between {good} and {bad}"),
+        None => format!("no failing {label} among {} candidate(s) in {file}", candidates.len()),
     };
     ctx.emit("bisect", &human, &report)?;
     Ok(OK)
@@ -560,6 +669,17 @@ pub fn imports_analysis(ctx: &Ctx, args: &Args) -> Option<Result<i32>> {
     Some(imports_analysis_run(ctx, args))
 }
 
+/// One import of a file, timed by Lean, with the module's structural weight for context.
+#[derive(serde::Serialize)]
+struct TimedImportCost {
+    module: String,
+    line: u32,
+    load_ms: f64,
+    error: Option<String>,
+    /// Project modules reachable from this import (see `imports --cost`), when it is a project file.
+    transitive_project_imports: Option<usize>,
+}
+
 fn imports_analysis_run(ctx: &Ctx, args: &Args) -> Result<i32> {
     args.reject_unknown(
         &[
@@ -568,9 +688,11 @@ fn imports_analysis_run(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--suggest",
             "--minimize",
             "--cost",
+            "--timed",
+            "--timeout",
             "--limit",
         ],
-        &["--project", "--suggest", "--minimize", "--limit"],
+        &["--project", "--suggest", "--minimize", "--limit", "--timeout"],
     )?;
     let root = project_root(args)?;
     if let Some(query) = args.value("--suggest")? {
@@ -586,6 +708,43 @@ fn imports_analysis_run(ctx: &Ctx, args: &Args) -> Result<i32> {
             .map(|s| format!("import {}  ({} match(es) in {})", s.module, s.matches, s.file))
             .collect();
         ctx.emit_items("imports.suggest", &human, &items)?;
+        return Ok(OK);
+    }
+    if args.flag("--cost") && args.flag("--timed") {
+        // Per-import compile-time estimate for one file: the same timings as `profile --imports`.
+        let file = args
+            .positionals(&["--project", "--timeout"])
+            .into_iter()
+            .next()
+            .ok_or_else(|| {
+                Error::invalid("usage: tpt-lean imports --cost --timed FILE [--timeout S]")
+            })?;
+        let cfg = load_config(args, &root)?;
+        let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
+        let ws = tpt_lean_core::paths::WorkspaceRoot::new(&root)?;
+        let path = ws.resolve(&file)?;
+        let structural = tpt_lean_tools::imports::import_costs(&root)?;
+        let rows: Vec<TimedImportCost> = tpt_lean_profile::import_timings(&root, &path, timeout)?
+            .into_iter()
+            .map(|t| TimedImportCost {
+                transitive_project_imports: structural
+                    .iter()
+                    .find(|c| c.module == t.module)
+                    .map(|c| c.transitive_project_imports),
+                module: t.module,
+                line: t.line,
+                load_ms: t.load_ms,
+                error: t.error,
+            })
+            .collect();
+        let human: Vec<String> = rows
+            .iter()
+            .map(|r| match &r.error {
+                Some(e) => format!("line {}: {} not loaded: {e}", r.line, r.module),
+                None => format!("line {}: {} ~{:.0} ms", r.line, r.module, r.load_ms),
+            })
+            .collect();
+        ctx.emit_items("imports.cost", &human, &rows)?;
         return Ok(OK);
     }
     if args.flag("--cost") {

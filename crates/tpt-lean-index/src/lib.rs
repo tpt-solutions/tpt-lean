@@ -16,7 +16,7 @@ use tpt_lean_core::{Error, ErrorCode, Result};
 pub mod ignore;
 
 /// Version of the database schema. Each version has a migration step in [`Index::migrate`].
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// Version 1: files, symbols, imports, FTS, diagnostics, runs, cache.
 const SCHEMA_V1: &str = "
@@ -110,6 +110,18 @@ const SCHEMA_V2: &str = "
     );
     CREATE INDEX declarations_name ON declarations(name);
     CREATE INDEX declarations_module ON declarations(module);
+";
+
+/// Version 3: last diagnostics per file, keyed by path and content hash. Acceleration only: a
+/// row is used only when its hash equals the current content hash, and never replaces Lean.
+const SCHEMA_V3: &str = "
+    CREATE TABLE diagnostics_cache (
+        path TEXT NOT NULL,
+        content_hash TEXT NOT NULL,
+        diagnostics_json TEXT NOT NULL,
+        recorded_at INTEGER NOT NULL,
+        PRIMARY KEY (path, content_hash)
+    );
 ";
 
 /// Directory names never descended into during a scan.
@@ -262,7 +274,7 @@ impl Index {
             )
             .with_path(&self.path));
         }
-        let steps: [(i64, &str); 2] = [(1, SCHEMA_V1), (2, SCHEMA_V2)];
+        let steps: [(i64, &str); 3] = [(1, SCHEMA_V1), (2, SCHEMA_V2), (3, SCHEMA_V3)];
         for (target, ddl) in steps {
             if version < target {
                 let tx = self.conn.transaction().map_err(|e| db_err(e, &self.path))?;
@@ -702,6 +714,56 @@ impl Index {
             .map_err(|e| db_err(e, &self.path))
     }
 
+    /// When each indexed file last changed content, in milliseconds since the Unix epoch, keyed by
+    /// `(package, rel_path)`. The value is the time the index stored the file's current contents,
+    /// so it moves only when the file's hash changes.
+    pub fn file_indexed_at(&self) -> Result<HashMap<(String, String), i64>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT p.name, f.rel_path, f.indexed_at FROM files f JOIN packages p ON p.id = f.package_id",
+            )
+            .map_err(|e| db_err(e, &self.path))?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(((r.get::<_, String>(0)?, r.get::<_, String>(1)?), r.get::<_, i64>(2)?))
+            })
+            .map_err(|e| db_err(e, &self.path))?;
+        rows.collect::<rusqlite::Result<HashMap<_, _>>>()
+            .map_err(|e| db_err(e, &self.path))
+    }
+
+    /// Direct imports of every project module, keyed by module name (see [`module_name_of`]).
+    /// Only files of the `project` package are included; imports may name modules that are not
+    /// in the index (external packages), so callers must filter them if they need project-only
+    /// edges.
+    pub fn project_import_graph(&self) -> Result<HashMap<String, Vec<String>>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT f.rel_path, i.module FROM files f
+                 JOIN packages p ON p.id = f.package_id
+                 LEFT JOIN imports i ON i.file_id = f.id
+                 WHERE p.name = 'project'",
+            )
+            .map_err(|e| db_err(e, &self.path))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?)))
+            .map_err(|e| db_err(e, &self.path))?;
+        let mut graph: HashMap<String, Vec<String>> = HashMap::new();
+        for row in rows {
+            let (rel, import) = row.map_err(|e| db_err(e, &self.path))?;
+            let Some(module) = module_name_of(&rel) else {
+                continue;
+            };
+            let entry = graph.entry(module).or_default();
+            if let Some(import) = import {
+                entry.push(import);
+            }
+        }
+        Ok(graph)
+    }
+
     /// Health and size summary (used by `tpt-lean index status` and `doctor`).
     pub fn status(&self) -> Result<Status> {
         let count = |sql: &str| -> Result<i64> {
@@ -735,11 +797,42 @@ impl Index {
         })
     }
 
+    /// Store the last diagnostics (as JSON text, produced by the caller) for `path` at
+    /// `content_hash`. Any earlier row for the same path is dropped, so at most one hash per path
+    /// is kept. `path` should be a stable project-relative path chosen by the caller.
+    pub fn store_diagnostics(&mut self, path: &str, content_hash: &str, diagnostics_json: &str) -> Result<()> {
+        let map = |e| db_err(e, &self.path);
+        let tx = self.conn.transaction().map_err(map)?;
+        tx.execute("DELETE FROM diagnostics_cache WHERE path = ?1", params![path])
+            .map_err(map)?;
+        tx.execute(
+            "INSERT INTO diagnostics_cache(path, content_hash, diagnostics_json, recorded_at) VALUES (?1, ?2, ?3, ?4)",
+            params![path, content_hash, diagnostics_json, now_ms()],
+        )
+        .map_err(map)?;
+        tx.commit().map_err(map)
+    }
+
+    /// The cached diagnostics JSON for `path`, but only if they were stored for exactly
+    /// `content_hash`. A row stored for another hash is never returned; it is replaced by the next
+    /// [`Index::store_diagnostics`] for the path. Returns `None` when nothing matches; callers must
+    /// then run Lean. Reads never write, so a racing reader cannot evict a fresh row.
+    pub fn cached_diagnostics(&self, path: &str, content_hash: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT diagnostics_json FROM diagnostics_cache WHERE path = ?1 AND content_hash = ?2",
+                params![path, content_hash],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|e| db_err(e, &self.path))
+    }
+
     /// Delete every row and reclaim space. The schema is kept.
     pub fn clear(&mut self) -> Result<()> {
         self.conn
             .execute_batch(
-                "DELETE FROM symbol_text; DELETE FROM declarations; DELETE FROM module_sources; DELETE FROM imports; DELETE FROM symbols; DELETE FROM files; DELETE FROM packages; VACUUM;",
+                "DELETE FROM diagnostics_cache; DELETE FROM symbol_text; DELETE FROM declarations; DELETE FROM module_sources; DELETE FROM imports; DELETE FROM symbols; DELETE FROM files; DELETE FROM packages; VACUUM;",
             )
             .map_err(|e| db_err(e, &self.path))
     }
@@ -1167,5 +1260,92 @@ mod tests {
     fn migration_is_recorded() {
         let idx = Index::open_in_memory().unwrap();
         assert_eq!(idx.status().unwrap().schema_version, SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn diagnostics_are_returned_only_for_the_same_hash() {
+        let mut idx = Index::open_in_memory().unwrap();
+        assert!(idx.cached_diagnostics("Main.lean", "h1").unwrap().is_none());
+        idx.store_diagnostics("Main.lean", "h1", "[{\"message\":\"a\"}]").unwrap();
+        assert_eq!(
+            idx.cached_diagnostics("Main.lean", "h1").unwrap().as_deref(),
+            Some("[{\"message\":\"a\"}]")
+        );
+        // A different hash never sees the old row.
+        assert!(idx.cached_diagnostics("Main.lean", "h2").unwrap().is_none());
+    }
+
+    #[test]
+    fn stale_diagnostics_are_dropped_when_the_hash_changes() {
+        let mut idx = Index::open_in_memory().unwrap();
+        idx.store_diagnostics("Main.lean", "h1", "[1]").unwrap();
+        // The file changed: a lookup with the new hash does not see the old row.
+        assert!(idx.cached_diagnostics("Main.lean", "h2").unwrap().is_none());
+        // Storing for the new hash replaces the old row rather than adding a second one.
+        idx.store_diagnostics("Main.lean", "h2", "[2]").unwrap();
+        assert!(idx.cached_diagnostics("Main.lean", "h1").unwrap().is_none());
+        assert_eq!(idx.cached_diagnostics("Main.lean", "h2").unwrap().as_deref(), Some("[2]"));
+        let rows: i64 = idx
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM diagnostics_cache WHERE path = 'Main.lean'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(rows, 1, "one row per path");
+        // Other paths are unaffected.
+        idx.store_diagnostics("Other.lean", "x", "[3]").unwrap();
+        assert_eq!(idx.cached_diagnostics("Other.lean", "x").unwrap().as_deref(), Some("[3]"));
+    }
+
+    #[test]
+    fn diagnostics_cache_survives_a_refresh_and_symbols_are_kept() {
+        let dir = project_with_imports("diag-cache");
+        let mut idx = Index::open_in_memory().unwrap();
+        let roots = default_scan_roots(&dir, false);
+        idx.refresh(&roots).unwrap();
+        let files_before = idx.status().unwrap().files;
+        idx.store_diagnostics("Main.lean", "h", "[]").unwrap();
+        idx.refresh(&roots).unwrap();
+        assert_eq!(idx.status().unwrap().files, files_before);
+        assert_eq!(idx.cached_diagnostics("Main.lean", "h").unwrap().as_deref(), Some("[]"));
+        idx.clear().unwrap();
+        assert!(idx.cached_diagnostics("Main.lean", "h").unwrap().is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn version_two_database_gains_the_diagnostics_table_and_keeps_symbols() {
+        let path = std::env::temp_dir().join(format!("tpt-index-v2-{}.sqlite", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute_batch(SCHEMA_V1).unwrap();
+            conn.execute_batch(SCHEMA_V2).unwrap();
+            conn.pragma_update(None, "user_version", 2).unwrap();
+            conn.execute("INSERT INTO packages(name, root) VALUES ('project', '/x')", [])
+                .unwrap();
+            conn.execute(
+                "INSERT INTO files(package_id, rel_path, hash, size, indexed_at) VALUES (1, 'Main.lean', 'h', 1, 0)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO symbols(file_id, name, short_name, kind, namespace, line, is_private, docstring)
+                 VALUES (1, 'keep', 'keep', 'def', '', 1, 0, NULL)",
+                [],
+            )
+            .unwrap();
+        }
+        {
+            let mut idx = Index::open(&path).unwrap();
+            let st = idx.status().unwrap();
+            assert_eq!(st.schema_version, SCHEMA_VERSION);
+            assert_eq!(st.symbols, 1, "symbol rows survive the upgrade");
+            idx.store_diagnostics("Main.lean", "h", "[]").unwrap();
+            assert_eq!(idx.cached_diagnostics("Main.lean", "h").unwrap().as_deref(), Some("[]"));
+        }
+        let _ = std::fs::remove_file(&path);
     }
 }

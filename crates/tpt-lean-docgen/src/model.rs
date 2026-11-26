@@ -5,6 +5,7 @@ use serde::Serialize;
 use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use tpt_lean_core::{Error, ErrorCode, Result};
+use tpt_lean_adapter::sidecar::SidecarReport;
 use tpt_lean_index::{collect_lean_files, default_scan_roots};
 use tpt_lean_syntax::parse;
 
@@ -131,8 +132,29 @@ pub fn collect(project_root: &Path, include_deps: bool) -> Result<Collected> {
         })
         .collect();
 
+    let model = Model {
+        project: project_name(project_root),
+        packages: roots.iter().map(|r| r.package.clone()).collect(),
+        namespaces: namespace_prefixes(&declarations),
+        modules,
+        declarations,
+        imports,
+    };
+    Ok(Collected { model, sources })
+}
+
+/// The project name: the directory name of the project root.
+fn project_name(project_root: &Path) -> String {
+    project_root
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "project".to_string())
+}
+
+/// Every namespace that holds a declaration, plus all of its dotted prefixes, sorted.
+fn namespace_prefixes(declarations: &[DeclInfo]) -> Vec<String> {
     let mut namespaces = BTreeSet::new();
-    for d in &declarations {
+    for d in declarations {
         let mut acc = String::new();
         for seg in d.namespace.split('.').filter(|s| !s.is_empty()) {
             if !acc.is_empty() {
@@ -142,20 +164,71 @@ pub fn collect(project_root: &Path, include_deps: bool) -> Result<Collected> {
             namespaces.insert(acc.clone());
         }
     }
+    namespaces.into_iter().collect()
+}
 
-    let project = project_root
-        .file_name()
-        .map(|n| n.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "project".to_string());
+/// Build a one-module model from the Lean sidecar's declarations for `report.module`.
+///
+/// The sidecar reports each declaration's full name, kind, pretty type and docstring. It does not
+/// report source lines, imports or namespace blocks, so: the namespace is the name without its last
+/// segment, the short name is the last segment, the signature is `name : type`, and `line` is 0
+/// (unknown). `source` is the module's text when it is available, and empty otherwise.
+pub fn sidecar_model(project: String, report: &SidecarReport, source: String) -> Collected {
+    let file = format!("{}.lean", report.module.replace('.', "/"));
+    let declarations: Vec<DeclInfo> = report
+        .declarations
+        .iter()
+        .map(|d| {
+            let (namespace, short) = match d.name.rfind('.') {
+                Some(i) if i > 0 && i + 1 < d.name.len() => {
+                    (d.name[..i].to_string(), d.name[i + 1..].to_string())
+                }
+                _ => (String::new(), d.name.clone()),
+            };
+            DeclInfo {
+                name: d.name.clone(),
+                short_name: Some(short),
+                kind: d.kind.clone(),
+                namespace,
+                module: 0,
+                line: 0,
+                docstring: d
+                    .doc
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .map(str::to_string),
+                is_private: d.name.starts_with("_private"),
+                signature: signature(&format!("{} : {}", d.name, d.type_)),
+            }
+        })
+        .collect();
+    let module = ModuleInfo {
+        name: report.module.clone(),
+        package: PROJECT_PACKAGE.to_string(),
+        file,
+        declarations: declarations.len(),
+        imports: Vec::new(),
+    };
     let model = Model {
         project,
-        packages: roots.iter().map(|r| r.package.clone()).collect(),
-        modules,
+        packages: vec![PROJECT_PACKAGE.to_string()],
+        namespaces: namespace_prefixes(&declarations),
+        modules: vec![module],
         declarations,
-        imports,
-        namespaces: namespaces.into_iter().collect(),
+        imports: Vec::new(),
     };
-    Ok(Collected { model, sources })
+    Collected {
+        model,
+        sources: vec![source],
+    }
+}
+
+/// [`sidecar_model`] for the module at `project_root`, reading its source file when it exists.
+pub fn collect_from_sidecar(project_root: &Path, report: &SidecarReport) -> Collected {
+    let file = project_root.join(format!("{}.lean", report.module.replace('.', "/")));
+    let source = std::fs::read_to_string(file).unwrap_or_default();
+    sidecar_model(project_name(project_root), report, source)
 }
 
 /// `Foo/Bar.lean` -> `Foo.Bar`.

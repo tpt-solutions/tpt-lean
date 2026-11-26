@@ -13,7 +13,10 @@ formats. The crate never writes project files.
 | `imports --minimize <file>` | `imports::minimize_imports(project_root, file)` | `MinimizePlan` (diff only) |
 | import cost (heavy imports) | `imports::import_costs(project_root)` | `Vec<ImportCost>` |
 | `bisect --good <rev> --bad <rev>` | `bisect::bisect_commits(repo, good, bad, check)` | `BisectReport` |
+| `bisect --axis imports --file F` | `bisect::bisect_items(Axis::Imports, F, candidates, check)` | `ItemBisectReport` |
+| `bisect --axis flags --file F --flags ...` | `bisect::bisect_items(Axis::Flags, F, candidates, check)` | `ItemBisectReport` |
 | bisect check | `bisect::lake_build_check(toolchain, subdir, timeout)` | closure for `bisect_commits` |
+| bisect check (imports, flags) | `bisect::lake_build_variant_check(toolchain, root, file, axis, timeout)` | closure for `bisect_items` |
 | `ci --json --sarif` | `ci::run_ci(project_root, toolchain, &CiOptions)` then `ci::to_sarif(&report)` | `CiReport`, `serde_json::Value` |
 | doctor | `doctor::doctor_extensions(project_root)` | `Vec<Check>` |
 
@@ -67,8 +70,15 @@ Scope: project git commits only.
 - `lake_build_check` is a typed check: `lake build` in a subdirectory of the checkout, passing on
   exit 0 with no error diagnostics. It needs `lake` and a relative subdirectory without `..`.
 
-Not done: dependency versions, Mathlib updates, compiler flags and import changes. They are listed
-in `bisect::NOT_IMPLEMENTED` and in every report's `not_done` field.
+- `bisect_items` handles the `imports` and `flags` axes with the same search. The caller passes the
+  candidates and a closure that receives the applied prefix. `render_imports` and `render_flags`
+  build the file variant, and `parse_flag` checks a `name=value` option before it reaches Lean
+  source.
+- `lake_build_variant_check` writes each variant over the project file, runs `lake build <module>`,
+  and restores the original text through a drop guard. This is the only write in the module.
+
+Not done: dependency versions and Mathlib updates. They are listed in `bisect::NOT_IMPLEMENTED` and
+in every report's `not_done` field.
 
 ## CI
 
@@ -123,7 +133,7 @@ Each check has `name`, `status` (`ok`, `warn`, `fail`, `skipped`), `detail` and 
 
 - `init --mathlib` toolchain note: not implemented. The Mathlib `lean-toolchain` pin changes over
   time and was not verifiable offline, so no pin is hard-coded.
-- Bisect over dependency versions, Mathlib updates, compiler flags and import changes.
+- Bisect over dependency versions and Mathlib updates.
 - Build cache statistics in `ci` (placeholder zeros).
 - SARIF JSON-schema validation (structural checks only).
 - Memory limits for child processes (the adapter does not enforce them yet).

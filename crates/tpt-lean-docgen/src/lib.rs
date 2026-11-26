@@ -11,9 +11,10 @@ mod render;
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use tpt_lean_adapter::sidecar::SidecarReport;
 use tpt_lean_core::Result;
 
-pub use model::{DeclInfo, ImportEdge, Model, ModuleInfo};
+pub use model::{sidecar_model, Collected, DeclInfo, ImportEdge, Model, ModuleInfo};
 
 /// What `generate` produced.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -35,7 +36,25 @@ pub struct Summary {
 /// `out_dir` with the same names are overwritten; nothing else is removed.
 pub fn generate(project_root: &Path, out_dir: &Path, include_deps: bool) -> Result<Summary> {
     let collected = model::collect(project_root, include_deps)?;
-    let files_written = render::write_site(out_dir, &collected)?;
+    write_collected(&collected, out_dir)
+}
+
+/// Like [`generate`], but the documented module is the one the Lean sidecar reported (see
+/// `tpt_lean_adapter::sidecar::run_sidecar`) rather than the source-parsed project. Only that
+/// module is documented; its source is shown when the file exists under `project_root`.
+pub fn generate_from_sidecar(project_root: &Path, out_dir: &Path, report: &SidecarReport) -> Result<Summary> {
+    let collected = model::collect_from_sidecar(project_root, report);
+    write_collected(&collected, out_dir)
+}
+
+/// Export the sidecar-based model as pretty-printed JSON without writing any files.
+pub fn export_json_from_sidecar(project_root: &Path, report: &SidecarReport) -> Result<String> {
+    let collected = model::collect_from_sidecar(project_root, report);
+    model::to_json(&collected.model)
+}
+
+fn write_collected(collected: &Collected, out_dir: &Path) -> Result<Summary> {
+    let files_written = render::write_site(out_dir, collected)?;
     let m = &collected.model;
     let external_imports = m.imports.iter().filter(|e| e.resolved.is_none()).count();
     Ok(Summary {
@@ -229,5 +248,78 @@ mod tests {
         assert_eq!(summary.modules, 0);
         assert!(out.exists("site/index.html"));
         assert!(out.read("site/search-index.json").starts_with('['));
+    }
+
+    /// Declarations as `tpt_sidecar <Module>` prints them (schema version 1).
+    const SIDECAR_FIXTURE: &str = r#"{
+        "schema_version": 1,
+        "module": "Geometry.Point",
+        "declarations": [
+            {"name": "Geometry.Point", "kind": "inductive", "type": "Type", "doc": "A point. "},
+            {"name": "Geometry.Point.add", "kind": "definition", "type": "Point -> Point -> Point", "doc": " Adds points. "},
+            {"name": "Geometry.Point.zero", "kind": "definition", "type": "Point", "doc": null},
+            {"name": "thm", "kind": "theorem", "type": "True", "doc": ""}
+        ]
+    }"#;
+
+    fn sidecar_report() -> tpt_lean_adapter::sidecar::SidecarReport {
+        tpt_lean_adapter::sidecar::parse_report(SIDECAR_FIXTURE).unwrap()
+    }
+
+    #[test]
+    fn sidecar_fixture_becomes_a_one_module_model() {
+        let collected = model::sidecar_model("proj".into(), &sidecar_report(), String::new());
+        let m = &collected.model;
+        assert_eq!(m.modules.len(), 1);
+        assert_eq!(m.modules[0].name, "Geometry.Point");
+        assert_eq!(m.modules[0].file, "Geometry/Point.lean");
+        assert_eq!(m.modules[0].declarations, 4);
+        assert!(m.imports.is_empty(), "the sidecar does not report imports");
+        assert_eq!(m.declarations.len(), 4);
+
+        let add = m.declarations.iter().find(|d| d.name == "Geometry.Point.add").unwrap();
+        assert_eq!(add.namespace, "Geometry.Point");
+        assert_eq!(add.short_name.as_deref(), Some("add"));
+        assert_eq!(add.kind, "definition");
+        assert_eq!(add.docstring.as_deref(), Some("Adds points."), "docstring is trimmed");
+        assert_eq!(add.signature, "Geometry.Point.add : Point -> Point -> Point");
+        assert_eq!(add.line, 0);
+
+        let zero = m.declarations.iter().find(|d| d.name == "Geometry.Point.zero").unwrap();
+        assert_eq!(zero.docstring, None);
+
+        let point = m.declarations.iter().find(|d| d.name == "Geometry.Point").unwrap();
+        assert_eq!(point.namespace, "Geometry");
+        assert_eq!(point.short_name.as_deref(), Some("Point"));
+
+        let thm = m.declarations.iter().find(|d| d.name == "thm").unwrap();
+        assert_eq!(thm.namespace, "");
+        assert_eq!(thm.docstring, None, "an empty docstring is no docstring");
+
+        assert_eq!(m.namespaces, vec!["Geometry".to_string(), "Geometry.Point".to_string()]);
+    }
+
+    #[test]
+    fn sidecar_source_is_kept_when_given() {
+        let collected = model::sidecar_model("proj".into(), &sidecar_report(), "def x := 1\n".into());
+        assert_eq!(collected.sources, vec!["def x := 1\n".to_string()]);
+    }
+
+    #[test]
+    fn sidecar_site_and_json_are_generated() {
+        let out = TempDir::new();
+        let json = export_json_from_sidecar(out.path(), &sidecar_report()).unwrap();
+        assert!(json.contains("\"Geometry.Point.add\""));
+        let summary = generate_from_sidecar(out.path(), &out.path().join("site"), &sidecar_report()).unwrap();
+        assert_eq!(summary.modules, 1);
+        assert_eq!(summary.declarations, 4);
+        assert_eq!(summary.import_edges, 0);
+        assert!(out.exists("site/index.html"));
+    }
+
+    #[test]
+    fn sidecar_rejects_unknown_schema_version() {
+        let text = SIDECAR_FIXTURE.replace("\"schema_version\": 1", "\"schema_version\": 9");
+        assert!(tpt_lean_adapter::sidecar::parse_report(&text).is_err());
     }
 }

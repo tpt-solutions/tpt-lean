@@ -3,7 +3,7 @@
 //! server. `tpt-lean doctor` and the server's `project.doctor` both run these, so the two report
 //! the same things. Failures are reported as data; the caller decides the exit status.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 use tpt_lean_adapter::{self as adapter, Command as LeanCommand};
@@ -181,6 +181,9 @@ pub fn project_checks(root: &Path, config: std::result::Result<(), String>) -> V
         }),
     }
 
+    checks.push(config_file_check(root));
+    checks.push(sidecar_check(root));
+
     for c in doctor_extensions(root) {
         let status = match c.status {
             CheckStatus::Ok => "ok",
@@ -199,6 +202,80 @@ pub fn project_checks(root: &Path, config: std::result::Result<(), String>) -> V
         });
     }
     checks
+}
+
+/// The Lean sidecar source directory, relative to a tpt-lean checkout.
+pub const SIDECAR_SOURCE: &str = "lean/tpt-lean-sidecar";
+
+/// Where `lake build` puts the sidecar executable for the default build directory.
+pub fn built_sidecar_exe(root: &Path) -> PathBuf {
+    root.join(SIDECAR_SOURCE)
+        .join(".lake")
+        .join("build")
+        .join("bin")
+        .join(format!("tpt_sidecar{}", std::env::consts::EXE_SUFFIX))
+}
+
+/// Whether the project has a configuration file. Without one the built-in defaults are used,
+/// which is a valid setup, so this is a warning that `doctor --fix` can resolve.
+fn config_file_check(root: &Path) -> ProjectCheck {
+    let dirs = ProjectDirs::new(root);
+    if root.join("tpt-lean.toml").is_file() || dirs.config().is_file() {
+        ProjectCheck {
+            name: "config-file",
+            status: "ok",
+            detail: "a configuration file is present".into(),
+        }
+    } else {
+        ProjectCheck {
+            name: "config-file",
+            status: "warn",
+            detail: "no configuration file; built-in defaults are in use".into(),
+        }
+    }
+}
+
+/// The Lean sidecar used by `index sidecar` and `goals --sidecar`. It comes from
+/// `TPT_LEAN_SIDECAR`, or is built from `lean/tpt-lean-sidecar` when this is a checkout of the
+/// tool itself.
+fn sidecar_check(root: &Path) -> ProjectCheck {
+    if let Some(p) = std::env::var_os("TPT_LEAN_SIDECAR").map(PathBuf::from) {
+        return if p.is_file() {
+            ProjectCheck {
+                name: "sidecar",
+                status: "ok",
+                detail: format!("TPT_LEAN_SIDECAR is {}", p.display()),
+            }
+        } else {
+            ProjectCheck {
+                name: "sidecar",
+                status: "fail",
+                detail: format!("TPT_LEAN_SIDECAR points at a missing file: {}", p.display()),
+            }
+        };
+    }
+    if !root.join(SIDECAR_SOURCE).join("lakefile.lean").is_file() {
+        return ProjectCheck {
+            name: "sidecar",
+            status: "skipped",
+            detail: "no sidecar source in this project; set TPT_LEAN_SIDECAR to a built tpt_sidecar"
+                .into(),
+        };
+    }
+    let exe = built_sidecar_exe(root);
+    if exe.is_file() {
+        ProjectCheck {
+            name: "sidecar",
+            status: "ok",
+            detail: format!("built at {}", exe.display()),
+        }
+    } else {
+        ProjectCheck {
+            name: "sidecar",
+            status: "warn",
+            detail: format!("{SIDECAR_SOURCE} is not built; doctor --fix builds it with lake build"),
+        }
+    }
 }
 
 /// Compare the Lean found on PATH with the project's pin and with the versions this release

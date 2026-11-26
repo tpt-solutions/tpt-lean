@@ -677,6 +677,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "tpt-lean-adapter",
  "tpt-lean-core",
  "tpt-lean-index",
  "tpt-lean-syntax",
@@ -790,6 +791,7 @@ dependencies = [
  "tpt-lean-adapter",
  "tpt-lean-build",
  "tpt-lean-core",
+ "tpt-lean-fmt",
  "tpt-lean-index",
  "tpt-lean-syntax",
 ]

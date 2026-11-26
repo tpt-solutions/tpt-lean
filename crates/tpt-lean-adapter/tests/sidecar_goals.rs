@@ -3,7 +3,7 @@
 //! has not been built for the active Lean version (`cd lean/tpt-lean-sidecar && lake -R build`).
 
 use std::path::{Path, PathBuf};
-use tpt_lean_adapter::sidecar::{run_sidecar_goals, GoalSite};
+use tpt_lean_adapter::sidecar::{run_sidecar_goals, run_sidecar_goals_report, GoalSite, GoalTarget};
 use tpt_lean_adapter::{discover_toolchain, lean_policy, lean_sysroot};
 use tpt_lean_core::policy::{CancelToken, ProcessPolicy};
 use tpt_lean_core::ErrorCode;
@@ -89,10 +89,10 @@ fn goals_before_the_tactic_at_a_position() {
 }
 
 #[test]
-fn no_goals_outside_a_tactic_block() {
+fn no_tactic_goals_outside_a_tactic_block() {
     with_sidecar(|exe, root| {
         let dir = temp_project("outside");
-        let goals = run_sidecar_goals(
+        let report = run_sidecar_goals_report(
             exe,
             root,
             &GoalSite {
@@ -107,7 +107,8 @@ fn no_goals_outside_a_tactic_block() {
         )
         .expect("goals");
         let _ = std::fs::remove_dir_all(&dir);
-        assert!(goals.is_empty(), "{goals:?}");
+        // Schema v2: outside a tactic the position may still be a term or a declaration name.
+        assert_ne!(report.target, GoalTarget::Tactic, "{:?}", report.goals);
     });
 }
 

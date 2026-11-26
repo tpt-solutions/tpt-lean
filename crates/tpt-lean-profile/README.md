@@ -53,8 +53,10 @@ Not implemented, and listed in each report's `notes`:
 - memory tracking,
 - flamegraph output (`tpt-lean profile --flamegraph` returns `not_implemented`),
 - slow-import detection,
-- dependency bottleneck graphs,
-- build-step timing and cache hit/miss reports.
+- dependency bottleneck graphs.
+
+Build-step timing and cache hit/miss reports are produced by the CLI (`tpt-lean profile --build`),
+not by this crate.
 
 The MCP server exposes this crate as the `tpt_lean_profile_file` tool, gated by `security.allow_build`.
 

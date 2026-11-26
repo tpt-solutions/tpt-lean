@@ -9,17 +9,19 @@ use tpt_lean_adapter::lsp::path_to_uri;
 use tpt_lean_core::Result;
 use tpt_lean_index::{Index, SymbolRow};
 
-/// `SymbolInformation` entries whose name matches `query`. Empty when no index exists yet.
+// The functions take an already open index handle (the proxy keeps one open). `None` means there
+// is no usable index, and the answer is empty.
+
+/// `SymbolInformation` entries whose name matches `query`. Empty when there is no index.
 pub fn workspace_symbols(
     project_root: &Path,
-    index_path: &Path,
+    index: Option<&Index>,
     query: &str,
     limit: usize,
 ) -> Result<Vec<Value>> {
-    if !index_path.is_file() {
+    let Some(index) = index else {
         return Ok(Vec::new());
-    }
-    let index = Index::open(index_path)?;
+    };
     let rows = index.symbols_named(query, limit)?;
     Ok(rows
         .iter()
@@ -28,12 +30,16 @@ pub fn workspace_symbols(
 }
 
 /// Declarations whose full name or short name is exactly `name`, as LSP `Location`s. Used for
-/// go-to-definition. Empty when no index exists or nothing matches.
-pub fn definitions(project_root: &Path, index_path: &Path, name: &str, limit: usize) -> Result<Vec<Value>> {
-    if !index_path.is_file() {
+/// go-to-definition. Empty when there is no index or nothing matches.
+pub fn definitions(
+    project_root: &Path,
+    index: Option<&Index>,
+    name: &str,
+    limit: usize,
+) -> Result<Vec<Value>> {
+    let Some(index) = index else {
         return Ok(Vec::new());
-    }
-    let index = Index::open(index_path)?;
+    };
     let rows = index.symbols_named(name, limit.max(1) * 10)?;
     Ok(rows
         .iter()
@@ -47,14 +53,13 @@ pub fn definitions(project_root: &Path, index_path: &Path, name: &str, limit: us
 /// modules come first, then dependencies; each module appears once. Empty without an index.
 pub fn import_modules(
     _project_root: &Path,
-    index_path: &Path,
+    index: Option<&Index>,
     name: &str,
     limit: usize,
 ) -> Result<Vec<String>> {
-    if !index_path.is_file() {
+    let Some(index) = index else {
         return Ok(Vec::new());
-    }
-    let index = Index::open(index_path)?;
+    };
     let mut rows = index.symbols_named(name, limit.max(1) * 20)?;
     rows.retain(|row| row.name == name || row.short_name.as_deref() == Some(name));
     rows.sort_by_key(|row| (row.package != "project", row.package.clone(), row.file.clone()));
@@ -104,7 +109,7 @@ mod tests {
     #[test]
     fn missing_index_gives_no_symbols() {
         let dir = std::env::temp_dir().join(format!("tpt-lsp-ws-none-{}", std::process::id()));
-        let symbols = workspace_symbols(&dir, &dir.join("index.sqlite"), "anything", 10).unwrap();
+        let symbols = workspace_symbols(&dir, None, "anything", 10).unwrap();
         assert!(symbols.is_empty());
     }
 
@@ -126,10 +131,10 @@ end Geo
         index
             .refresh(&tpt_lean_index::default_scan_roots(&dir, false))
             .unwrap();
+        let by_full = definitions(&dir, Some(&index), "Geo.compact_ok", 5).unwrap();
+        let by_short = definitions(&dir, Some(&index), "compact_ok", 5).unwrap();
+        let partial = definitions(&dir, Some(&index), "compact", 5).unwrap();
         drop(index);
-        let by_full = definitions(&dir, &db, "Geo.compact_ok", 5).unwrap();
-        let by_short = definitions(&dir, &db, "compact_ok", 5).unwrap();
-        let partial = definitions(&dir, &db, "compact", 5).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(by_full.len(), 1, "{by_full:?}");
         assert_eq!(by_short.len(), 1);
@@ -148,8 +153,8 @@ end Geo
         index
             .refresh(&tpt_lean_index::default_scan_roots(&dir, false))
             .unwrap();
+        let symbols = workspace_symbols(&dir, Some(&index), "widget_size", 10).unwrap();
         drop(index);
-        let symbols = workspace_symbols(&dir, &db, "widget_size", 10).unwrap();
         let _ = std::fs::remove_dir_all(&dir);
         assert_eq!(symbols.len(), 1, "{symbols:?}");
         assert_eq!(symbols[0]["name"], "widget_size_ok");

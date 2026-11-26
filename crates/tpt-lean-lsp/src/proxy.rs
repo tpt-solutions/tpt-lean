@@ -16,25 +16,45 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tpt_lean_adapter::explain::{error_at, lemma_candidates, split_goal};
 use tpt_lean_adapter::lsp::{is_cancelled, parse_plain_goals, path_to_uri};
 use tpt_lean_adapter::LspSession;
+use tpt_lean_core::config::{load_config, Config};
 use tpt_lean_core::dirs::ProjectDirs;
 use tpt_lean_core::policy::CancelToken;
 use tpt_lean_core::{Error, ErrorCode, Result};
 use tpt_lean_fmt::format_text;
+use tpt_lean_index::Index;
 
 /// How often the loop checks Lean for new diagnostics when no editor message arrives.
 const POLL: Duration = Duration::from_millis(50);
-/// Timeout for one request forwarded to Lean.
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const WORKSPACE_SYMBOL_LIMIT: usize = 200;
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INTERNAL_ERROR: i64 = -32603;
 const REQUEST_CANCELLED: i64 = -32800;
+/// LSP `RequestFailed`: used for a forwarded request that timed out (the server was restarted).
+const REQUEST_FAILED: i64 = -32803;
 const LOG_ERROR: u8 = 1;
+
+/// Idle and health limits for the language server, from the `[lsp]` and `[security]` config.
+/// Returns (idle timeout, health timeout). A zero idle timeout disables the idle shutdown.
+pub fn lifecycle_timeouts(config: &Config) -> (Duration, Duration) {
+    let idle = Duration::from_secs(config.lsp.idle_timeout_seconds);
+    let health = Duration::from_secs(
+        config
+            .lsp
+            .health_timeout_seconds
+            .unwrap_or(config.security.command_timeout_seconds),
+    );
+    (idle, health)
+}
+
+/// True when no request has arrived for `idle` by `now`. A zero `idle` never expires.
+pub fn idle_expired(last_activity: Instant, now: Instant, idle: Duration) -> bool {
+    !idle.is_zero() && now.saturating_duration_since(last_activity) >= idle
+}
 
 /// Shared table of in-flight editor requests and their cancel tokens, keyed by request id.
 type CancelTable = Arc<Mutex<HashMap<String, CancelToken>>>;
@@ -82,10 +102,23 @@ pub struct Proxy<W: Write> {
     progress: HashMap<String, ActiveProgress>,
     progress_seq: u64,
     cancels: CancelTable,
+    /// The project index, opened once and reused for every index-backed request. `None` while
+    /// the index file is missing or cannot be opened.
+    index: Option<Index>,
+    /// The last failure to open the index, so that the same failure is logged once.
+    index_error: Option<String>,
+    /// How many times the index file has been opened.
+    index_opens: u32,
+    /// Shut the server down after this long without an editor message. Zero disables it.
+    idle_timeout: Duration,
+    last_activity: Instant,
+    /// How many times the server was shut down for being idle.
+    idle_stops: u32,
 }
 
 impl<W: Write> Proxy<W> {
     /// A proxy for the project at `project_root`, forwarding to `session`, writing to `out`.
+    /// The idle shutdown is off until [`Proxy::with_idle_timeout`] sets it.
     pub fn new(project_root: &Path, session: LspSession, out: W) -> Self {
         Self {
             index_path: ProjectDirs::new(project_root).index_db(),
@@ -98,12 +131,78 @@ impl<W: Write> Proxy<W> {
             progress: HashMap::new(),
             progress_seq: 0,
             cancels: Arc::new(Mutex::new(HashMap::new())),
+            index: None,
+            index_error: None,
+            index_opens: 0,
+            idle_timeout: Duration::ZERO,
+            last_activity: Instant::now(),
+            idle_stops: 0,
         }
+    }
+
+    /// Stop the server after `idle` without editor messages. It starts again on the next request.
+    /// `Duration::ZERO` turns the idle shutdown off.
+    pub fn with_idle_timeout(mut self, idle: Duration) -> Self {
+        self.idle_timeout = idle;
+        self
     }
 
     /// Everything written to the editor so far (useful for tests).
     pub fn output(&self) -> &W {
         &self.out
+    }
+
+    /// How many times the project index file has been opened. With a working index this is 1
+    /// however many index-backed requests were answered.
+    pub fn index_opens(&self) -> u32 {
+        self.index_opens
+    }
+
+    /// How many times the language server was shut down because it was idle.
+    pub fn idle_stops(&self) -> u32 {
+        self.idle_stops
+    }
+
+    /// Shut the language server down if no editor message has arrived for the idle timeout as of
+    /// `now`. The server is started again by the next request that needs it. `now` is a parameter
+    /// so that the policy can be tested without waiting.
+    pub fn check_idle(&mut self, now: Instant) {
+        if idle_expired(self.last_activity, now, self.idle_timeout) && self.session.server_started() {
+            self.session.stop();
+            self.idle_stops += 1;
+        }
+    }
+
+    /// Open the project index on first use and keep the handle. A missing file means no index
+    /// (the handle is dropped). An open failure is logged once and retried on later requests.
+    fn ensure_index(&mut self) -> Result<()> {
+        if !self.index_path.is_file() {
+            self.index = None;
+            return Ok(());
+        }
+        if self.index.is_some() {
+            return Ok(());
+        }
+        match Index::open(&self.index_path) {
+            Ok(index) => {
+                self.index = Some(index);
+                self.index_opens += 1;
+                self.index_error = None;
+                Ok(())
+            }
+            Err(e) => {
+                let message = format!(
+                    "cannot open the project index {}: {}",
+                    self.index_path.display(),
+                    e.message()
+                );
+                if self.index_error.as_deref() != Some(message.as_str()) {
+                    self.index_error = Some(message.clone());
+                    self.log(&message)?;
+                }
+                Ok(())
+            }
+        }
     }
 
     /// Serve editor messages from `input` until `exit` or end of input. Stops the Lean server.
@@ -121,6 +220,7 @@ impl<W: Write> Proxy<W> {
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
+            self.check_idle(Instant::now());
             self.forward_new_diagnostics()?;
             self.forward_progress()?;
         }
@@ -129,6 +229,7 @@ impl<W: Write> Proxy<W> {
     }
 
     fn handle(&mut self, msg: Value) -> Result<Flow> {
+        self.last_activity = Instant::now();
         let method = msg.get("method").and_then(Value::as_str).map(str::to_string);
         let params = msg.get("params").cloned().unwrap_or(Value::Null);
         match (method, msg.get("id").cloned()) {
@@ -154,6 +255,29 @@ impl<W: Write> Proxy<W> {
         match outcome {
             Ok(result) => self.send(json!({ "jsonrpc": "2.0", "id": id, "result": result })),
             Err(e) if is_cancelled(&e) => self.send_error(id, REQUEST_CANCELLED, "request cancelled"),
+            Err(e) if e.code() == ErrorCode::Timeout => {
+                // The server did not answer in time. Treat it as unhealthy: replace it now, so
+                // that the next request talks to a fresh server, and report a typed timeout.
+                let restart = self.session.restart_server();
+                let restarted = restart.is_ok();
+                let message = match restart {
+                    Ok(()) => format!("{method} timed out; the language server was restarted"),
+                    Err(r) => format!(
+                        "{method} timed out; restarting the language server failed: {}",
+                        r.message()
+                    ),
+                };
+                self.log(&message)?;
+                self.send(json!({
+                    "jsonrpc": "2.0",
+                    "id": id,
+                    "error": {
+                        "code": REQUEST_FAILED,
+                        "message": e.message(),
+                        "data": { "kind": ErrorCode::Timeout.as_str(), "restarted": restarted }
+                    }
+                }))
+            }
             Err(e) => {
                 let code = if e.code() == ErrorCode::NotImplemented {
                     METHOD_NOT_FOUND
@@ -172,9 +296,10 @@ impl<W: Write> Proxy<W> {
             "textDocument/documentSymbol" => Ok(self.document_symbols(params)),
             "workspace/symbol" => {
                 let query = params["query"].as_str().unwrap_or("");
+                self.ensure_index()?;
                 let symbols = workspace_symbols(
                     &self.project_root,
-                    &self.index_path,
+                    self.index.as_ref(),
                     query,
                     WORKSPACE_SYMBOL_LIMIT,
                 )?;
@@ -396,7 +521,8 @@ impl<W: Write> Proxy<W> {
             .get(uri)
             .and_then(|doc| word_at(&doc.text, line, character));
         if let Some(word) = word {
-            let locations = definitions(&self.project_root, &self.index_path, &word, 20)?;
+            self.ensure_index()?;
+            let locations = definitions(&self.project_root, self.index.as_ref(), &word, 20)?;
             if !locations.is_empty() {
                 return Ok(Value::Array(locations));
             }
@@ -430,7 +556,10 @@ impl<W: Write> Proxy<W> {
             let Some(name) = d["message"].as_str().and_then(unknown_name) else {
                 continue;
             };
-            let modules = import_modules(&self.project_root, &self.index_path, &name, 3).unwrap_or_default();
+            // A failure to log the index problem is not worth failing the code actions for.
+            let _ = self.ensure_index();
+            let modules =
+                import_modules(&self.project_root, self.index.as_ref(), &name, 3).unwrap_or_default();
             for module in modules {
                 if already_imports(&text, &module) {
                     continue;
@@ -637,15 +766,17 @@ impl<W: Write> Proxy<W> {
 /// Program entry point: serve the editor on stdin/stdout for the project at `project_root`.
 /// Lean is started on first use with `lake serve` or `lean --server`.
 pub fn run_stdio(project_root: &Path) -> Result<()> {
+    let (config, _) = load_config(project_root, &[])?;
+    let (idle, health) = lifecycle_timeouts(&config);
     let toolchain = tpt_lean_adapter::discover_toolchain();
     let session = LspSession::for_project(
         project_root,
         toolchain.lake.as_ref(),
         toolchain.lean.as_ref(),
-        REQUEST_TIMEOUT,
+        health,
     )?;
     let stdout = std::io::stdout();
-    let mut proxy = Proxy::new(project_root, session, stdout.lock());
+    let mut proxy = Proxy::new(project_root, session, stdout.lock()).with_idle_timeout(idle);
     proxy.serve(std::io::BufReader::new(std::io::stdin()))
 }
 
@@ -1050,6 +1181,145 @@ mod tests {
 
         assert!(out.iter().any(|m| m["id"] == 3 && m["result"].is_null()));
         // Lean could not start, so the failure is reported to the editor as a log message.
+        assert!(out.iter().any(|m| m["method"] == "window/logMessage"));
+    }
+
+    fn fresh_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn unreachable_session(dir: &Path) -> LspSession {
+        LspSession::new(
+            Path::new("/nonexistent/tpt-lean-test-server"),
+            &[],
+            dir,
+            Duration::from_secs(5),
+        )
+    }
+
+    fn workspace_query(id: i64, query: &str) -> Value {
+        json!({"jsonrpc": "2.0", "id": id, "method": "workspace/symbol", "params": {"query": query}})
+    }
+
+    #[test]
+    fn project_index_is_opened_once_and_reused() {
+        let dir = fresh_dir("tpt-lsp-index-reuse");
+        std::fs::write(dir.join("Lib.lean"), "theorem reuse_check_ok : True := trivial\n").unwrap();
+        let mut index = tpt_lean_index::Index::open(&ProjectDirs::new(&dir).index_db()).unwrap();
+        index
+            .refresh(&tpt_lean_index::default_scan_roots(&dir, false))
+            .unwrap();
+        drop(index);
+
+        let mut messages: Vec<Value> = (1..=5).map(|id| workspace_query(id, "reuse_check")).collect();
+        messages.push(json!({"jsonrpc": "2.0", "method": "exit"}));
+        let mut proxy = Proxy::new(&dir, unreachable_session(&dir), Vec::new());
+        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        let opens = proxy.index_opens();
+        let out = read_back(proxy.output());
+        drop(proxy);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        assert_eq!(opens, 1);
+        for id in 1..=5 {
+            let reply = out.iter().find(|m| m["id"] == id).expect("workspace/symbol response");
+            assert_eq!(reply["result"][0]["name"], "reuse_check_ok", "{reply}");
+        }
+    }
+
+    #[test]
+    fn missing_index_answers_empty_and_opens_nothing() {
+        let dir = fresh_dir("tpt-lsp-index-missing");
+        let messages = [workspace_query(1, "anything"), json!({"jsonrpc": "2.0", "method": "exit"})];
+        let mut proxy = Proxy::new(&dir, unreachable_session(&dir), Vec::new());
+        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        let out = read_back(proxy.output());
+        assert_eq!(proxy.index_opens(), 0);
+        let reply = out.iter().find(|m| m["id"] == 1).expect("workspace/symbol response");
+        assert_eq!(reply["result"], json!([]));
+    }
+
+    #[test]
+    fn unreadable_index_is_reported_without_panicking() {
+        let dir = fresh_dir("tpt-lsp-index-broken");
+        let db = ProjectDirs::new(&dir).index_db();
+        std::fs::create_dir_all(db.parent().unwrap()).unwrap();
+        std::fs::write(&db, b"this is not a sqlite database, not even close").unwrap();
+        let messages = [workspace_query(1, "anything"), json!({"jsonrpc": "2.0", "method": "exit"})];
+        let mut proxy = Proxy::new(&dir, unreachable_session(&dir), Vec::new());
+        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        let out = read_back(proxy.output());
+        drop(proxy);
+        let _ = std::fs::remove_dir_all(&dir);
+        // Either an empty answer or a typed error; never a dropped request.
+        assert!(out.iter().any(|m| m["id"] == 1), "{out:?}");
+    }
+
+    #[test]
+    fn idle_expiry_is_decided_from_the_given_instants() {
+        let t0 = Instant::now();
+        let idle = Duration::from_secs(900);
+        assert!(!idle_expired(t0, t0 + Duration::from_secs(899), idle));
+        assert!(idle_expired(t0, t0 + Duration::from_secs(900), idle));
+        assert!(!idle_expired(t0, t0 + Duration::from_secs(100_000), Duration::ZERO));
+    }
+
+    #[test]
+    fn check_idle_without_a_running_server_stops_nothing() {
+        let dir = fresh_dir("tpt-lsp-idle-none");
+        let mut proxy = Proxy::new(&dir, unreachable_session(&dir), Vec::new())
+            .with_idle_timeout(Duration::from_secs(900));
+        proxy.check_idle(Instant::now() + Duration::from_secs(10_000));
+        assert_eq!(proxy.idle_stops(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn lifecycle_timeouts_follow_the_config() {
+        let mut config = Config::default();
+        assert_eq!(
+            lifecycle_timeouts(&config),
+            (Duration::from_secs(900), Duration::from_secs(120))
+        );
+        config.lsp.idle_timeout_seconds = 0;
+        config.lsp.health_timeout_seconds = Some(30);
+        assert_eq!(lifecycle_timeouts(&config), (Duration::ZERO, Duration::from_secs(30)));
+    }
+
+    /// A program that starts but never answers the LSP `initialize` request.
+    fn silent_server() -> (PathBuf, Vec<String>) {
+        if cfg!(windows) {
+            (
+                PathBuf::from("powershell"),
+                vec!["-NoProfile".into(), "-Command".into(), "Start-Sleep -Seconds 60".into()],
+            )
+        } else {
+            (PathBuf::from("sleep"), vec!["60".into()])
+        }
+    }
+
+    #[test]
+    fn unhealthy_server_gives_a_typed_timeout_and_is_restarted() {
+        let dir = fresh_dir("tpt-lsp-health");
+        let (program, args) = silent_server();
+        let session = LspSession::new(&program, &args, &dir, Duration::from_secs(1));
+        let messages = [
+            json!({"jsonrpc": "2.0", "id": 1, "method": "textDocument/foldingRange", "params": {
+                "textDocument": {"uri": "file:///tmp/tpt-health/Main.lean"}}}),
+            json!({"jsonrpc": "2.0", "method": "exit"}),
+        ];
+        let mut proxy = Proxy::new(&dir, session, Vec::new());
+        proxy.serve(BufReader::new(Cursor::new(frames(&messages)))).unwrap();
+        let out = read_back(proxy.output());
+        drop(proxy);
+        let _ = std::fs::remove_dir_all(&dir);
+
+        let reply = out.iter().find(|m| m["id"] == 1).expect("response to the timed out request");
+        assert_eq!(reply["error"]["code"], REQUEST_FAILED, "{reply}");
+        assert_eq!(reply["error"]["data"]["kind"], "timeout", "{reply}");
         assert!(out.iter().any(|m| m["method"] == "window/logMessage"));
     }
 }

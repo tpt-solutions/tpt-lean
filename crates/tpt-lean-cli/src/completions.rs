@@ -10,6 +10,7 @@ pub const COMMANDS: &[(&str, &[&str])] = &[
     ("init", &[]),
     ("doctor", &[]),
     ("sorry-report", &[]),
+    ("fix", &[]),
     ("watch", &[]),
     ("setup", &[]),
     ("config", &["show"]),

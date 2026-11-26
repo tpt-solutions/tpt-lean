@@ -3,11 +3,13 @@
 //! runner with SARIF output, and doctor extensions.
 //!
 //! Everything here is a library entry point. The CLI crate decides how to wire it up.
-//! Nothing in this crate writes project files; see `docs/tools.md` for the limits of each part.
+//! Only [`fix::fix_file`] with `apply` set writes a project file; everything else only reads. See
+//! `docs/tools.md` for the limits of each part.
 
 pub mod bisect;
 pub mod ci;
 pub mod doctor;
+pub mod fix;
 pub mod imports;
 pub mod project_doctor;
 pub mod sorry;

@@ -8,7 +8,7 @@
 
 use crate::runner::{run, ProcessOutput};
 use crate::Toolchain;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tpt_lean_core::policy::{CancelToken, ProcessPolicy};
 use tpt_lean_core::{Error, ErrorCode, Result};
@@ -236,6 +236,21 @@ pub fn run_sidecar_goals(
     policy: &ProcessPolicy,
     cancel: &CancelToken,
 ) -> Result<Vec<String>> {
+    run_sidecar_goals_report(exe, sysroot, site, cwd, lean_path, policy, cancel)
+        .map(|report| report.goals)
+}
+
+/// Like [`run_sidecar_goals`], but returns the whole report, including what kind of position it is
+/// (see [`GoalTarget`]).
+pub fn run_sidecar_goals_report(
+    exe: &Path,
+    sysroot: &Path,
+    site: &GoalSite<'_>,
+    cwd: Option<&Path>,
+    lean_path: Option<&str>,
+    policy: &ProcessPolicy,
+    cancel: &CancelToken,
+) -> Result<GoalsReport> {
     let policy = sidecar_policy(policy, sysroot, lean_path);
     let file = site.file;
     let args = vec![
@@ -266,7 +281,7 @@ pub fn run_sidecar_goals(
                     format!("sidecar goals output is not valid JSON: {e}"),
                 )
             })?;
-            if report.schema_version != SCHEMA_VERSION {
+            if !GOALS_SCHEMA_VERSIONS.contains(&report.schema_version) {
                 return Err(Error::new(
                     ErrorCode::Internal,
                     format!(
@@ -275,7 +290,7 @@ pub fn run_sidecar_goals(
                     ),
                 ));
             }
-            Ok(report.goals)
+            Ok(report)
         }
         Some(EXIT_FILE_NOT_ELABORATED) => Err(Error::new(
             ErrorCode::Io,
@@ -284,6 +299,77 @@ pub fn run_sidecar_goals(
         code => Err(Error::new(
             ErrorCode::Internal,
             format!("sidecar goals exited with {code:?}: {}", out.stderr.trim()),
+        )),
+    }
+}
+
+/// Goals at several positions of one file, from one elaboration of the file (the sidecar's
+/// `sites` mode). The result is in the order of `sites`, which are 1-based `(line, column)` pairs.
+#[allow(clippy::too_many_arguments)]
+pub fn run_sidecar_sites(
+    exe: &Path,
+    sysroot: &Path,
+    file: &Path,
+    sites: &[(u64, u64)],
+    cwd: Option<&Path>,
+    lean_path: Option<&str>,
+    policy: &ProcessPolicy,
+    cancel: &CancelToken,
+) -> Result<Vec<SiteGoals>> {
+    if sites.is_empty() {
+        return Ok(Vec::new());
+    }
+    let policy = sidecar_policy(policy, sysroot, lean_path);
+    let mut args = vec!["sites".to_string(), file.display().to_string()];
+    args.extend(sites.iter().map(|(line, column)| format!("{line}:{column}")));
+    let out: ProcessOutput = run(exe, &args, cwd, &policy, cancel)?;
+    if out.timed_out || out.cancelled || out.memory_exceeded || out.output_truncated {
+        return Err(Error::new(
+            ErrorCode::Timeout,
+            format!(
+                "sidecar did not finish for goals in {} (timed_out={}, cancelled={})",
+                file.display(),
+                out.timed_out,
+                out.cancelled
+            ),
+        ));
+    }
+    match out.exit_code {
+        Some(0) => {
+            let report: SitesReport = serde_json::from_str(out.stdout.trim()).map_err(|e| {
+                Error::new(
+                    ErrorCode::Internal,
+                    format!("sidecar sites output is not valid JSON: {e}"),
+                )
+            })?;
+            if !GOALS_SCHEMA_VERSIONS.contains(&report.schema_version) {
+                return Err(Error::new(
+                    ErrorCode::Internal,
+                    format!(
+                        "sidecar sites schema version {} is not supported",
+                        report.schema_version
+                    ),
+                ));
+            }
+            if report.sites.len() != sites.len() {
+                return Err(Error::new(
+                    ErrorCode::Internal,
+                    format!(
+                        "sidecar answered {} site(s) for {} requested",
+                        report.sites.len(),
+                        sites.len()
+                    ),
+                ));
+            }
+            Ok(report.sites)
+        }
+        Some(EXIT_FILE_NOT_ELABORATED) => Err(Error::new(
+            ErrorCode::Io,
+            format!("cannot get goals in {}: {}", file.display(), out.stderr.trim()),
+        )),
+        code => Err(Error::new(
+            ErrorCode::Internal,
+            format!("sidecar sites exited with {code:?}: {}", out.stderr.trim()),
         )),
     }
 }
@@ -297,14 +383,51 @@ pub struct GoalSite<'a> {
     pub column: u64,
 }
 
+/// Goals-mode schema versions this client reads. Version 1 had tactic goals only.
+pub const GOALS_SCHEMA_VERSIONS: [u64; 2] = [1, 2];
+
+/// What a goals position is about. Version 1 reports carry no target and are tactic goals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GoalTarget {
+    /// Goals before the innermost tactic containing the position.
+    #[default]
+    Tactic,
+    /// The expected type of the innermost term containing the position.
+    Term,
+    /// The type of the declaration whose name contains the position.
+    Statement,
+    /// Nothing at the position has goals.
+    #[serde(rename = "none")]
+    Nothing,
+}
+
 /// Output of the sidecar's `goals` mode.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct GoalsReport {
     pub schema_version: u64,
     pub file: String,
     pub line: u64,
     pub column: u64,
+    #[serde(default)]
+    pub target: GoalTarget,
     pub goals: Vec<String>,
+}
+
+/// Goals at one position, from the sidecar's `sites` mode.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SiteGoals {
+    pub line: u64,
+    pub column: u64,
+    pub target: GoalTarget,
+    pub goals: Vec<String>,
+}
+
+/// Output of the sidecar's `sites` mode.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+struct SitesReport {
+    schema_version: u64,
+    sites: Vec<SiteGoals>,
 }
 
 #[cfg(test)]
@@ -332,6 +455,41 @@ mod tests {
     #[test]
     fn rejects_invalid_json() {
         assert!(parse_report("not json").is_err());
+    }
+
+    #[test]
+    fn goals_v1_reports_are_tactic_goals() {
+        let text = r#"{"schema_version":1,"file":"M.lean","line":2,"column":3,"goals":["⊢ True"]}"#;
+        let r: GoalsReport = serde_json::from_str(text).unwrap();
+        assert_eq!(r.target, GoalTarget::Tactic);
+        assert_eq!(r.goals, vec!["⊢ True"]);
+    }
+
+    #[test]
+    fn goals_v2_reports_carry_their_target() {
+        for (wire, expected) in [
+            ("tactic", GoalTarget::Tactic),
+            ("term", GoalTarget::Term),
+            ("statement", GoalTarget::Statement),
+            ("none", GoalTarget::Nothing),
+        ] {
+            let text = format!(
+                r#"{{"schema_version":2,"file":"M.lean","line":1,"column":1,"target":"{wire}","goals":[]}}"#
+            );
+            let r: GoalsReport = serde_json::from_str(&text).unwrap();
+            assert_eq!(r.target, expected, "target {wire}");
+        }
+    }
+
+    #[test]
+    fn sites_reports_are_read_in_order() {
+        let text = r#"{"schema_version":2,"file":"M.lean","sites":[
+            {"line":2,"column":3,"target":"tactic","goals":["⊢ True"]},
+            {"line":4,"column":58,"target":"term","goals":["p : Prop","⊢ p"]}]}"#;
+        let r: SitesReport = serde_json::from_str(text).unwrap();
+        assert_eq!(r.sites.len(), 2);
+        assert_eq!(r.sites[1].target, GoalTarget::Term);
+        assert_eq!(r.sites[1].goals, vec!["p : Prop", "⊢ p"]);
     }
 
     #[test]

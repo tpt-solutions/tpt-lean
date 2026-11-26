@@ -34,6 +34,7 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
         ["init"] => init(ctx, args),
         ["doctor"] => doctor(ctx, args),
         ["sorry-report"] => sorry_report(ctx, args),
+        ["fix"] => fix(ctx, args),
         ["watch"] => ext::watch_cmd(ctx, args),
         ["setup"] => setup::setup_cmd(ctx, args),
         ["config"] | ["config", "show"] => config_show(ctx, args),
@@ -113,7 +114,8 @@ Project and environment:
   completions bash|zsh|fish|powershell        print a shell completion script
 
 Source:
-  sorry-report [paths] [--deny-sorry]         list sorry and admit per declaration
+  sorry-report [paths] [--deny-sorry] [--sidecar]  list sorry and admit per declaration, with goals
+  fix FILE [--apply]                          plan unused-import, missing-import and format fixes
   watch [--once] [--interval-ms N]            re-check changed files; a summary per file
   setup [--editor NAME]... [--mcp NAME]... [--dry-run]  write editor and MCP config, diff first
   fmt [--check|--diff|--verify] [paths]       conservative formatter
@@ -129,9 +131,11 @@ Lean (needs `lean` and `lake`):
   explain FILE:LINE:COL | --last-error
   context-pack FILE:LINE:COL [--max-tokens N]
   profile FILE [--imports] [--graph OUT.dot] [--flamegraph OUT.folded] [--compare A B]
-  docgen [--out DIR] [--open]
+  docgen [--out DIR] [--open] [--json] [--include-deps] [--from-sidecar MODULE [--exe PATH]]
   ci [--json|--sarif]
-  bisect --good REV --bad REV
+  bisect --good REV --bad REV [--axis commits]
+  bisect --axis imports --file FILE
+  bisect --axis flags --file FILE --flags A=1,B,C=false
 
 Servers and integrations:
   server start [--port N] [--http PORT] | status | stop
@@ -325,6 +329,28 @@ fn doctor(ctx: &Ctx, args: &Args) -> Result<i32> {
                 detail: format!("index: {}", detail.1),
             });
         }
+        if plan.iter().any(|p| p.starts_with("config:")) {
+            let detail = match write_default_config(&root) {
+                Ok(msg) => ("ok", msg),
+                Err(e) => ("fail", e.to_string()),
+            };
+            fixes.push(tpt_lean_tools::project_doctor::ProjectCheck {
+                name: "fix",
+                status: detail.0,
+                detail: format!("config: {}", detail.1),
+            });
+        }
+        if plan.iter().any(|p| p.starts_with("sidecar:")) {
+            let detail = match build_sidecar(&root) {
+                Ok(msg) => ("ok", msg),
+                Err(e) => ("fail", e.to_string()),
+            };
+            fixes.push(tpt_lean_tools::project_doctor::ProjectCheck {
+                name: "fix",
+                status: detail.0,
+                detail: format!("sidecar: {}", detail.1),
+            });
+        }
         // Re-check after the fixes, so the report shows the state the project is in now.
         checks = tpt_lean_tools::project_doctor::project_checks(&root, config);
         checks.extend(fixes);
@@ -361,7 +387,66 @@ fn doctor_fix_plan(checks: &[tpt_lean_tools::project_doctor::ProjectCheck]) -> V
             plan.push("index: rebuild the symbol index (the index is derived data; the damaged database is deleted first)".to_string());
         }
     }
+    if let Some(c) = checks.iter().find(|c| c.name == "config-file") {
+        if c.status == "warn" {
+            plan.push("config: write the default configuration to .tpt-lean/config.toml".to_string());
+        }
+    }
+    if let Some(c) = checks.iter().find(|c| c.name == "sidecar") {
+        if c.status == "warn" {
+            plan.push(format!(
+                "sidecar: run lake build in {}",
+                tpt_lean_tools::project_doctor::SIDECAR_SOURCE
+            ));
+        }
+    }
     plan
+}
+
+/// Write the default configuration to `.tpt-lean/config.toml`, unless a configuration file
+/// already exists. The file records today's defaults, so later default changes do not reach it.
+fn write_default_config(root: &Path) -> Result<String> {
+    let dirs = ProjectDirs::new(root);
+    if dirs.config().is_file() || root.join("tpt-lean.toml").is_file() {
+        return Ok("a configuration file already exists".into());
+    }
+    dirs.ensure()?;
+    let text = config::to_toml(&Config::default())?;
+    std::fs::write(dirs.config(), text).map_err(|e| Error::from(e).with_path(&dirs.config()))?;
+    Ok(format!("wrote {}", dirs.config().display()))
+}
+
+/// Build the Lean sidecar from its source in this checkout with `lake build`, then check that
+/// the executable exists where the doctor looks for it.
+fn build_sidecar(root: &Path) -> Result<String> {
+    let dir = root.join(tpt_lean_tools::project_doctor::SIDECAR_SOURCE);
+    let tc = adapter::discover_toolchain();
+    let result = adapter::execute(
+        &tc,
+        &LeanCommand::LakeBuild { target: None },
+        Some(&dir),
+        &adapter::lean_policy(600),
+        &tpt_lean_core::policy::CancelToken::new(),
+    )?;
+    if result.output.exit_code != Some(0) {
+        let last = result
+            .output
+            .stderr
+            .lines()
+            .rev()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or("lake build failed")
+            .to_string();
+        return Err(Error::invalid(format!("lake build failed: {last}")));
+    }
+    let exe = tpt_lean_tools::project_doctor::built_sidecar_exe(root);
+    if !exe.is_file() {
+        return Err(Error::invalid(format!(
+            "lake build succeeded but {} is missing",
+            exe.display()
+        )));
+    }
+    Ok(format!("built {}", exe.display()))
 }
 
 /// Rebuild the symbol index from the sources. When `replace` is set the existing database is
@@ -390,10 +475,72 @@ fn rebuild_index(args: &Args, root: &Path, replace: bool) -> Result<String> {
     ))
 }
 
-/// `sorry-report [paths] [--deny-sorry]`: every `sorry` and `admit`, per declaration. With
-/// `--deny-sorry` any hit makes the exit status 1, for use in CI.
+/// `fix FILE [--apply] [--timeout S]`: plan the mechanical fixes for one file and print the diff.
+/// Nothing is written without `--apply`. With it, the file is written and Lean is run again; when
+/// Lean reports more errors than before, the original text is restored and the exit status is 1.
+fn fix(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--apply", "--project", "--timeout"],
+        &["--project", "--timeout"],
+    )?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let file = args
+        .positionals(&["--project", "--timeout"])
+        .into_iter()
+        .next()
+        .ok_or_else(|| Error::invalid("usage: tpt-lean fix FILE [--apply] [--timeout S]"))?;
+    let timeout = match args.value("--timeout")? {
+        Some(t) => t
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
+        None => cfg.security.command_timeout_seconds,
+    };
+    let outcome =
+        tpt_lean_tools::fix::fix_file(&root, Path::new(&file), timeout, args.flag("--apply"))?;
+    let plan = &outcome.plan;
+    let mut human: Vec<String> = Vec::new();
+    if plan.steps.is_empty() {
+        human.push(format!("{}: nothing to fix", plan.file));
+    }
+    for step in &plan.steps {
+        human.push(format!("  {}", step.detail));
+    }
+    if !plan.diff.is_empty() {
+        human.push(plan.diff.clone());
+    }
+    for name in &outcome.unresolved {
+        human.push(format!(
+            "  unresolved: {name} (no single module declares it; add the import by hand)"
+        ));
+    }
+    if outcome.rolled_back {
+        human.push(format!(
+            "rolled back: Lean reported {} error(s) after the fix, {} before",
+            outcome.errors_after.unwrap_or(0),
+            outcome.errors_before
+        ));
+    } else if outcome.applied {
+        human.push(format!("applied to {}", plan.file));
+    } else if !plan.steps.is_empty() {
+        human.push("dry run: rerun with --apply to write these changes".to_string());
+    }
+    ctx.emit("fix", &human.join("\n"), &outcome)?;
+    Ok(if outcome.rolled_back {
+        CHECK_FAILED
+    } else {
+        OK
+    })
+}
+
+/// `sorry-report [paths] [--deny-sorry] [--sidecar [--exe PATH] [--timeout S]]`: every `sorry` and
+/// `admit`, per declaration. With `--deny-sorry` any hit makes the exit status 1, for use in CI.
+/// With `--sidecar` each hit also gets the goal at its position, from the Lean sidecar.
 fn sorry_report(ctx: &Ctx, args: &Args) -> Result<i32> {
-    args.reject_unknown(&["--deny-sorry", "--project"], &["--project"])?;
+    args.reject_unknown(
+        &["--deny-sorry", "--project", "--sidecar", "--exe", "--timeout"],
+        &["--project", "--exe", "--timeout"],
+    )?;
     let root = project_root(args)?;
     let paths = args.positionals(&[]);
     let files: Vec<PathBuf> = if paths.is_empty() {
@@ -405,18 +552,46 @@ fn sorry_report(ctx: &Ctx, args: &Args) -> Result<i32> {
     } else {
         paths.iter().map(PathBuf::from).collect()
     };
-    let hits = tpt_lean_tools::sorry::sorry_hits(&root, &files)?;
+    let mut hits = tpt_lean_tools::sorry::sorry_hits(&root, &files)?;
+    if args.flag("--sidecar") {
+        let cfg = load_config(args, &root)?;
+        let run = sidecar_run(args, &root, &cfg)?;
+        tpt_lean_tools::sorry::attach_goals(&mut hits, |file, sites| {
+            adapter::sidecar::run_sidecar_sites(
+                &run.exe,
+                &run.sysroot,
+                Path::new(file),
+                sites,
+                Some(&root),
+                run.lean_path.as_deref(),
+                &run.policy,
+                &run.cancel,
+            )
+        });
+    }
     let human: Vec<String> = hits
         .iter()
-        .map(|h| {
-            format!(
+        .flat_map(|h| {
+            let mut lines = vec![format!(
                 "{}:{}:{}: {} in {}",
                 h.file,
                 h.line,
                 h.column,
                 h.keyword,
                 h.declaration.as_deref().unwrap_or("(no declaration)")
-            )
+            )];
+            if let Some(goals) = &h.goals {
+                if goals.goals.is_empty() {
+                    lines.push("    no goal at this position".to_string());
+                }
+                for goal in &goals.goals {
+                    lines.extend(goal.lines().map(|l| format!("    {l}")));
+                }
+            }
+            if let Some(err) = &h.goals_error {
+                lines.push(format!("    goal unavailable: {err}"));
+            }
+            lines
         })
         .chain(std::iter::once(format!(
             "{} sorry/admit in {} file(s) scanned",
@@ -708,11 +883,16 @@ fn search(ctx: &Ctx, args: &Args) -> Result<i32> {
         ctx.emit_items("search", &human, &items)?;
         return Ok(OK);
     }
-    // `--from FILE`: symbols from modules the file imports rank higher.
+    // `--from FILE`: symbols from modules the file imports rank higher, and the file's own module
+    // is the origin for the dependency-distance factor.
+    let mut origin_module = None;
     let imported_modules = match args.value("--from")? {
         Some(file) => {
             let ws = WorkspaceRoot::new(&root)?;
             let path = ws.resolve(&file)?;
+            origin_module = path.strip_prefix(ws.path()).ok().and_then(|rel| {
+                tpt_lean_index::module_name_of(&rel.to_string_lossy().replace('\\', "/"))
+            });
             let text = std::fs::read_to_string(&path).map_err(|e| Error::from(e).with_path(&path))?;
             tpt_lean_syntax::parse(&text)
                 .imports
@@ -722,11 +902,20 @@ fn search(ctx: &Ctx, args: &Args) -> Result<i32> {
         }
         None => Vec::new(),
     };
+    // Recency and distance weights come from the `[search]` config section (zero by default).
+    let search_cfg = load_config(args, &root)?.search;
     let opts = SearchOptions {
         limit,
         namespace: args.value("--namespace")?,
         near: args.values("--near"),
         imported_modules,
+        weights: tpt_lean_search::RankWeights {
+            recency: search_cfg.recency_weight,
+            recency_half_life_days: search_cfg.recency_half_life_days,
+            distance: search_cfg.distance_weight,
+        },
+        origin_module,
+        now_ms: None,
     };
     let hits = tpt_lean_search::search(&index, &query, &opts)?;
     let items: Vec<SearchItem> = hits
@@ -1164,6 +1353,9 @@ struct GoalsReport {
     file: String,
     line: usize,
     column: usize,
+    /// Set by the sidecar path only; the language server's plain goals have no target.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    target: Option<adapter::sidecar::GoalTarget>,
     goals: Vec<String>,
 }
 
@@ -1186,22 +1378,26 @@ fn parse_position(spec: &str) -> Result<(String, usize, usize)> {
 /// `goals FILE:LINE:COL --sidecar [--exe PATH]`: the goals from the Lean sidecar, which elaborates the
 /// file with Lean's own frontend. No language server is started. The sidecar must be built for the
 /// Lean version in use (see `lean/tpt-lean-sidecar`).
-fn goals_with_sidecar(
-    ctx: &Ctx,
-    args: &Args,
-    root: &Path,
-    cfg: &Config,
-    file: &str,
-    line: usize,
-    column: usize,
-) -> Result<i32> {
+/// What a sidecar run needs: the executable, the Lean sysroot and search path of the project, and
+/// the policy that bounds each run.
+struct SidecarRun {
+    exe: PathBuf,
+    sysroot: PathBuf,
+    lean_path: Option<String>,
+    policy: tpt_lean_core::policy::ProcessPolicy,
+    cancel: tpt_lean_core::policy::CancelToken,
+}
+
+/// Locate the sidecar (`--exe`, else `TPT_LEAN_SIDECAR`) and prepare a run of it. `--timeout`
+/// overrides the configured command timeout.
+fn sidecar_run(args: &Args, root: &Path, cfg: &Config) -> Result<SidecarRun> {
     let exe = match args.value("--exe")? {
         Some(path) => PathBuf::from(path),
         None => std::env::var_os("TPT_LEAN_SIDECAR")
             .map(PathBuf::from)
             .ok_or_else(|| {
                 Error::invalid(
-                    "sidecar not found: pass --exe or set TPT_LEAN_SIDECAR to the built tpt_sidecar binary (build lean/tpt-lean-sidecar with `lake -R build`)",
+                    "sidecar not found: pass --exe or set TPT_LEAN_SIDECAR to the built tpt_sidecar binary (build lean/tpt-lean-sidecar with `lake build`)",
                 )
             })?,
     };
@@ -1222,20 +1418,40 @@ fn goals_with_sidecar(
     let cancel = tpt_lean_core::policy::CancelToken::new();
     let sysroot = adapter::lean_sysroot(&tc, &policy, &cancel)?;
     let lean_path = adapter::sidecar::lean_path_for(&tc, root, &policy, &cancel);
+    Ok(SidecarRun {
+        exe,
+        sysroot,
+        lean_path,
+        policy,
+        cancel,
+    })
+}
+
+fn goals_with_sidecar(
+    ctx: &Ctx,
+    args: &Args,
+    root: &Path,
+    cfg: &Config,
+    file: &str,
+    line: usize,
+    column: usize,
+) -> Result<i32> {
+    let run = sidecar_run(args, root, cfg)?;
     let site = adapter::sidecar::GoalSite {
         file: Path::new(file),
         line: line as u64,
         column: column as u64,
     };
-    let goals = adapter::sidecar::run_sidecar_goals(
-        &exe,
-        &sysroot,
+    let report = adapter::sidecar::run_sidecar_goals_report(
+        &run.exe,
+        &run.sysroot,
         &site,
         Some(root),
-        lean_path.as_deref(),
-        &policy,
-        &cancel,
+        run.lean_path.as_deref(),
+        &run.policy,
+        &run.cancel,
     )?;
+    let goals = report.goals;
     let human = if goals.is_empty() {
         format!("no goals at {file}:{line}:{column}")
     } else {
@@ -1252,6 +1468,7 @@ fn goals_with_sidecar(
             file: file.to_string(),
             line,
             column,
+            target: Some(report.target),
             goals,
         },
     )?;
@@ -1308,6 +1525,7 @@ fn goals(ctx: &Ctx, args: &Args) -> Result<i32> {
             file,
             line,
             column,
+            target: None,
             goals,
         },
     )?;

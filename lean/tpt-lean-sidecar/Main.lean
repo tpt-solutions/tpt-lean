@@ -21,10 +21,18 @@ Output of the declarations mode (one JSON object on stdout, schema version 1):
   {"name":"Nat.add","kind":"definition","type":"Nat → Nat → Nat","doc":null}]}
 ```
 
-Output of the goals mode (schema version 1):
+Output of the goals mode (schema version 2). `target` is `tactic` (goals before the innermost tactic),
+`term` (the expected type of the innermost term, with the hypotheses in scope), `statement` (the
+type of the declaration whose name is at the position) or `none`:
 
 ```json
-{"schema_version":1,"file":"Main.lean","line":2,"column":3,"goals":["a b : Nat\n⊢ a + b = b + a"]}
+{"schema_version":2,"file":"Main.lean","line":2,"column":3,"target":"tactic","goals":["a b : Nat\n⊢ a + b = b + a"]}
+```
+
+`tpt_sidecar sites <file.lean> <line>:<column>...` answers several positions from one elaboration:
+
+```json
+{"schema_version":2,"file":"Main.lean","sites":[{"line":2,"column":3,"target":"tactic","goals":["⊢ True"]}]}
 ```
 
 Exit codes: 0 success, 2 usage error, 3 module could not be imported or found, 4 the file could not
@@ -107,12 +115,46 @@ def tacticsAt (trees : Array Elab.InfoTree) (pos : String.Pos.Raw) : Array Tacti
         | _, _ => acc
       | _ => acc
 
-/-- The innermost tactic: the one with the narrowest syntax. -/
-def innermost? (xs : Array TacticAt) : Option TacticAt :=
+/-- The element with the narrowest syntax, by `span`. -/
+def narrowest {α : Type} (xs : Array α) (span : α → Nat) : Option α :=
   xs.foldl (init := none) fun best t =>
     match best with
     | none => some t
-    | some b => if t.span < b.span then some t else some b
+    | some b => if span t < span b then some t else some b
+
+/-- A term with an expected type whose syntax contains the position. -/
+structure TermAt where
+  ctx : Elab.ContextInfo
+  info : Elab.TermInfo
+  /-- Width in bytes of the term's syntax. -/
+  span : Nat
+
+/-- Every term with an expected type whose syntax contains `pos`. -/
+def termsAt (trees : Array Elab.InfoTree) (pos : String.Pos.Raw) : Array TermAt :=
+  trees.foldl (init := #[]) fun acc tree =>
+    tree.foldInfo (init := acc) fun ctx info acc =>
+      match info with
+      | .ofTermInfo ti =>
+        match ti.expectedType?, ti.stx.getPos?, ti.stx.getTailPos? with
+        | some _, some start, some stop =>
+          if start ≤ pos && pos < stop then
+            acc.push { ctx := ctx, info := ti, span := stop.byteIdx - start.byteIdx }
+          else acc
+        | _, _, _ => acc
+      | _ => acc
+
+/-- The expected type of a term, shown as the hypotheses in scope and a target, the way a goal is
+shown. Used where a term is not inside a tactic block, such as `theorem t : P := sorry`. -/
+def termGoals (t : TermAt) : IO (List String) := do
+  let some expected := t.info.expectedType? | return []
+  t.ctx.runMetaM t.info.lctx do
+    let hyps ← t.info.lctx.foldlM (init := (#[] : Array String)) fun acc d => do
+      if d.isImplementationDetail then
+        return acc
+      let ty ← ppExpr (← instantiateMVars d.type)
+      return acc.push s!"{d.userName} : {ty.pretty (width := 1000000)}"
+    let target ← ppExpr (← instantiateMVars expected)
+    return hyps.toList ++ [s!"⊢ {target.pretty (width := 1000000)}"]
 
 /-- The goals before a tactic, printed with Lean's own goal pretty-printer. -/
 def goalsBefore (t : TacticAt) : IO (List String) := do
@@ -122,8 +164,8 @@ def goalsBefore (t : TacticAt) : IO (List String) := do
     let fmt ← ctx.runMetaM {} (ppGoal g)
     return fmt.pretty (width := 1000000)
 
-/-- Goals at a 1-based line and 1-based column of `file`. Empty when no tactic is there. -/
-def goalsAtFile (file : String) (line col : Nat) : IO (List String) := do
+/-- Elaborate a file with Lean's frontend. Returns its input context and its info trees. -/
+def elaborateFile (file : String) : IO (Parser.InputContext × Array Elab.InfoTree) := do
   let input ← IO.FS.readFile file
   let inputCtx := Parser.mkInputContext input file
   let (header, parserState, messages) ← Parser.parseHeader inputCtx
@@ -134,25 +176,107 @@ def goalsAtFile (file : String) (line col : Nat) : IO (List String) := do
   let opts := Options.empty.setBool `Elab.async false
   let commandState := { Elab.Command.mkState env messages opts with infoState.enabled := true }
   let frontend ← Elab.IO.processCommands inputCtx parserState commandState
-  let pos := inputCtx.fileMap.ofPosition { line := line, column := col - 1 }
   let trees := frontend.commandState.infoState.trees.toArray
   if (← IO.getEnv "TPT_SIDECAR_DEBUG").isSome then
     for m in frontend.commandState.messages.toList do
       IO.eprintln s!"debug message: {← m.toString}"
-    IO.eprintln s!"debug trees={trees.size} tactics={(tacticsAt trees pos).size} pos={pos.byteIdx}"
-  match innermost? (tacticsAt trees pos) with
-  | none => return []
-  | some t => goalsBefore t
+    IO.eprintln s!"debug trees={trees.size}"
+  return (inputCtx, trees)
 
-/-- JSON for the goals mode. -/
-def goalsReport (file : String) (line col : Nat) (goals : List String) : Json :=
+/-- A declaration's name, with the context it was declared in. -/
+structure DeclNameAt where
+  ctx : Elab.ContextInfo
+  name : Name
+  /-- Width in bytes of the name's syntax. -/
+  span : Nat
+
+/-- Every declaration name (the `declId` of a command) whose syntax contains `pos`. -/
+def declNamesAt (trees : Array Elab.InfoTree) (pos : String.Pos.Raw) : Array DeclNameAt :=
+  trees.foldl (init := #[]) fun acc tree =>
+    tree.foldInfo (init := acc) fun ctx info acc =>
+      match info with
+      | .ofCommandInfo ci =>
+        match ci.stx.find? (·.isOfKind ``Parser.Command.declId) with
+        | some declId =>
+          match declId.getPos?, declId.getTailPos? with
+          | some start, some stop =>
+            if start ≤ pos && pos < stop then
+              acc.push { ctx := ctx, name := (declId.getArg 0).getId,
+                         span := stop.byteIdx - start.byteIdx }
+            else acc
+          | _, _ => acc
+        | none => acc
+      | _ => acc
+
+/-- The statement of a declaration as a goal: its type, which is what the proof must establish. The
+hypotheses are not split out of the type, so binders show as a leading `∀`. -/
+def statementGoals (d : DeclNameAt) : IO (List String) := do
+  let found :=
+    match d.ctx.env.find? (d.ctx.currNamespace ++ d.name) with
+    | some ci => some ci
+    | none => d.ctx.env.find? d.name
+  match found with
+  | none => return []
+  | some ci =>
+    let fmt ← d.ctx.runMetaM {} (ppExpr ci.type)
+    return [s!"⊢ {fmt.pretty (width := 1000000)}"]
+
+/-- What a 1-based line and column is about, and its goals. The target is `"tactic"` when a tactic
+contains the position (its goals before the tactic), `"term"` when a term with an expected type
+does (the expected type, with the hypotheses in scope), `"statement"` when the position is on a
+declaration's name (its type), and `"none"` otherwise. -/
+def goalsAt (inputCtx : Parser.InputContext) (trees : Array Elab.InfoTree) (line col : Nat) :
+    IO (String × List String) := do
+  let pos := inputCtx.fileMap.ofPosition { line := line, column := col - 1 }
+  match narrowest (tacticsAt trees pos) (·.span) with
+  | some t => return ("tactic", ← goalsBefore t)
+  | none =>
+    match narrowest (termsAt trees pos) (·.span) with
+    | some t => return ("term", ← termGoals t)
+    | none =>
+      match narrowest (declNamesAt trees pos) (·.span) with
+      | some d => return ("statement", ← statementGoals d)
+      | none => return ("none", [])
+
+/-- Version of the goals-mode JSON schema. Version 2 adds `target`; version 1 had tactic goals only. -/
+def goalsSchemaVersion : Nat := 2
+
+/-- JSON for the goals mode at one position. -/
+def goalsReport (file : String) (line col : Nat) (target : String) (goals : List String) : Json :=
   Json.mkObj [
-    ("schema_version", toJson schemaVersion),
+    ("schema_version", toJson goalsSchemaVersion),
     ("file", toJson file),
     ("line", toJson line),
     ("column", toJson col),
+    ("target", toJson target),
     ("goals", Json.arr (goals.map toJson).toArray)
   ]
+
+/-- JSON for the sites mode: several positions in one file, elaborated once. -/
+def sitesReport (file : String) (sites : Array Json) : Json :=
+  Json.mkObj [
+    ("schema_version", toJson goalsSchemaVersion),
+    ("file", toJson file),
+    ("sites", Json.arr sites)
+  ]
+
+/-- One position of the sites mode. -/
+def siteJson (line col : Nat) (target : String) (goals : List String) : Json :=
+  Json.mkObj [
+    ("line", toJson line),
+    ("column", toJson col),
+    ("target", toJson target),
+    ("goals", Json.arr (goals.map toJson).toArray)
+  ]
+
+/-- Parse a `LINE:COLUMN` site, both 1-based. -/
+def parseSite (s : String) : Option (Nat × Nat) :=
+  match s.splitOn ":" with
+  | [l, c] =>
+    match l.toNat?, c.toNat? with
+    | some line, some col => if line == 0 || col == 0 then none else some (line, col)
+    | _, _ => none
+  | _ => none
 
 def main (args : List String) : IO UInt32 := do
   match args with
@@ -166,8 +290,9 @@ def main (args : List String) : IO UInt32 := do
       -- Imports load the parser and elaborator extensions only when initializers are enabled.
       initializersEnabled
       try
-        let goals ← goalsAtFile file line col
-        IO.println (goalsReport file line col goals).compress
+        let (inputCtx, trees) ← elaborateFile file
+        let (target, goals) ← goalsAt inputCtx trees line col
+        IO.println (goalsReport file line col target goals).compress
         return 0
       catch e =>
         IO.eprintln s!"cannot get goals in {file}: {e}"
@@ -175,6 +300,24 @@ def main (args : List String) : IO UInt32 := do
     | _, _ =>
       IO.eprintln "usage: tpt_sidecar goals <file.lean> <line> <column>"
       return 2
+  | "sites" :: file :: siteArgs =>
+    let sites := siteArgs.filterMap parseSite
+    if siteArgs.isEmpty || sites.length != siteArgs.length then
+      IO.eprintln "usage: tpt_sidecar sites <file.lean> <line>:<column> [<line>:<column> ...]  (1-based)"
+      return 2
+    initSearchPath (← findSysroot)
+    initializersEnabled
+    try
+      let (inputCtx, trees) ← elaborateFile file
+      let mut out : Array Json := #[]
+      for (line, col) in sites do
+        let (target, goals) ← goalsAt inputCtx trees line col
+        out := out.push (siteJson line col target goals)
+      IO.println (sitesReport file out).compress
+      return 0
+    catch e =>
+      IO.eprintln s!"cannot get goals in {file}: {e}"
+      return 4
   | [modStr] =>
     let modName := modStr.toName
     initSearchPath (← findSysroot)
@@ -197,5 +340,5 @@ def main (args : List String) : IO UInt32 := do
       IO.println report.compress
       return 0
   | _ =>
-    IO.eprintln "usage: tpt_sidecar <Module.Name> | tpt_sidecar goals <file.lean> <line> <column>"
+    IO.eprintln "usage: tpt_sidecar <Module.Name> | tpt_sidecar goals <file.lean> <line> <column> | tpt_sidecar sites <file.lean> <line>:<column>..."
     return 2

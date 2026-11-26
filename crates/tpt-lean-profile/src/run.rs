@@ -28,7 +28,6 @@ const NOT_MEASURED: &[&str] = &[
     "memory: only the peak resident size of the whole Lean process tree is sampled; per-declaration memory is not measured",
     "dependency bottleneck graph: project modules are expanded to `--graph-depth` (at most 60 timed runs); external packages are timed as leaves and their own imports are not attributed",
     "imports: load cost is timed only when requested (`--imports`), one approximate run per import",
-    "build-step timing and cache hit/miss reports are not part of profile; use `tpt-lean build --report`",
     "imports and startup: included in wall time only, not attributed to declarations",
     "tactic timing: aggregated per file from profiler lines, not per declaration",
 ];

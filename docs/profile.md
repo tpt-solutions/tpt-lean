@@ -52,8 +52,9 @@ Observed Lean 4.36.0 output:
 
 ## Not implemented
 
-Per-declaration memory, cost attribution inside external packages, and
-build-step and cache hit/miss reports. Each is listed in the report's `notes` field.
+Per-declaration memory and cost attribution inside external packages. Each is listed in the report's
+`notes` field. Build-step timing and cache hit/miss reports are not part of a file profile; use
+`tpt-lean profile --build`, which prints the same report as `build --report`.
 
 ## Reports
 

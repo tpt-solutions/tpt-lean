@@ -26,6 +26,30 @@ it), and testing against a previous stable Lean release.
 
 `tpt-lean-lsp::run_stdio(project_root)` serves an editor over stdin and stdout.
 
+Project index: the proxy opens `.tpt-lean/index.sqlite` once, on the first index-backed request,
+and reuses that handle for `workspace/symbol`, go-to-definition and the import quick fix. A
+missing file gives empty answers. A file that cannot be opened is reported once with
+`window/logMessage` and retried on later requests. If the index file is deleted, the handle is
+dropped; if it is replaced by a new file, restart the editor's language client to pick it up.
+Lemma search (`tpt-lean.searchLemmas`) still opens the index per call (in `tpt-lean-adapter`).
+
+Speed: `cargo test -p tpt-lean-lsp --test index_search -- --ignored --nocapture` builds an index of
+4000 declarations and times 300 `workspace/symbol` requests through the proxy. In a debug build
+the average is about 4 ms per request, and the index is opened once. It is an ignored test
+because it takes a few seconds.
+
+Server lifecycle (configured in the `[lsp]` section, see [cli.md](cli.md#configuration)):
+
+- Idle shutdown: when no editor message has arrived for `lsp.idle_timeout_seconds` (default 900,
+  0 disables), the proxy shuts the language server down cleanly. The next request starts it again
+  and replays the open documents. Diagnostics come back when Lean elaborates them again.
+- Health timeout: a forwarded request that gets no answer within `lsp.health_timeout_seconds`
+  (default: `security.command_timeout_seconds`, 120) makes the server count as unhealthy. The
+  proxy restarts it and answers the request with JSON-RPC error `-32803` whose `data` is
+  `{"kind": "timeout", "restarted": true|false}`. A `window/logMessage` says the same.
+- Not done: a memory cap for the server. It needs Windows job objects, which need `unsafe` code
+  that the workspace forbids.
+
 Answered by the proxy:
 
 - `initialize`, `shutdown`, `exit`

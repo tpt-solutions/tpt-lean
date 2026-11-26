@@ -21,6 +21,58 @@ pub struct Config {
     pub index: IndexConfig,
     pub server: ServerConfig,
     pub security: SecurityConfig,
+    pub lsp: LspConfig,
+    pub search: SearchConfig,
+}
+
+/// Ranking factors for `search` beyond name and docstring relevance (see `tpt-lean-search`).
+///
+/// Each weight is in raw score points. A factor in `0..=1` is multiplied by its weight and added
+/// to the raw score. Zero (the default) turns the factor off, so the default ordering is unchanged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct SearchConfig {
+    /// Weight of the recency factor. The factor halves every `recency_half_life_days` since the
+    /// file's contents last changed in the index.
+    #[serde(deserialize_with = "lenient_f64")]
+    pub recency_weight: f64,
+    #[serde(deserialize_with = "lenient_f64")]
+    pub recency_half_life_days: f64,
+    /// Weight of the dependency-distance factor, `1 / (1 + hops)`. Hops are counted along import
+    /// edges from the origin module, or from the project's root modules when no origin is given.
+    #[serde(deserialize_with = "lenient_f64")]
+    pub distance_weight: f64,
+}
+
+/// Accept a float, an integer, or numeric text. `--set` overrides arrive as text when they are
+/// not integers, so `search.recency_weight=2.5` must still parse.
+fn lenient_f64<'de, D>(deserializer: D) -> std::result::Result<f64, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Raw {
+        Number(f64),
+        Text(String),
+    }
+    match Raw::deserialize(deserializer)? {
+        Raw::Number(n) => Ok(n),
+        Raw::Text(text) => text
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| serde::de::Error::custom(format!("not a number: {text:?}"))),
+    }
+}
+
+impl Default for SearchConfig {
+    fn default() -> Self {
+        Self {
+            recency_weight: 0.0,
+            recency_half_life_days: 30.0,
+            distance_weight: 0.0,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,6 +200,27 @@ impl Default for SecurityConfig {
     }
 }
 
+/// Lifecycle of the language server behind `tpt-lean lsp`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct LspConfig {
+    /// Shut the server down after this many seconds without an editor request. It starts again
+    /// on the next request. 0 disables the idle shutdown.
+    pub idle_timeout_seconds: u64,
+    /// How long a forwarded request may wait for the server. When it expires the server is
+    /// restarted and the request fails with a timeout. Unset: `security.command_timeout_seconds`.
+    pub health_timeout_seconds: Option<u64>,
+}
+
+impl Default for LspConfig {
+    fn default() -> Self {
+        Self {
+            idle_timeout_seconds: 900,
+            health_timeout_seconds: None,
+        }
+    }
+}
+
 /// Environment variables recognised as configuration overrides, mapped to dotted keys.
 const ENV_KEYS: &[(&str, &str)] = &[
     ("TPT_LEAN_PROJECT_NAME", "project.name"),
@@ -165,6 +238,8 @@ const ENV_KEYS: &[(&str, &str)] = &[
         "TPT_LEAN_SECURITY_COMMAND_TIMEOUT_SECONDS",
         "security.command_timeout_seconds",
     ),
+    ("TPT_LEAN_LSP_IDLE_TIMEOUT_SECONDS", "lsp.idle_timeout_seconds"),
+    ("TPT_LEAN_LSP_HEALTH_TIMEOUT_SECONDS", "lsp.health_timeout_seconds"),
 ];
 
 /// Where each configuration value came from. Useful for `doctor` and debugging.
@@ -270,6 +345,12 @@ pub fn validate(config: &Config) -> Result<()> {
             "security.command_timeout_seconds must be > 0",
         ));
     }
+    if config.lsp.health_timeout_seconds == Some(0) {
+        return Err(Error::new(
+            ErrorCode::ConfigInvalid,
+            "lsp.health_timeout_seconds must be > 0 when set",
+        ));
+    }
     if let Parallelism::Fixed(0) = config.build.parallelism {
         return Err(Error::new(
             ErrorCode::ConfigInvalid,
@@ -280,6 +361,24 @@ pub fn validate(config: &Config) -> Result<()> {
         return Err(Error::new(
             ErrorCode::ConfigInvalid,
             "server.transport must be \"uds\" or \"tcp\"",
+        ));
+    }
+    let search = &config.search;
+    for (key, weight) in [
+        ("search.recency_weight", search.recency_weight),
+        ("search.distance_weight", search.distance_weight),
+    ] {
+        if !weight.is_finite() || weight < 0.0 {
+            return Err(Error::new(
+                ErrorCode::ConfigInvalid,
+                format!("{key} must be a finite number >= 0"),
+            ));
+        }
+    }
+    if !search.recency_half_life_days.is_finite() || search.recency_half_life_days <= 0.0 {
+        return Err(Error::new(
+            ErrorCode::ConfigInvalid,
+            "search.recency_half_life_days must be a finite number > 0",
         ));
     }
     Ok(())
@@ -336,6 +435,59 @@ mod tests {
         assert_eq!(cfg, Config::default());
         assert_eq!(cfg.security.command_timeout_seconds, 120);
         assert!(!cfg.server.allow_remote);
+        assert_eq!(cfg.lsp.idle_timeout_seconds, 900);
+        assert_eq!(cfg.lsp.health_timeout_seconds, None);
+    }
+
+    #[test]
+    fn search_weights_default_to_zero_and_validate() {
+        let (cfg, _) = ConfigLoader::new().build().unwrap();
+        assert_eq!(cfg.search.recency_weight, 0.0);
+        assert_eq!(cfg.search.distance_weight, 0.0);
+        assert_eq!(cfg.search.recency_half_life_days, 30.0);
+
+        let (cfg, _) = ConfigLoader::new()
+            .with_overrides([("search.recency_weight", "2.5")])
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(cfg.search.recency_weight, 2.5);
+
+        for key in ["search.recency_weight", "search.distance_weight"] {
+            let err = ConfigLoader::new()
+                .with_overrides([(key, "-1")])
+                .unwrap()
+                .build()
+                .err()
+                .unwrap();
+            assert_eq!(err.code(), ErrorCode::ConfigInvalid, "{key}");
+        }
+        let err = ConfigLoader::new()
+            .with_overrides([("search.recency_half_life_days", "0")])
+            .unwrap()
+            .build()
+            .err()
+            .unwrap();
+        assert_eq!(err.code(), ErrorCode::ConfigInvalid);
+    }
+
+    #[test]
+    fn lsp_keys_read_from_env_and_zero_health_timeout_rejected() {
+        let (cfg, _) = ConfigLoader::new()
+            .with_env([("TPT_LEAN_LSP_IDLE_TIMEOUT_SECONDS", "0")])
+            .unwrap()
+            .with_overrides([("lsp.health_timeout_seconds", "30")])
+            .unwrap()
+            .build()
+            .unwrap();
+        assert_eq!(cfg.lsp.idle_timeout_seconds, 0);
+        assert_eq!(cfg.lsp.health_timeout_seconds, Some(30));
+        let err = ConfigLoader::new()
+            .with_overrides([("lsp.health_timeout_seconds", "0")])
+            .unwrap()
+            .build()
+            .unwrap_err();
+        assert_eq!(err.code(), ErrorCode::ConfigInvalid);
     }
 
     #[test]

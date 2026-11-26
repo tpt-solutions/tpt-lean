@@ -70,7 +70,8 @@ Each kind below lists the fields of `data`. Samples come from the current build.
 | `doctor --fix` | the same items; each applied fix is an extra item named `fix` with its `detail` |
 | `cache.status` | `location`, `exists`, `files`, `bytes`, `shared` (the shared layer directories) |
 | `cache.prune`, `cache.export`, `cache.import` | see the `cache` section of [cli.md](cli.md) |
-| `goals` | `file`, `line`, `column`, `goals` (an array of goal strings; empty when none) |
+| `goals` | `file`, `line`, `column`, `goals` (an array of goal strings; empty when none), `target` (`tactic`, `term`, `statement` or `none`; present with `--sidecar` only) |
+| `fix` | `plan` (`file`, `steps` (each `kind`, `line` or `null`, `detail`), `diff`), `errors_before`, `unresolved`, `applied`, `rolled_back`, `errors_after` (or `null`) |
 | `explain` | `lean` (`version`, `compatibility`), `error` (or `null`), `context` (`goal`, `hypotheses`), `suggestions` |
 | `explain.last_error` | the diagnostics saved by the last `check`; see the `explain` section of [cli.md](cli.md) |
 | `context-pack` | the context pack: `file`, `position`, `snippet`, `goal`, `hypotheses`, `diagnostics`, `imports`, `nearby_definitions`, `relevant_lemmas`, `constraints`, `truncated`, `approx_tokens`, `lean_compatibility` |
@@ -78,11 +79,12 @@ Each kind below lists the fields of `data`. Samples come from the current build.
 | `build.explain_slow` | see the `build` section of [cli.md](cli.md) |
 | `build.report` | `success`, `cache_hit`, `cache_layer` (`memory`, `disk`, `shared` or `null`), `key_ms`, `total_ms`, `lake_ms`, `files_built`, `files_failed`, `slowest` (each `file`, `duration_ms` or `null`, `failed`) |
 | `watch` | one record per checked file, streamed as each check finishes: `file`, `errors`, `warnings`, `sorry`, `error` (or `null`), `diagnostics` |
-| `sorry-report` | `count`, `items`: `file`, `line`, `column`, `keyword` (`sorry` or `admit`), `declaration` (or `null`) |
+| `sorry-report` | `count`, `items`: `file`, `line`, `column`, `keyword` (`sorry` or `admit`), `declaration` (or `null`); with `--sidecar`, also `goals` (`line`, `column`, `target`, `goals`) or `goals_error` |
 | `setup` | `count`, `items`: `path`, `action` (`create`, `update` or `unchanged`), `notes` |
 | `completions` | `shell`, `script` (the text of the completion script) |
 | `profile.compare`, `profile.flamegraph`, `profile.graph` | see the `profile` section of [cli.md](cli.md) |
-| `bisect` | see the `bisect` section of [cli.md](cli.md) |
+| `bisect` (`--axis commits`) | `axis`, `good`, `bad`, `commits_between`, `probes` (each `{commit, bad}`), `first_bad`, `scope`, `not_done` |
+| `bisect` (`--axis imports` or `flags`) | `axis`, `file`, `candidates`, `probes` (each `{enabled, item, bad}`), `first_bad` (the candidate name), `scope`, `not_done` |
 | `docgen` | `project`, `modules`, `declarations`, `namespaces`, `import_edges`, `external_imports`, `files_written`, `out_dir` |
 | `config` | the effective configuration |
 | `clean` | `ran`, `exit_code` |
