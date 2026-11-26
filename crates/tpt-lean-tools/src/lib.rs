@@ -13,6 +13,7 @@ pub mod fix;
 pub mod imports;
 pub mod project_doctor;
 pub mod sorry;
+pub mod upgrade;
 
 use serde::Serialize;
 

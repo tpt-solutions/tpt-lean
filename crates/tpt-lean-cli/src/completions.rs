@@ -11,6 +11,7 @@ pub const COMMANDS: &[(&str, &[&str])] = &[
     ("doctor", &[]),
     ("sorry-report", &[]),
     ("fix", &[]),
+    ("upgrade", &[]),
     ("watch", &[]),
     ("setup", &[]),
     ("config", &["show"]),

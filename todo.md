@@ -418,6 +418,7 @@ Crate: `tpt-lean-wasm`
 ### New commands (ease of use)
 - [x] `tpt-lean setup [--editor vscode|neovim|helix|emacs] [--mcp claude|cursor] [--dry-run]`: writes editor LSP config and MCP server entries from `docs/editors.md` and `docs/mcp.md`; merges without clobbering and shows a diff first (done; merges, shows a diff, --dry-run exits 1 on pending change)
 - [x] `tpt-lean watch`: re-check changed files and print a compact diagnostics and proof-state summary; `--json` streams ndjson (reuse `tpt-lean-build/src/watch.rs`) (done; polls file stamps and runs lean per file. It does not reuse tpt-lean-build/src/watch.rs, which runs Lake)
+- [x] `tpt-lean upgrade --to VERSION [--apply]`: Lean toolchain move with build check and rollback (plan-only by default; Mathlib pin and manifest are reported, not edited)
 - [x] `tpt-lean fix [file] [--apply]`: apply safe mechanical fixes (missing imports from `imports --suggest`, unused imports from `imports --unused`, formatting) as a reviewable patch; dry-run by default; roll back if Lean reports more errors afterwards (done: the planner is unit-tested; the Lean-backed apply and rollback path is not run live here)
 - [x] `tpt-lean sorry-report [--deny-sorry]`: list `sorry` and `admit` per declaration with goals where the sidecar provides them; non-zero exit in CI mode (done: `--sidecar` adds goals, one elaboration per file)
 

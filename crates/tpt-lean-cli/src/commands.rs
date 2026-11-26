@@ -35,6 +35,7 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
         ["doctor"] => doctor(ctx, args),
         ["sorry-report"] => sorry_report(ctx, args),
         ["fix"] => fix(ctx, args),
+        ["upgrade"] => upgrade(ctx, args),
         ["watch"] => ext::watch_cmd(ctx, args),
         ["setup"] => setup::setup_cmd(ctx, args),
         ["config"] | ["config", "show"] => config_show(ctx, args),
@@ -116,6 +117,7 @@ Project and environment:
 Source:
   sorry-report [paths] [--deny-sorry] [--sidecar]  list sorry and admit per declaration, with goals
   fix FILE [--apply]                          plan unused-import, missing-import and format fixes
+  upgrade --to VERSION [--apply]              plan a Lean toolchain change; --apply builds and rolls back on failure
   watch [--once] [--interval-ms N]            re-check changed files; a summary per file
   setup [--editor NAME]... [--mcp NAME]... [--dry-run]  write editor and MCP config, diff first
   fmt [--check|--diff|--verify] [paths]       conservative formatter
@@ -301,6 +303,72 @@ def main : IO Unit :=
         },
     )?;
     Ok(OK)
+}
+
+/// `upgrade --to VERSION [--apply] [--timeout S]`: plan a `lean-toolchain` change. Without
+/// `--apply` nothing is written. With it, `lake build` runs and the original file is restored if
+/// the build fails. Exit 1 when the change was rolled back.
+fn upgrade(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--to", "--apply", "--project", "--timeout"],
+        &["--to", "--project", "--timeout"],
+    )?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let target = args
+        .value("--to")?
+        .ok_or_else(|| Error::invalid("usage: tpt-lean upgrade --to VERSION [--apply] [--timeout S]"))?;
+    let timeout = match args.value("--timeout")? {
+        Some(t) => t
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--timeout must be seconds"))?,
+        None => cfg.security.command_timeout_seconds,
+    };
+    let plan = tpt_lean_tools::upgrade::plan_for_project(&root, &target)?;
+    let outcome = if args.flag("--apply") {
+        tpt_lean_tools::upgrade::apply_upgrade(&root, plan, timeout)?
+    } else {
+        tpt_lean_tools::upgrade::UpgradeOutcome {
+            plan,
+            applied: false,
+            rolled_back: false,
+            build_errors: 0,
+            build_exit: None,
+            build_message: None,
+        }
+    };
+    let mut human: Vec<String> = outcome.plan.steps.iter().map(|s| format!("  {s}")).collect();
+    for note in &outcome.plan.notes {
+        human.push(format!("  note: {note}"));
+    }
+    if outcome.plan.unchanged {
+        // Nothing to do; the step line already says so.
+    } else if outcome.applied {
+        human.push(format!(
+            "applied: lake build succeeded with {} error(s) reported",
+            outcome.build_errors
+        ));
+    } else if outcome.rolled_back {
+        human.push(format!(
+            "rolled back: lake build failed (exit {}, {} Lean error(s)); lean-toolchain restored",
+            outcome.build_exit.map_or("none".to_string(), |c| c.to_string()),
+            outcome.build_errors
+        ));
+        if let Some(msg) = &outcome.build_message {
+            human.push(format!("  last output: {msg}"));
+        }
+    } else {
+        human.push("dry run: rerun with --apply to write the change and build".to_string());
+    }
+    ctx.emit(
+        "upgrade",
+        &human.join(
+            "
+",
+        ),
+        &outcome,
+    )?;
+    Ok(if outcome.rolled_back { CHECK_FAILED } else { OK })
 }
 
 fn doctor(ctx: &Ctx, args: &Args) -> Result<i32> {

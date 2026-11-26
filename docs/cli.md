@@ -150,6 +150,14 @@ the same exit code.
   can read it. Nothing is written without `--apply`. With `--apply` the file is written, Lean is run
   on it again, and if Lean reports more errors than before the original text is restored and the exit
   status is 1. Needs Lean; the unknown-identifier step needs an index.
+- `upgrade --to VERSION [--apply] [--timeout S]`: plans a move to another Lean release. The plan
+  rewrites the `lean-toolchain` line, says whether the target is one this release is tested against,
+  and lists what must be changed by hand: the Mathlib `require` tag in the lakefile (reported, never
+  edited, because the tag for the new release may not exist yet) and `lake-manifest.json` (run
+  `lake update` when dependencies need new revisions). Without `--apply` nothing is written. With
+  `--apply` the file is written and `lake build` runs (elan installs the toolchain); if the build
+  fails or is cancelled the original `lean-toolchain` is restored, the failing line is shown, and the
+  exit status is 1. A project already on the target version is reported as unchanged and not built.
 - `search <query> [--from FILE] [--namespace NS] [--near TERM]... [--limit N]`: names and
   docstrings in the index. `--from FILE` ranks symbols from modules that the file imports higher.
   `--near` keeps only files that also declare a name matching each term.

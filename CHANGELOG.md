@@ -8,6 +8,9 @@ All notable changes to this project are documented here. The format follows
 Initial development version `0.1.0`. Nothing has been published yet.
 
 ### Added
+- `tpt-lean upgrade --to VERSION [--apply]`: plans a `lean-toolchain` change and reports the Mathlib pin
+  and manifest to update by hand. With `--apply` it runs `lake build` and restores the original file if
+  the build fails. Tested here: dry run, rollback on a real Lean error, and a successful move to v4.36.0.
 - `tpt-lean completions bash|zsh|fish|powershell`: shell completion scripts for `tpt-lean` and `tlean`,
   generated from one command table that a test checks against the help text.
 - `tpt-lean doctor --fix`: prints a plan, then rebuilds the symbol index when it is missing or damaged
