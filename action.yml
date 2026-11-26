@@ -1,0 +1,127 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+#
+# GitHub Action: build a Lean project with tpt-lean, upload the diagnostics to code scanning,
+# and fail the job when the build fails. Use it as `uses: tpt-solutions/tpt-lean@<tag>`.
+#
+# Inputs go to the shell through `env:`, never through `${{ }}` inside `run:`, so a project path
+# or version string cannot inject shell code.
+
+name: tpt-lean
+description: Build a Lean 4 project with tpt-lean, report errors to code scanning as SARIF, and fail when the build fails.
+author: TPT Solutions
+branding:
+  icon: check-circle
+  color: blue
+
+inputs:
+  version:
+    description: Release tag of tpt-lean to install, such as v0.1.0. Defaults to the latest release.
+    required: false
+    default: latest
+  project:
+    description: Lean project directory, relative to the workspace.
+    required: false
+    default: "."
+  sarif-file:
+    description: Path of the SARIF log that `tpt-lean ci --sarif` writes.
+    required: false
+    default: tpt-lean.sarif
+  upload-sarif:
+    description: "Upload the SARIF log to code scanning. Needs `security-events: write` in the job permissions. A failed upload does not fail the job."
+    required: false
+    default: "true"
+  deny-sorry:
+    description: Fail the job when the project contains `sorry` or `admit`.
+    required: false
+    default: "false"
+  install-lean:
+    description: Install elan (the Lean toolchain manager) on Linux and macOS. Lake then fetches the toolchain named in lean-toolchain. Windows runners must already have Lean on PATH.
+    required: false
+    default: "true"
+
+outputs:
+  exit-code:
+    description: Exit status of `tpt-lean ci`. 0 when the build passed.
+    value: ${{ steps.ci.outputs.exit-code }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install elan (Linux and macOS)
+      if: runner.os != 'Windows' && inputs.install-lean == 'true'
+      shell: bash
+      run: |
+        set -eu
+        curl -sSf https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
+          | sh -s -- -y --default-toolchain none
+        echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+    - name: Install tpt-lean (Linux and macOS)
+      if: runner.os != 'Windows'
+      shell: bash
+      env:
+        TPT_LEAN_VERSION: ${{ inputs.version }}
+      run: |
+        set -eu
+        sh "$GITHUB_ACTION_PATH/scripts/install.sh" --version "$TPT_LEAN_VERSION" \
+          --dir "$RUNNER_TEMP/tpt-lean-bin"
+        echo "$RUNNER_TEMP/tpt-lean-bin" >> "$GITHUB_PATH"
+
+    - name: Install tpt-lean (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        TPT_LEAN_VERSION: ${{ inputs.version }}
+      run: |
+        & "$env:GITHUB_ACTION_PATH/scripts/install.ps1" -Version $env:TPT_LEAN_VERSION -Dir "$env:RUNNER_TEMP\tpt-lean-bin"
+        if ($LASTEXITCODE -ne 0) { throw "install.ps1 failed" }
+        Add-Content -Path $env:GITHUB_PATH -Value "$env:RUNNER_TEMP\tpt-lean-bin"
+
+    - name: Build and check (tpt-lean ci)
+      id: ci
+      shell: bash
+      env:
+        TPT_LEAN_PROJECT: ${{ inputs.project }}
+        TPT_LEAN_SARIF: ${{ inputs.sarif-file }}
+      run: |
+        set +e
+        tpt-lean --project "$TPT_LEAN_PROJECT" ci --sarif > "$TPT_LEAN_SARIF"
+        code=$?
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Upload SARIF to code scanning
+      if: always() && inputs.upload-sarif == 'true' && hashFiles(inputs.sarif-file) != ''
+      continue-on-error: true
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ inputs.sarif-file }}
+        category: tpt-lean
+
+    - name: Deny sorry and admit
+      id: sorry
+      if: always() && inputs.deny-sorry == 'true'
+      shell: bash
+      env:
+        TPT_LEAN_PROJECT: ${{ inputs.project }}
+      run: tpt-lean --project "$TPT_LEAN_PROJECT" sorry-report --deny-sorry
+
+    - name: Result
+      if: always()
+      shell: bash
+      env:
+        CI_EXIT: ${{ steps.ci.outputs.exit-code }}
+        SORRY_OUTCOME: ${{ steps.sorry.outcome }}
+      run: |
+        if [ -z "$CI_EXIT" ]; then
+          echo "tpt-lean ci did not run; see the steps above" >&2
+          exit 1
+        fi
+        if [ "$CI_EXIT" != "0" ]; then
+          echo "tpt-lean ci failed with exit status $CI_EXIT" >&2
+          exit "$CI_EXIT"
+        fi
+        if [ "$SORRY_OUTCOME" = "failure" ]; then
+          echo "sorry or admit found and deny-sorry is set" >&2
+          exit 1
+        fi

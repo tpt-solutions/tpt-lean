@@ -424,7 +424,7 @@ Crate: `tpt-lean-wasm`
 
 ### Proposals only (not built; record decision later)
 - [x] VS Code extension wrapper around the LSP proxy (`editors/vscode/`; compiles and render tests pass; not run in a VS Code host; not published)
-- [ ] GitHub Action (`tpt/tpt-lean-action`) for `ci --sarif`
+- [x] GitHub Action for `ci --sarif`, as a composite `action.yml` at the repo root instead of a separate `tpt/tpt-lean-action` repo (written; `docs/github-action.md`; YAML checked and the `ci`/`sorry-report` commands checked locally, not run on GitHub)
 - [ ] Generated TypeScript client from `crates/tpt-lean-server/schemas`
 
 ### Explicitly open, not doable in this environment

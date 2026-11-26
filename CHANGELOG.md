@@ -15,6 +15,9 @@ Initial development version `0.1.0`. Nothing has been published yet.
 - VS Code extension in `editors/vscode/` (not published): starts `tpt-lean lsp`, adds lemma search, explain
   error, a proof-state panel and a restart command. Rendering is tested with `npm test`; the extension has
   not been run in a VS Code host.
+- GitHub Action: a composite `action.yml` at the repository root. It installs tpt-lean from a release,
+  runs `tpt-lean ci --sarif`, uploads the result to code scanning, and optionally denies `sorry`.
+  See `docs/github-action.md`. Not yet run on GitHub.
 - `tpt-lean completions bash|zsh|fish|powershell`: shell completion scripts for `tpt-lean` and `tlean`,
   generated from one command table that a test checks against the help text.
 - `tpt-lean doctor --fix`: prints a plan, then rebuilds the symbol index when it is missing or damaged
