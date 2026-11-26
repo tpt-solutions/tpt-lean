@@ -93,3 +93,33 @@ jobs:
           fi
       - name: Tests against this Lean version
         run: cargo test --workspace
+
+  benchmarks:
+    name: Benchmarks (advisory, ubuntu)
+    runs-on: ubuntu-latest
+    # Timing on shared runners is noisy, so a missed target is reported but does not fail the build.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-bench-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run the benchmarks (release build)
+        shell: bash
+        run: |
+          set -o pipefail
+          for crate in tpt-lean-search tpt-lean-fmt tpt-lean-index; do
+            echo "== $crate" | tee -a bench-results.txt
+            cargo test -p "$crate" --release --test bench -- --ignored --nocapture 2>&1 | tee -a bench-results.txt
+          done
+      - name: Upload the results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results
+          path: bench-results.txt

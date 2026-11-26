@@ -358,7 +358,7 @@ Crate: `tpt-lean-wasm`
 
 ## Phase 9 — Release, packaging, docs
 - [ ] Verify performance targets (done: search, fmt, context pack, incremental index (27 ms p50 for one edit in 500 files, after a 372 ms full refresh; `crates/tpt-lean-index/tests/bench.rs`); open: cache-hit build, see the cache-hit item)
-- [ ] Benchmark suite in CI
+- [x] Benchmark suite in CI (`benchmarks` job in `.github/workflows/ci.yml` runs the search, formatter and index benchmarks in release mode, uploads `bench-results.txt`, and is advisory (`continue-on-error`) because shared runners are noisy; the server context-pack benchmark needs Lean and is not in that job; the job has not run on GitHub)
 - [ ] Per-release dependency license report
 - [x] Per-release `cargo deny` / `cargo audit` gate
 - [x] Versioning policy (crate semver vs ABI version) (`docs/versioning.md`)
