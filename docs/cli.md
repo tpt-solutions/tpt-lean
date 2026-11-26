@@ -62,11 +62,26 @@ the same exit code.
   `--mathlib`, the project requires Mathlib at the tag matching the tested Lean release (`v4.36.0`)
   and pins `lean-toolchain` to it. A full Mathlib build is not run by `init`. The directory name
   may use letters, digits, `_` and `-`.
-- `doctor`: checks Lean and Lake, the toolchain pin, the project configuration, the dependency
+- `doctor [--fix]`: checks Lean and Lake, the toolchain pin, the project configuration, the dependency
   cache, Mathlib, write permissions, the index, the cache, the server socket, and whether the
   language server starts and stops. A `lean-version` check warns when the Lean on `PATH` differs
   from the pin, or is not one of the tested versions (currently 4.35.0 and 4.36.0). Exits 3 when a
   check fails.
+  `--fix` prints a plan first, then applies the fixes it can make safely. The only fix is for the
+  index: when it is missing it is built, and when its database is damaged the `index.sqlite` file
+  (and its `-wal` and `-shm` files) is deleted and rebuilt from the sources. Anything else, such as
+  a missing toolchain or a broken configuration, is reported and not changed. Each applied fix is
+  listed as a `fix` check.
+- `setup [--editor NAME]... [--mcp NAME]... [--dry-run]`: writes the editor and MCP client config
+  for the project. Editors: `helix` (merges into `.helix/languages.toml`), `vscode`
+  (`.vscode/tpt-lean-lsp.json`), `neovim` and `emacs` (`.tpt-lean/editors/`). MCP clients: `claude`
+  (`.mcp.json`) and `cursor` (`.cursor/mcp.json`). Every change is shown as a diff first. Existing
+  files are merged: other servers are kept, and an existing `tpt-lean` entry that differs is kept too
+  and reported. Files written by setup are created only when absent. Merged JSON is written with its
+  keys sorted. With `--dry-run` nothing is written and the exit status is 1 when a change is
+  pending, so a CI job can check for drift.
+- `completions bash|zsh|fish|powershell`: print a completion script for `tpt-lean` and `tlean`.
+  For example `tpt-lean completions bash > ~/.local/share/bash-completion/completions/tpt-lean`.
 - `config show`: the effective configuration.
 - `clean [--timeout S]`: runs `lake clean`.
 - `cache status`: the location and size of the global cache, and the shared layers named by
@@ -89,6 +104,11 @@ the same exit code.
 - `imports --minimize FILE`: the proposed import removals, as a diff. The file is not written.
 - `imports --cost`: direct and transitive import counts per module. This is a structural estimate,
   not a compile time.
+- `sorry-report [paths...] [--deny-sorry]`: lists every `sorry` and `admit` with its file, line,
+  column and the declaration it is in. Only code is searched: words inside comments and strings are
+  ignored. Without paths it covers the project (not `lakefile.lean`). `--deny-sorry` exits 1 when
+  there is any. This is a textual report. It does not show the goal at each `sorry`; that needs the
+  sidecar and is not done.
 - `search <query> [--from FILE] [--namespace NS] [--near TERM]... [--limit N]`: names and
   docstrings in the index. `--from FILE` ranks symbols from modules that the file imports higher.
   `--near` keeps only files that also declare a name matching each term.
@@ -111,7 +131,7 @@ the same exit code.
 
 These commands run Lean or Lake.
 
-- `build [target] [--json] [--watch] [--poll-ms N] [--explain-slow] [--plan] [--timeout S]`: runs
+- `build [target] [--json] [--watch] [--poll-ms N] [--explain-slow] [--report] [--plan] [--timeout S]`: runs
   `lake build` and reports its progress as events. `--json` prints one event per line, as Lake
   reports them: `build_started`, `cache_hit` or `cache_miss`, `file_started`, `file_finished`,
   `file_failed`, `diagnostic`, `build_finished`. `--watch` rebuilds when the sources change, polling
@@ -119,6 +139,15 @@ These commands run Lean or Lake.
   `--explain-slow` lists the slowest files. `--plan` shows the import waves of the project without
   running Lake. A cache hit means a successful build with the same inputs is recorded; Lake still
   runs.
+  `--report` prints where the time went: whether a cache layer (`memory`, `disk` or `shared`) served
+  the build, the time to compute the cache key, the rest of the total (Lake and the compiler), and the
+  ten slowest files. It is built from the same events as the other flags; nothing runs twice.
+- `watch [--once] [--interval-ms N] [--timeout S]`: checks every `.lean` file once, then checks a file
+  again when its length or modification time changes. Each file gets one summary line (errors,
+  warnings, `sorry` count), and the first three errors. `lakefile.lean` is not checked, because only
+  Lake reads it. `--once` checks everything and exits 1 if any file has an error, which is useful in
+  CI. Without `--once` it runs until interrupted. With `--json`, each summary is one envelope line.
+  Polling checks file stamps, not contents, and does not run Lake.
 - `check [file] [--timeout S]`: `lake build` for the project, or `lean <file>` for one file. The
   diagnostics are saved for `explain --last-error`.
 - `goals FILE:LINE:COL [--timeout S]`: the plain goal at a position, from the Lean language server.

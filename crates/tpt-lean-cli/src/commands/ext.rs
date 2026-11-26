@@ -44,6 +44,7 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
             "--json",
             "--watch",
             "--explain-slow",
+            "--report",
             "--plan",
             "--poll-ms",
         ],
@@ -154,6 +155,9 @@ pub fn build_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
         }
     } else if args.flag("--explain-slow") {
         ctx.emit("build.explain_slow", "", &slow)?;
+    }
+    if args.flag("--report") {
+        print_build_report(ctx, &build_report(&events, &outcome))?;
     }
     Ok(OK)
 }
@@ -653,4 +657,251 @@ pub fn mcp_http(_ctx: &Ctx, args: &Args) -> Result<i32> {
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     tpt_lean_mcp::serve_http(&server, addr).map_err(Error::from)?;
     Ok(OK)
+}
+
+// ---------------------------------------------------------------- watch
+
+/// One checked file, as printed by `watch` and streamed with `--json`.
+#[derive(serde::Serialize)]
+struct WatchRecord {
+    file: String,
+    errors: usize,
+    warnings: usize,
+    sorry: usize,
+    error: Option<String>,
+    diagnostics: Vec<adapter::Diagnostic>,
+}
+
+/// A file's identity for change detection: its length and modification time.
+type Stamp = (u64, Option<std::time::SystemTime>);
+
+fn stamp(path: &Path) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.len(), meta.modified().ok()))
+}
+
+/// `watch [--once] [--interval-ms N]`: check every `.lean` file on start, then re-check each file
+/// when its length or modification time changes. Prints one summary per checked file. With
+/// `--once` it checks everything once and exits 1 if any file has an error.
+pub fn watch_cmd(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(
+        &["--project", "--timeout", "--interval-ms", "--once"],
+        &["--project", "--timeout", "--interval-ms"],
+    )?;
+    let root = project_root(args)?;
+    let cfg = load_config(args, &root)?;
+    let timeout = timeout_arg(args, cfg.security.command_timeout_seconds)?;
+    let interval = match args.value("--interval-ms")? {
+        Some(v) => v
+            .parse::<u64>()
+            .map_err(|_| Error::invalid("--interval-ms must be a number of milliseconds"))?
+            .max(100),
+        None => 1000,
+    };
+    let once = args.flag("--once");
+    let tc = toolchain_or_error()?;
+    let policy = adapter::lean_policy(timeout);
+    let cancel = CancelToken::new();
+
+    let mut state: std::collections::BTreeMap<String, Stamp> = std::collections::BTreeMap::new();
+    let mut any_error = false;
+    if ctx.mode == Mode::Human && !once {
+        ctx.note("watching for changes (Ctrl+C to stop)");
+    }
+    loop {
+        // lakefile.lean is read by Lake, not by plain `lean`, so it is not checked here.
+        let files: Vec<(String, PathBuf)> = tpt_lean_index::collect_lean_files(&root)?
+            .into_iter()
+            .filter(|(rel, _)| rel != "lakefile.lean")
+            .collect();
+        // Forget files that were deleted, so that a recreated file is checked again.
+        let present: std::collections::BTreeSet<&str> = files.iter().map(|(r, _)| r.as_str()).collect();
+        state.retain(|rel, _| present.contains(rel.as_str()));
+        for (rel, path) in &files {
+            let Some(now) = stamp(path) else { continue };
+            if state.get(rel) == Some(&now) {
+                continue;
+            }
+            state.insert(rel.clone(), now);
+            let record = check_file(&tc, &policy, &cancel, &root, rel, path);
+            if record.errors > 0 || record.error.is_some() {
+                any_error = true;
+            }
+            print_watch_record(ctx, &record)?;
+        }
+        if once {
+            return Ok(if any_error { 1 } else { OK });
+        }
+        std::thread::sleep(Duration::from_millis(interval));
+    }
+}
+
+/// Run `lean` on one file and summarise its diagnostics and `sorry` count.
+fn check_file(
+    tc: &Toolchain,
+    policy: &tpt_lean_core::policy::ProcessPolicy,
+    cancel: &CancelToken,
+    root: &Path,
+    rel: &str,
+    path: &Path,
+) -> WatchRecord {
+    let command = adapter::Command::LeanCheck {
+        file: path.to_path_buf(),
+    };
+    let sorry = std::fs::read_to_string(path)
+        .map(|src| tpt_lean_tools::sorry::hits_in_source(rel, &src).len())
+        .unwrap_or(0);
+    match adapter::execute(tc, &command, Some(root), policy, cancel) {
+        Ok(result) => {
+            let errors = result
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == adapter::Severity::Error)
+                .count();
+            let warnings = result
+                .diagnostics
+                .iter()
+                .filter(|d| d.severity == adapter::Severity::Warning)
+                .count();
+            WatchRecord {
+                file: rel.to_string(),
+                errors,
+                warnings,
+                sorry,
+                error: None,
+                diagnostics: result.diagnostics,
+            }
+        }
+        Err(e) => WatchRecord {
+            file: rel.to_string(),
+            errors: 0,
+            warnings: 0,
+            sorry,
+            error: Some(e.to_string()),
+            diagnostics: Vec::new(),
+        },
+    }
+}
+
+fn print_watch_record(ctx: &Ctx, record: &WatchRecord) -> Result<()> {
+    let mut human = vec![format!(
+        "{}: {} error(s), {} warning(s), {} sorry",
+        record.file, record.errors, record.warnings, record.sorry
+    )];
+    if let Some(e) = &record.error {
+        human.push(format!("  could not check: {e}"));
+    }
+    for d in record
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == adapter::Severity::Error)
+        .take(3)
+    {
+        let first = d.message.lines().next().unwrap_or("");
+        human.push(format!("  {}:{}: {first}", d.line, d.column));
+    }
+    ctx.emit_items("watch", &human, std::slice::from_ref(record))
+}
+
+// ---------------------------------------------------------------- build report
+
+/// One file in the build report, with the time Lake reported for it.
+#[derive(serde::Serialize)]
+struct FileTiming {
+    file: String,
+    duration_ms: Option<u64>,
+    failed: bool,
+}
+
+/// `build --report`: where the time of one build went, and whether a cache layer served it.
+#[derive(serde::Serialize)]
+struct BuildReport {
+    success: bool,
+    /// The cache layer that served the build (`memory`, `disk` or `shared`), when it hit.
+    cache_hit: bool,
+    cache_layer: Option<String>,
+    /// Time to compute the cache key, from `tpt-lean` itself.
+    key_ms: u64,
+    total_ms: u64,
+    /// Total minus the cache key time: the part spent in Lake and the compiler.
+    lake_ms: u64,
+    files_built: usize,
+    files_failed: usize,
+    /// The slowest files, longest first. At most ten.
+    slowest: Vec<FileTiming>,
+}
+
+fn build_report(
+    events: &[tpt_lean_build::BuildEvent],
+    outcome: &tpt_lean_build::BuildOutcome,
+) -> BuildReport {
+    use tpt_lean_build::BuildEvent;
+    let cache_layer = events.iter().find_map(|e| match e {
+        BuildEvent::CacheHit { layer, .. } => serde_json::to_value(layer)
+            .ok()
+            .and_then(|v| v.as_str().map(String::from)),
+        _ => None,
+    });
+    let mut files: Vec<FileTiming> = events
+        .iter()
+        .filter_map(|e| match e {
+            BuildEvent::FileFinished {
+                file, duration_ms, ..
+            } => Some(FileTiming {
+                file: file.clone(),
+                duration_ms: *duration_ms,
+                failed: false,
+            }),
+            BuildEvent::FileFailed {
+                file, duration_ms, ..
+            } => Some(FileTiming {
+                file: file.clone(),
+                duration_ms: *duration_ms,
+                failed: true,
+            }),
+            _ => None,
+        })
+        .collect();
+    // Files without a reported duration sort last.
+    files.sort_by_key(|f| std::cmp::Reverse(f.duration_ms));
+    files.truncate(10);
+    BuildReport {
+        success: outcome.success,
+        cache_hit: outcome.cache_hit,
+        cache_layer,
+        key_ms: outcome.key_ms,
+        total_ms: outcome.duration_ms,
+        lake_ms: outcome.duration_ms.saturating_sub(outcome.key_ms),
+        files_built: outcome.files_built,
+        files_failed: outcome.files_failed,
+        slowest: files,
+    }
+}
+
+/// Print the report for a person, or emit it in the JSON envelope.
+fn print_build_report(ctx: &Ctx, report: &BuildReport) -> Result<()> {
+    let cache = match (&report.cache_hit, &report.cache_layer) {
+        (true, Some(layer)) => format!("hit ({layer} layer)"),
+        (true, None) => "hit".to_string(),
+        (false, _) => "miss".to_string(),
+    };
+    let mut human = vec![
+        format!("cache: {cache}"),
+        format!(
+            "time: {} ms total = {} ms cache key + {} ms Lake",
+            report.total_ms, report.key_ms, report.lake_ms
+        ),
+    ];
+    if !report.slowest.is_empty() {
+        human.push("slowest files:".to_string());
+        for f in &report.slowest {
+            let time = f
+                .duration_ms
+                .map(|d| format!("{d} ms"))
+                .unwrap_or_else(|| "no time reported".to_string());
+            let status = if f.failed { " (failed)" } else { "" };
+            human.push(format!("  {time:>16}  {}{status}", f.file));
+        }
+    }
+    ctx.emit_items("build.report", &human, std::slice::from_ref(report))
 }

@@ -10,6 +10,7 @@ pub mod ci;
 pub mod doctor;
 pub mod imports;
 pub mod project_doctor;
+pub mod sorry;
 
 use serde::Serialize;
 

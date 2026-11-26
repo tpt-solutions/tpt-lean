@@ -11,25 +11,41 @@ Owner: TPT Solutions
 
 ## Status
 
-Early development. Implemented today:
+Early development. Every command below is implemented. Each one accepts `--json` (one envelope
+object) or `--ndjson` (one record per line). The binaries are `tpt-lean` and `tlean`.
+[docs/cli.md](docs/cli.md) lists every flag and exit code.
 
 | Command | What it does |
 | --- | --- |
-| `tpt-lean init <dir> [--mathlib]` | create a starter Lean project |
-| `tpt-lean doctor` | check Lean, Lake, project, config, index, and cache |
-| `tpt-lean config show` | print the effective configuration |
-| `tpt-lean fmt [--check\|--diff] [paths]` | conservative, idempotent formatter |
-| `tpt-lean index scan\|refresh\|status\|clear` | SQLite symbol index (incremental) |
-| `tpt-lean search <query> [--namespace NS] [--near TERM] [--limit N]` | name, prefix, and docstring search |
-| `tpt-lean build [target]` | `lake build` through typed options |
-| `tpt-lean check [file]` | `lake build`, or `lean <file>` |
-| `tpt-lean cache status` | global cache location and size |
+| `init <dir> [--mathlib] [--template NAME]` | create a starter Lean project |
+| `doctor [--fix]` | check Lean, Lake, project, config, index, and cache; `--fix` rebuilds a missing or damaged index |
+| `config show` | print the effective configuration |
+| `fmt [--check\|--diff\|--verify] [paths]` | conservative, idempotent formatter |
+| `imports [file] [--unused\|--cost\|--minimize FILE\|--suggest QUERY]` | import analysis |
+| `search <query> [--from FILE] [--namespace NS] [--near TERM] [--limit N]` | name, prefix, and docstring search; `--type` and `--goal-at` also |
+| `index scan\|refresh\|status\|clear\|sidecar` | SQLite symbol index (incremental) |
+| `build [target] [--watch\|--plan\|--explain-slow]` | `lake build` through typed options |
+| `check [file]` | `lake build`, or `lean <file>` |
+| `watch [--once] [--interval-ms N]` | re-check changed files; one diagnostics and `sorry` summary per file |
+| `sorry-report [paths] [--deny-sorry]` | `sorry` and `admit` per declaration; `--deny-sorry` exits 1 when any is found |
+| `goals FILE:LINE:COL` | goals at a position, from Lean's own info trees |
+| `explain FILE:LINE:COL \| --last-error` | explain an error at a position |
+| `context-pack FILE:LINE:COL` | bounded context for a proof, for an assistant or a person |
+| `profile FILE [--imports] [--graph\|--flamegraph\|--compare]` | where Lean spends its time |
+| `docgen [--out DIR]` | documentation from the sources |
+| `ci [--json\|--sarif]` | run the project checks as one CI job |
+| `bisect --good REV --bad REV` | first failing git commit |
+| `clean` | `lake clean` |
+| `cache status\|prune\|export DIR\|import DIR` | the global build cache |
+| `server start\|status\|stop` | the local JSON-RPC API server |
+| `mcp stdio\|http` | the Model Context Protocol server |
+| `lsp` | the language-server proxy for editors |
+| `setup [--editor NAME]... [--mcp NAME]... [--dry-run]` | write editor and MCP config for the project, showing a diff first |
+| `completions bash\|zsh\|fish\|powershell` | print a shell completion script |
 
-Planned commands (goals, explain, context-pack, profile, MCP, server, FFI, docgen, LSP proxy)
-exit with code 10 (`not_implemented`). See `todo.md` for the full plan.
-
-Every command accepts `--json` (one envelope object) or `--ndjson` (one record per line).
-The binaries are `tpt-lean` and `tlean`. See `docs/cli.md`.
+Lean and Lake are needed only by the commands that run them (`build`, `check`, `goals`, `explain`,
+`context-pack`, `profile`, `ci`, `bisect`, `watch`, `index sidecar`, `init --mathlib`). See
+[docs/install.md](docs/install.md).
 
 ## Build
 

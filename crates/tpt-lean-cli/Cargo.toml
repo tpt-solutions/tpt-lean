@@ -39,3 +39,14 @@ serde_json.workspace = true
 
 [lints]
 workspace = true
+
+# `cargo binstall tpt-lean-cli` downloads the GitHub Release archive built by
+# .github/workflows/release.yml: tpt-lean-<target>.tar.gz (or .zip on Windows), with the
+# `tpt-lean` and `tlean` binaries at the top of the archive.
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/tpt-lean-{ target }{ archive-suffix }"
+bin-dir = "{ bin }{ binary-ext }"
+pkg-fmt = "tgz"
+
+[package.metadata.binstall.overrides.x86_64-pc-windows-msvc]
+pkg-fmt = "zip"

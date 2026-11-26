@@ -75,11 +75,37 @@ configuration.
 - The Go tests in `crates/tpt-lean-ffi/tests/go` load the C library without cgo. Run
   `cargo build -p tpt-lean-ffi`, then `go test ./...` in that directory. They run on Windows.
 
+## Install from a release (after first release)
+
+These commands work once a version has been tagged and `.github/workflows/release.yml` has
+published its assets. Until then, build from the checkout as above.
+
+```sh
+# Linux and macOS: downloads the archive, checks SHA256SUMS, installs to ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/tpt-solutions/tpt-lean/main/scripts/install.sh | sh
+
+# Windows (PowerShell): installs to %LOCALAPPDATA%\Programs\tpt-lean
+irm https://raw.githubusercontent.com/tpt-solutions/tpt-lean/main/scripts/install.ps1 | iex
+
+# Any platform with Rust: prebuilt binary through cargo-binstall
+cargo binstall tpt-lean-cli
+```
+
+Both scripts accept `--version v0.1.0` (or `-Version`) to pin a release, `--dry-run` (or
+`-DryRun`) to print what would be downloaded without installing, and a directory
+(`--dir`, `-Dir`) to choose where the binaries go. Neither script installs anything when the
+checksum does not match.
+
+Shell completions come from `tpt-lean completions bash|zsh|fish|powershell`. For example,
+`tpt-lean completions bash > ~/.local/share/bash-completion/completions/tpt-lean`.
+
 ## Not yet
 
-- No package for crates.io, npm, Homebrew, winget or similar. The WebAssembly package in
-  `crates/tpt-lean-wasm/npm` builds and runs locally but is not published.
-- No prebuilt binaries.
+- Not published to crates.io, npm, Homebrew, winget or Scoop. The packaging manifests under
+  `packaging/` are templates; `scripts/update-manifests.sh <version>` fills them from a release.
+  Nothing is submitted to any index.
+- The WebAssembly package in `crates/tpt-lean-wasm/npm` builds and runs locally but is not
+  published.
 
 ## Uninstall
 

@@ -1,0 +1,92 @@
+name: Release
+
+# Runs only for a version tag such as v0.1.0. Builds the CLI for each supported target, archives
+# it as tpt-lean-<target>.tar.gz (or .zip on Windows), and attaches the archives and SHA256SUMS to
+# the GitHub Release for the tag. `scripts/install.sh`, `scripts/install.ps1`, the packaging
+# manifests and `cargo binstall` all read these names.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build tpt-lean-cli
+        run: cargo build --release --locked -p tpt-lean-cli --target ${{ matrix.target }}
+      - name: Archive (unix)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/stage"
+          mkdir -p "$out"
+          cp "target/${{ matrix.target }}/release/tpt-lean" "target/${{ matrix.target }}/release/tlean" "$out/"
+          tar -czf "tpt-lean-${{ matrix.target }}.tar.gz" -C "$out" tpt-lean tlean
+      - name: Archive (windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP "stage"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "target/${{ matrix.target }}/release/tpt-lean.exe" $out
+          Copy-Item "target/${{ matrix.target }}/release/tlean.exe" $out
+          Compress-Archive -Path (Join-Path $out "*") -DestinationPath "tpt-lean-${{ matrix.target }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tpt-lean-${{ matrix.target }}
+          path: tpt-lean-${{ matrix.target }}.${{ matrix.archive }}
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Write SHA256SUMS
+        working-directory: dist
+        run: sha256sum tpt-lean-* > SHA256SUMS && cat SHA256SUMS
+      - name: Create or update the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tpt-lean-*
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: true

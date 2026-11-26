@@ -390,36 +390,36 @@ Crate: `tpt-lean-wasm`
 ## Phase 10 — Review follow-ups and adoption (from project review)
 
 ### Docs and stale statements
-- [ ] README: drop the "planned commands exit with code 10" paragraph and the short command table; list every implemented command and link `docs/cli.md`
-- [ ] Profile: `NOT_MEASURED` in `crates/tpt-lean-profile/src/run.rs` still says build-step timing is not implemented (remove once the build-timing item below lands)
-- [ ] `docs/install.md` and README: one-line install commands, marked "after first release"
+- [x] README: drop the "planned commands exit with code 10" paragraph and the short command table; list every implemented command and link `docs/cli.md` (done: README lists every implemented command and links docs/cli.md)
+- [ ] Profile: `NOT_MEASURED` in `crates/tpt-lean-profile/src/run.rs` still says build-step timing is not implemented (remove once the build-timing item below lands) (partly: the note now points to `build --report`; the note stays until profile reports build steps)
+- [x] `docs/install.md` and README: one-line install commands, marked "after first release" (done: docs/install.md has them under "after first release"; not run until a tag exists)
 
 ### Open items to close
-- [ ] Build-step timing and cache hit/miss report (`profile --build`, `build --report`), from `tpt-lean-build` events
+- [ ] Build-step timing and cache hit/miss report (`profile --build`, `build --report`), from `tpt-lean-build` events (partly: `build --report` is done; `profile --build` is not)
 - [ ] `imports --cost`: attach compile-time estimate per import (reuse `profile --imports` timings)
 - [ ] `bisect --axis commits|imports|flags` (currently commits only)
 - [ ] Search ranking: recency and dependency-distance factors, weights in config
 - [ ] LSP: keep the index handle open in the proxy instead of opening per request; add a benchmark for instant project search
 - [ ] Index: store last diagnostics per file hash (acceleration only; invalidated on hash change)
 - [ ] docgen: `--from-sidecar` input source
-- [ ] MCP: resources for ast, goals and build log; schema validation, permission, cancellation and timeout tests
-- [ ] wasm: browser example in `crates/tpt-lean-wasm/npm/examples/`; `private` stays until a publish decision is made
+- [ ] MCP: resources for ast, goals and build log; schema validation, permission, cancellation and timeout tests (partly: the three resources exist; schema validation and timeout tests are not done)
+- [x] wasm: browser example in `crates/tpt-lean-wasm/npm/examples/`; `private` stays until a publish decision is made (done: examples/browser with build:web; loaded as an ES module in Node, not opened in a browser)
 - [ ] Sidecar: goals for theorem statements and `sorry` (schema v2, reads v1)
 - [ ] LSP: idle and health timeout; memory cap where supported (job objects need `unsafe`, so deferred)
 
 ### Release and install
-- [ ] `.github/workflows/release.yml`: on tag `v*`, build `tpt-lean-cli` for Windows, Linux and macOS (x86_64 and aarch64); archive with `tpt-lean` and `tlean`; publish `SHA256SUMS` to the GitHub Release
-- [ ] `scripts/install.sh` and `scripts/install.ps1`: detect OS and arch, download, verify checksum, install to a user directory, print PATH hint; support `--version` and `--dry-run`
-- [ ] Package manifests under `packaging/`: winget, Homebrew formula, Scoop manifest, plus `scripts/update-manifests.sh` to fill version, URL and hash from a release
-- [ ] `[package.metadata.binstall]` in `tpt-lean-cli/Cargo.toml` so `cargo binstall` works against the same assets
-- [ ] `tpt-lean completions <bash|zsh|fish|powershell>`
-- [ ] `doctor --fix`: apply safe fixes (create config, build sidecar, refresh index) after printing a plan
+- [x] `.github/workflows/release.yml`: on tag `v*`, build `tpt-lean-cli` for Windows, Linux and macOS (x86_64 and aarch64); archive with `tpt-lean` and `tlean`; publish `SHA256SUMS` to the GitHub Release (written; never run on GitHub, needs a tag)
+- [x] `scripts/install.sh` and `scripts/install.ps1`: detect OS and arch, download, verify checksum, install to a user directory, print PATH hint; support `--version` and `--dry-run` (written; dry-run tested on Windows with a stubbed uname; a real download is not tested)
+- [x] Package manifests under `packaging/`: winget, Homebrew formula, Scoop manifest, plus `scripts/update-manifests.sh` to fill version, URL and hash from a release (templates written; update-manifests.sh tested on a copy; nothing submitted)
+- [x] `[package.metadata.binstall]` in `tpt-lean-cli/Cargo.toml` so `cargo binstall` works against the same assets (written; `cargo binstall` itself not run)
+- [x] `tpt-lean completions <bash|zsh|fish|powershell>` (done; generated from one table, tested against the help text)
+- [ ] `doctor --fix`: apply safe fixes (create config, build sidecar, refresh index) after printing a plan (partly: the index fix is done with a printed plan; creating config and building the sidecar are not)
 
 ### New commands (ease of use)
-- [ ] `tpt-lean setup [--editor vscode|neovim|helix|emacs] [--mcp claude|cursor] [--dry-run]`: writes editor LSP config and MCP server entries from `docs/editors.md` and `docs/mcp.md`; merges without clobbering and shows a diff first
-- [ ] `tpt-lean watch`: re-check changed files and print a compact diagnostics and proof-state summary; `--json` streams ndjson (reuse `tpt-lean-build/src/watch.rs`)
+- [x] `tpt-lean setup [--editor vscode|neovim|helix|emacs] [--mcp claude|cursor] [--dry-run]`: writes editor LSP config and MCP server entries from `docs/editors.md` and `docs/mcp.md`; merges without clobbering and shows a diff first (done; merges, shows a diff, --dry-run exits 1 on pending change)
+- [x] `tpt-lean watch`: re-check changed files and print a compact diagnostics and proof-state summary; `--json` streams ndjson (reuse `tpt-lean-build/src/watch.rs`) (done; polls file stamps and runs lean per file. It does not reuse tpt-lean-build/src/watch.rs, which runs Lake)
 - [ ] `tpt-lean fix [file] [--apply]`: apply safe mechanical fixes (missing imports from `imports --suggest`, unused imports from `imports --unused`, formatting) as a reviewable patch; dry-run by default; roll back if Lean reports more errors afterwards
-- [ ] `tpt-lean sorry-report [--deny-sorry]`: list `sorry` and `admit` per declaration with goals where the sidecar provides them; non-zero exit in CI mode
+- [ ] `tpt-lean sorry-report [--deny-sorry]`: list `sorry` and `admit` per declaration with goals where the sidecar provides them; non-zero exit in CI mode (partly: the list and --deny-sorry are done; goals need the sidecar and are not)
 
 ### Proposals only (not built; record decision later)
 - [ ] VS Code extension wrapper around the LSP proxy

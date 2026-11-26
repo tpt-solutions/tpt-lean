@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+PackageIdentifier: TptSolutions.TptLean
+PackageVersion: "@VERSION@"
+PackageLocale: en-US
+Publisher: TPT Solutions
+PackageName: tpt-lean
+PackageUrl: https://github.com/tpt-solutions/tpt-lean
+License: MIT OR Apache-2.0
+ShortDescription: Rust-powered toolbox for Lean 4 (Lean remains the proof checker)
+Moniker: tpt-lean
+Tags:
+  - lean
+  - lean4
+  - lake
+ManifestType: defaultLocale
+ManifestVersion: 1.6.0

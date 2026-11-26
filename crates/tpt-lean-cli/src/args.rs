@@ -64,7 +64,7 @@ impl Args {
             i += 1;
         }
         // Subcommand path: take leading words that are known two-level commands, else one word.
-        let two_level = ["index", "cache", "server", "mcp", "config"];
+        let two_level = ["index", "cache", "server", "mcp", "config", "completions"];
         if let Some(first) = out.rest.first().cloned() {
             if two_level.contains(&first.as_str()) && out.rest.len() > 1 && !out.rest[1].starts_with('-') {
                 out.command = vec![first, out.rest[1].clone()];

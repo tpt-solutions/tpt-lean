@@ -1,0 +1,117 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: MIT OR Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tpt-lean-wasm browser example</title>
+  <style>
+    :root { color-scheme: light dark; --fg: #1d1d1f; --bg: #fbfbfd; --muted: #6e6e73; --line: #d2d2d7; --accent: #0b64c0; }
+    @media (prefers-color-scheme: dark) { :root { --fg: #f5f5f7; --bg: #1c1c1e; --muted: #98989d; --line: #3a3a3c; --accent: #4da3ff; } }
+    body { margin: 0; font: 15px/1.5 system-ui, sans-serif; color: var(--fg); background: var(--bg); }
+    main { max-width: 56rem; margin: 0 auto; padding: 1rem; }
+    h1 { font-size: 1.25rem; margin: 0.5rem 0; }
+    p.note { color: var(--muted); margin: 0.25rem 0 1rem; }
+    textarea, input { width: 100%; box-sizing: border-box; font: 14px/1.4 ui-monospace, Menlo, Consolas, monospace; color: var(--fg); background: transparent; border: 1px solid var(--line); border-radius: 6px; padding: 0.5rem; }
+    textarea { min-height: 9rem; resize: vertical; }
+    .row { display: flex; flex-wrap: wrap; gap: 0.5rem; margin: 0.5rem 0; }
+    button { font: inherit; color: var(--accent); background: transparent; border: 1px solid var(--accent); border-radius: 6px; padding: 0.35rem 0.8rem; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: default; }
+    pre { white-space: pre-wrap; word-break: break-word; border: 1px solid var(--line); border-radius: 6px; padding: 0.75rem; margin: 0.5rem 0; min-height: 2.5rem; font: 13px/1.4 ui-monospace, Menlo, Consolas, monospace; }
+    section { margin-top: 1.5rem; }
+    h2 { font-size: 1rem; margin: 0 0 0.25rem; }
+    #status { color: var(--muted); }
+    @media (max-width: 480px) { main { padding: 0.75rem; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>tpt-lean-wasm in the browser</h1>
+  <p class="note">Runs the same tokenizer, formatter and index search as the Node example, in the page. Nothing is sent to a server. Serve this folder over HTTP (see README); opening the file directly does not load WebAssembly in most browsers.</p>
+  <p id="status">Loading WebAssembly…</p>
+
+  <section>
+    <h2>Source</h2>
+    <textarea id="source" spellcheck="false">theorem add_comm' (a b : Nat) : a + b = b + a := by
+  omega
+</textarea>
+    <div class="row">
+      <button id="tokenize" disabled>Tokenize</button>
+      <button id="format" disabled>Format</button>
+      <button id="cst" disabled>CST root</button>
+    </div>
+    <pre id="output" aria-live="polite"></pre>
+  </section>
+
+  <section>
+    <h2>Search a small index</h2>
+    <p class="note">The index is the JSON format the Node example uses, with entries that have a name, kind, file, line and optional docstring.</p>
+    <textarea id="index" spellcheck="false">{"version":1,"entries":[
+  {"name":"Nat.add_comm","kind":"theorem","file":"Init/Nat.lean","line":10,"docstring":"Addition on naturals is commutative."},
+  {"name":"Nat.add","kind":"def","file":"Init/Nat.lean","line":2}
+]}</textarea>
+    <div class="row">
+      <input id="query" type="search" placeholder="symbol, e.g. nat.add" aria-label="symbol query">
+      <button id="search" disabled>Search</button>
+    </div>
+    <pre id="results" aria-live="polite"></pre>
+  </section>
+</main>
+
+<script type="module">
+  // The generated web-target glue. `npm run build:web` in ../.. creates pkg-web/.
+  import init, * as wasm from "../../pkg-web/tpt_lean_wasm.js";
+
+  const $ = (id) => document.getElementById(id);
+  const show = (el, text) => { el.textContent = text; };
+  const buttons = ["tokenize", "format", "cst", "search"].map($);
+  let index = null;
+
+  // Every value shown comes from textContent, so source text can never run as markup.
+  function loadIndex() {
+    try {
+      const bytes = new TextEncoder().encode($("index").value);
+      index = new wasm.SearchIndex(bytes);
+      show($("results"), `index loaded: ${index.len} entries`);
+    } catch (err) {
+      index = null;
+      show($("results"), `index not loaded: ${err}`);
+    }
+  }
+
+  try {
+    await init();
+    show($("status"), `tpt-lean-wasm ${wasm.version()}`);
+    buttons.forEach((b) => (b.disabled = false));
+    loadIndex();
+  } catch (err) {
+    show($("status"), `WebAssembly did not load: ${err}. Serve this folder over HTTP.`);
+  }
+
+  $("tokenize").addEventListener("click", () => {
+    const r = JSON.parse(wasm.tokenize($("source").value));
+    show($("output"), `${r.tokens.length} tokens\n` + JSON.stringify(r.tokens.slice(0, 40), null, 1));
+  });
+
+  $("format").addEventListener("click", () => {
+    const r = JSON.parse(wasm.formatText($("source").value));
+    show($("output"), r.ok ? r.output : `not formatted: ${r.error}`);
+  });
+
+  $("cst").addEventListener("click", () => {
+    const r = JSON.parse(wasm.cstTree($("source").value));
+    show($("output"), `root: ${r.tree.kind}, children: ${r.tree.children.length}`);
+  });
+
+  $("index").addEventListener("change", loadIndex);
+
+  $("search").addEventListener("click", () => {
+    if (!index) { show($("results"), "no index loaded"); return; }
+    const q = $("query").value.trim();
+    if (!q) { show($("results"), "type a symbol name to search"); return; }
+    const r = JSON.parse(index.searchSymbols(q, 10));
+    show($("results"), r.ok ? JSON.stringify(r.results, null, 1) : `search failed: ${r.error}`);
+  });
+</script>
+</body>
+</html>

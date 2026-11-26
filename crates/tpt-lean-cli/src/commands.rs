@@ -2,6 +2,7 @@
 //! Command implementations and dispatch.
 
 mod ext;
+mod setup;
 
 use crate::args::Args;
 use crate::{Ctx, Mode};
@@ -32,6 +33,9 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
     match name.as_slice() {
         ["init"] => init(ctx, args),
         ["doctor"] => doctor(ctx, args),
+        ["sorry-report"] => sorry_report(ctx, args),
+        ["watch"] => ext::watch_cmd(ctx, args),
+        ["setup"] => setup::setup_cmd(ctx, args),
         ["config"] | ["config", "show"] => config_show(ctx, args),
         ["fmt"] => fmt(ctx, args),
         ["search"] => search(ctx, args),
@@ -64,6 +68,10 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
             Some(r) => r,
             None => imports(ctx, args),
         },
+        ["completions", shell] => completions_cmd(ctx, shell),
+        ["completions"] => Err(Error::invalid(
+            "usage: tpt-lean completions <bash|zsh|fish|powershell>",
+        )),
         ["help"] => help(ctx),
         [cmd, ..] => Err(Error::invalid(format!(
             "unknown command `{cmd}`; run `tpt-lean help`"
@@ -72,18 +80,42 @@ pub fn dispatch(ctx: &Ctx, args: &Args) -> Result<i32> {
     }
 }
 
+/// Print a shell completion script to stdout (human mode) or in the JSON envelope.
+fn completions_cmd(ctx: &Ctx, shell: &str) -> Result<i32> {
+    let text = crate::completions::script(shell).ok_or_else(|| {
+        Error::invalid(format!(
+            "unknown shell `{shell}`; use one of: {}",
+            crate::completions::SHELLS.join(", ")
+        ))
+    })?;
+    if ctx.mode == Mode::Human {
+        print!("{text}");
+    } else {
+        ctx.emit(
+            "completions",
+            "",
+            &serde_json::json!({ "shell": shell, "script": text }),
+        )?;
+    }
+    Ok(OK)
+}
+
 fn help(ctx: &Ctx) -> Result<i32> {
     let text = "\
 tpt-lean: tooling around Lean 4 (Lean remains the proof checker)
 
 Project and environment:
   init <dir> [--mathlib] [--template NAME]    create a starter project
-  doctor                                      check the local Lean environment
+  doctor [--fix]                              check the local Lean environment; --fix rebuilds the index
   config show                                 print the effective configuration
   clean                                       run `lake clean`
   cache status | prune | export DIR | import DIR
+  completions bash|zsh|fish|powershell        print a shell completion script
 
 Source:
+  sorry-report [paths] [--deny-sorry]         list sorry and admit per declaration
+  watch [--once] [--interval-ms N]            re-check changed files; a summary per file
+  setup [--editor NAME]... [--mcp NAME]... [--dry-run]  write editor and MCP config, diff first
   fmt [--check|--diff|--verify] [paths]       conservative formatter
   imports [file] [--unused|--cost|--minimize FILE|--suggest QUERY]
   search <query> [--from FILE] [--namespace NS] [--near TERM] [--limit N]
@@ -91,7 +123,7 @@ Source:
   index scan | refresh | status | clear | sidecar
 
 Lean (needs `lean` and `lake`):
-  build [target] [--watch|--plan|--explain-slow]
+  build [target] [--watch|--plan|--explain-slow|--report]
   check [file]
   goals FILE:LINE:COL
   explain FILE:LINE:COL | --last-error
@@ -268,10 +300,35 @@ def main : IO Unit :=
 }
 
 fn doctor(ctx: &Ctx, args: &Args) -> Result<i32> {
-    args.reject_unknown(&[], &[])?;
+    args.reject_unknown(&["--fix"], &[])?;
     let root = project_root(args)?;
     let config = load_config(args, &root).map(|_| ()).map_err(|e| e.to_string());
-    let checks = tpt_lean_tools::project_doctor::project_checks(&root, config);
+    let mut checks = tpt_lean_tools::project_doctor::project_checks(&root, config.clone());
+    if args.flag("--fix") {
+        let plan = doctor_fix_plan(&checks);
+        // The plan is printed before anything changes, so the user sees what is about to run.
+        if ctx.mode == Mode::Human && !plan.is_empty() {
+            for line in &plan {
+                println!("plan: {line}");
+            }
+        }
+        let mut fixes = Vec::new();
+        if plan.iter().any(|p| p.starts_with("index:")) {
+            let failed_integrity = checks.iter().any(|c| c.name == "index" && c.status == "fail");
+            let detail = match rebuild_index(args, &root, failed_integrity) {
+                Ok(msg) => ("ok", msg),
+                Err(e) => ("fail", e.to_string()),
+            };
+            fixes.push(tpt_lean_tools::project_doctor::ProjectCheck {
+                name: "fix",
+                status: detail.0,
+                detail: format!("index: {}", detail.1),
+            });
+        }
+        // Re-check after the fixes, so the report shows the state the project is in now.
+        checks = tpt_lean_tools::project_doctor::project_checks(&root, config);
+        checks.extend(fixes);
+    }
     let human: Vec<String> = checks
         .iter()
         .map(|c| {
@@ -290,6 +347,88 @@ fn doctor(ctx: &Ctx, args: &Args) -> Result<i32> {
     } else {
         OK
     })
+}
+
+/// The fixes `doctor --fix` would apply to these checks, described for a person. Only fixes that
+/// touch derived data are listed; a missing toolchain or a broken configuration is not something
+/// the tool can repair, so those are left to the report.
+fn doctor_fix_plan(checks: &[tpt_lean_tools::project_doctor::ProjectCheck]) -> Vec<String> {
+    let mut plan = Vec::new();
+    if let Some(c) = checks.iter().find(|c| c.name == "index") {
+        if c.status == "warn" {
+            plan.push("index: build the symbol index (it does not exist yet)".to_string());
+        } else if c.status == "fail" {
+            plan.push("index: rebuild the symbol index (the index is derived data; the damaged database is deleted first)".to_string());
+        }
+    }
+    plan
+}
+
+/// Rebuild the symbol index from the sources. When `replace` is set the existing database is
+/// removed first; it is a cache, so nothing is lost that the sources do not hold.
+fn rebuild_index(args: &Args, root: &Path, replace: bool) -> Result<String> {
+    let cfg = load_config(args, root)?;
+    let dirs = ProjectDirs::new(root);
+    dirs.ensure()?;
+    let db = dirs.index_db();
+    if replace {
+        for suffix in ["", "-wal", "-shm"] {
+            let p = PathBuf::from(format!("{}{suffix}", db.display()));
+            match std::fs::remove_file(&p) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(Error::from(e).with_path(&p)),
+            }
+        }
+    }
+    let mut index = Index::open(&db)?;
+    let roots = default_scan_roots(root, cfg.index.mathlib);
+    let stats = index.refresh(&roots)?;
+    Ok(format!(
+        "rebuilt from {} files ({} updated, {} removed)",
+        stats.scanned, stats.updated, stats.removed
+    ))
+}
+
+/// `sorry-report [paths] [--deny-sorry]`: every `sorry` and `admit`, per declaration. With
+/// `--deny-sorry` any hit makes the exit status 1, for use in CI.
+fn sorry_report(ctx: &Ctx, args: &Args) -> Result<i32> {
+    args.reject_unknown(&["--deny-sorry", "--project"], &["--project"])?;
+    let root = project_root(args)?;
+    let paths = args.positionals(&[]);
+    let files: Vec<PathBuf> = if paths.is_empty() {
+        tpt_lean_index::collect_lean_files(&root)?
+            .into_iter()
+            .filter(|(rel, _)| rel != "lakefile.lean")
+            .map(|(_, p)| p)
+            .collect()
+    } else {
+        paths.iter().map(PathBuf::from).collect()
+    };
+    let hits = tpt_lean_tools::sorry::sorry_hits(&root, &files)?;
+    let human: Vec<String> = hits
+        .iter()
+        .map(|h| {
+            format!(
+                "{}:{}:{}: {} in {}",
+                h.file,
+                h.line,
+                h.column,
+                h.keyword,
+                h.declaration.as_deref().unwrap_or("(no declaration)")
+            )
+        })
+        .chain(std::iter::once(format!(
+            "{} sorry/admit in {} file(s) scanned",
+            hits.len(),
+            files.len()
+        )))
+        .collect();
+    ctx.emit_items("sorry-report", &human, &hits)?;
+    if args.flag("--deny-sorry") && !hits.is_empty() {
+        return Ok(CHECK_FAILED);
+    }
+    Ok(OK)
 }
 
 fn config_show(ctx: &Ctx, args: &Args) -> Result<i32> {

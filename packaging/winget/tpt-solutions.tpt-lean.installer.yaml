@@ -1,0 +1,17 @@
+# SPDX-License-Identifier: MIT OR Apache-2.0
+# winget installer manifest. The version and hash are filled from a release by scripts/update-manifests.sh.
+PackageIdentifier: TptSolutions.TptLean
+PackageVersion: "@VERSION@"
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: tpt-lean.exe
+    PortableCommandAlias: tpt-lean
+  - RelativeFilePath: tlean.exe
+    PortableCommandAlias: tlean
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/tpt-solutions/tpt-lean/releases/download/v@VERSION@/tpt-lean-x86_64-pc-windows-msvc.zip
+    InstallerSha256: "@SHA256:x86_64-pc-windows-msvc@"
+ManifestType: installer
+ManifestVersion: 1.6.0

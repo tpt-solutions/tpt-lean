@@ -7,6 +7,7 @@
 
 mod args;
 mod commands;
+mod completions;
 
 use args::Args;
 use tpt_lean_core::schema::{Envelope, ErrorEnvelope};

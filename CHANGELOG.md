@@ -8,6 +8,25 @@ All notable changes to this project are documented here. The format follows
 Initial development version `0.1.0`. Nothing has been published yet.
 
 ### Added
+- `tpt-lean completions bash|zsh|fish|powershell`: shell completion scripts for `tpt-lean` and `tlean`,
+  generated from one command table that a test checks against the help text.
+- `tpt-lean doctor --fix`: prints a plan, then rebuilds the symbol index when it is missing or damaged
+  (a damaged `index.sqlite` is deleted first; the index is derived data). Other problems are reported only.
+- `tpt-lean sorry-report [paths] [--deny-sorry]`: every `sorry` and `admit` per declaration, found on
+  lexer tokens so comments and strings are ignored. Textual only: it does not show goals.
+- `tpt-lean watch [--once] [--interval-ms N]`: re-checks each changed `.lean` file with `lean` and prints
+  errors, warnings and `sorry` counts; `--once` exits 1 on any error. Polls file stamps; does not run Lake.
+- `tpt-lean setup [--editor NAME]... [--mcp NAME]... [--dry-run]`: writes Helix, VS Code, Neovim and Emacs
+  language-server config, and `.mcp.json` / `.cursor/mcp.json` entries. Merges with existing files, never
+  overwrites a differing `tpt-lean` entry, shows a diff, and `--dry-run` exits 1 when a change is pending.
+- `tpt-lean build --report`: cache layer that served the build, cache-key time, the Lake share of the
+  total, and the ten slowest files.
+- Release packaging, not yet run on GitHub: `.github/workflows/release.yml` (builds five targets on a `v*`
+  tag and publishes `SHA256SUMS`), `scripts/install.sh` and `scripts/install.ps1` (checksum before install;
+  `--dry-run`, `--version`), manifests under `packaging/` (Homebrew, Scoop, winget) filled by
+  `scripts/update-manifests.sh`, and `[package.metadata.binstall]` for `cargo binstall`.
+- Browser example for the wasm package: `crates/tpt-lean-wasm/npm/examples/browser/`, with
+  `npm run build:web`. Loaded as an ES module in Node; not yet opened in a browser.
 - LSP proxy: `tpt-lean.proofState` command returns the goals at a position, each split into
   hypotheses and target, for a proof-state panel.
 - LSP proxy: work-done progress (`$/progress`) while Lean elaborates an open document, from Lean's

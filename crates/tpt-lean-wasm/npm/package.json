@@ -8,12 +8,15 @@
   "types": "pkg/tpt_lean_wasm.d.ts",
   "files": [
     "pkg/",
+    "pkg-web/",
     "examples/",
     "README.md"
   ],
   "scripts": {
     "build": "cd ../../.. && cargo build -p tpt-lean-wasm --target wasm32-unknown-unknown --release && wasm-bindgen --target nodejs --out-dir crates/tpt-lean-wasm/npm/pkg --out-name tpt_lean_wasm target/wasm32-unknown-unknown/release/tpt_lean_wasm.wasm",
-    "example": "node examples/node-example.js"
+    "example": "node examples/node-example.js",
+    "build:web": "cd ../../.. && cargo build -p tpt-lean-wasm --target wasm32-unknown-unknown --release && wasm-bindgen --target web --out-dir crates/tpt-lean-wasm/npm/pkg-web --out-name tpt_lean_wasm target/wasm32-unknown-unknown/release/tpt_lean_wasm.wasm",
+    "serve": "python -m http.server 8000"
   },
   "engines": {
     "node": ">=18"

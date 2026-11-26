@@ -15,8 +15,23 @@ npm run build      # cargo build --release for wasm32, then wasm-bindgen --targe
 npm run example    # runs examples/node-example.js against pkg/
 ```
 
-`pkg/` is generated and git-ignored. For browsers, run `wasm-bindgen --target web` instead
-and load the module with its default `init()` export.
+`pkg/` is generated and git-ignored.
+
+## Browser example
+
+`examples/browser/index.html` runs the same calls in a page. It loads the `--target web` build,
+which is generated into `pkg-web/` (also git-ignored):
+
+```sh
+cd crates/tpt-lean-wasm/npm
+npm run build:web  # same as build, with --target web
+npm run serve      # python -m http.server 8000
+```
+
+Then open http://localhost:8000/examples/browser/. Browsers refuse to load WebAssembly from a
+`file://` page, so the example must be served over HTTP. It has been checked by loading the
+generated `pkg-web` module as an ES module in Node (all four calls return the expected results).
+It has not been opened in a browser yet.
 
 ## Node usage
 

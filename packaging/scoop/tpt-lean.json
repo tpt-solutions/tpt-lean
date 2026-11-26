@@ -1,0 +1,26 @@
+{
+    "version": "@VERSION@",
+    "description": "Rust-powered toolbox for Lean 4 (Lean remains the proof checker)",
+    "homepage": "https://github.com/tpt-solutions/tpt-lean",
+    "license": "MIT OR Apache-2.0",
+    "architecture": {
+        "64bit": {
+            "url": "https://github.com/tpt-solutions/tpt-lean/releases/download/v@VERSION@/tpt-lean-x86_64-pc-windows-msvc.zip",
+            "hash": "@SHA256:x86_64-pc-windows-msvc@"
+        }
+    },
+    "bin": ["tpt-lean.exe", "tlean.exe"],
+    "checkver": {
+        "github": "https://github.com/tpt-solutions/tpt-lean"
+    },
+    "autoupdate": {
+        "architecture": {
+            "64bit": {
+                "url": "https://github.com/tpt-solutions/tpt-lean/releases/download/v$version/tpt-lean-x86_64-pc-windows-msvc.zip"
+            }
+        },
+        "hash": {
+            "url": "https://github.com/tpt-solutions/tpt-lean/releases/download/v$version/SHA256SUMS"
+        }
+    }
+}
