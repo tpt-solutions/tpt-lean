@@ -14,7 +14,7 @@ forbids it.
 ## Status
 
 Early development (`0.1.0`, not yet published). The exported functions below are implemented
-and tested from Rust, C, and Python. Go bindings are not tested yet.
+and tested from Rust, C, and Python. Go is tested on Windows without cgo (see Testing).
 
 ## Exported functions
 
@@ -75,10 +75,12 @@ cargo test -p tpt-lean-ffi
 - `tests/c/harness.c` is a C program that calls the library. Build it with `tests/c/build.sh`
   or, on Windows with MSVC, `tests/c/build_msvc.bat`.
 - `tests/ffi/test_ffi.py` drives the library through Python's `ctypes`.
+- `tests/go` (Windows): six Go tests load the DLL with `syscall.LoadDLL`. They do not use cgo,
+  and they pass against the debug build.
 
 ## Limits
 
-- No Go (cgo) tests yet.
+- The Go tests run only on Windows, because they load the Windows DLL.
 - The header is maintained by hand; generation is optional and not a blocker.
 - The build and tests have not yet been run on every target in CI (Windows, Linux, and macOS).
 - Async callbacks and event streams are not part of this ABI.

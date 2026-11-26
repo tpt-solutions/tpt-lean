@@ -10,17 +10,21 @@ The protocol layer is hand-written on JSON-RPC 2.0 and `serde_json`. No MCP SDK 
 ## Status
 
 Early development (`0.1.0`, not yet published). The stdio and loopback HTTP transports, the
-tools, the permission model, and path safety are implemented and tested. Several resources are
-only partly done.
+tools, resources, prompts, progress, cancellation, the permission model, and path safety are
+implemented and tested.
 
 ## Transports
 
 - **stdio** (`serve_stdio`, `tpt-lean mcp stdio`): newline-delimited JSON-RPC on standard input
-  and output. This is the primary transport.
+  and output. This is the primary transport. Requests run on a worker while input is still read,
+  so a cancellation can stop a running tool.
 - **HTTP** (`serve_http`, `tpt-lean mcp http`): bound to loopback only, using server-sent events
-  for responses.
+  for responses. Responses use CRLF line endings.
 
-Protocol revision: `PROTOCOL_VERSION`.
+Protocol revisions: `2026-07-28`, `2025-11-25`, `2025-06-18`, `2025-03-26` and `2024-11-05`
+(`PROTOCOL_VERSION` is the preferred one). `initialize` negotiates the revision, and
+`server/discover` lists the supported versions. A request that names an unsupported version gets
+error `-32022` with the supported list.
 
 ## Tools
 
@@ -37,6 +41,8 @@ Protocol revision: `PROTOCOL_VERSION`.
 | `tpt_lean_format_file` | write | format a file on disk |
 | `tpt_lean_build_project` | build | run `lake build` |
 | `tpt_lean_profile_file` | profile | profile a file with timing (runs Lean; gated by `allow_build`) |
+
+A `tools/call` that carries a progress token gets progress messages before its reply.
 
 ## Permissions
 
@@ -59,9 +65,12 @@ Read-only resources, addressed by `tpt-lean://` URIs:
 - `tpt-lean://project/info`: project configuration and toolchain summary.
 - `tpt-lean://project/diagnostics`: the most recent diagnostics.
 - `tpt-lean://index/status`: index health.
+- `tpt-lean://profiles`: stored profile reports.
+- `tpt-lean://profile/{id}`: one stored profile report, by the id listed at `tpt-lean://profiles`.
+- `tpt-lean://build/log`: the most recent build log.
 - `tpt-lean://file/{path}/symbols`: symbols declared in one file.
-
-Build-log and profile resources are not implemented yet.
+- `tpt-lean://file/{path}/ast`: the syntax tree of one file.
+- `tpt-lean://file/{path}/goals/{line}/{column}`: the goals at a position.
 
 ## Prompts
 
@@ -76,7 +85,8 @@ tpt-lean mcp http
 ```
 
 A client configuration typically launches `tpt-lean mcp stdio` with the project directory as
-its working directory, or passes `--project <dir>`.
+its working directory, or passes `--project <dir>`. `tpt-lean setup --mcp NAME` writes the entry
+for supported clients.
 
 ```toml
 [dependencies]
@@ -85,8 +95,8 @@ tpt-lean-mcp = "0.1"
 
 ## Limits
 
-- Progress and cancellation notifications are only partly implemented.
-- Resources for build logs and profiles are missing.
+- Progress notifications are sent only for `tools/call` with a progress token.
+- Profile memory tracking and flamegraphs are not available through the profile tool.
 
 ## Dependencies
 

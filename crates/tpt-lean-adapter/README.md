@@ -14,9 +14,12 @@ Early development (`0.1.0`, not yet published).
 
 | Level | Scope | State |
 | --- | --- | --- |
-| 1 | CLI integration: `lean`, `lake` version queries, `lake build`, `lean <file>`, diagnostic parsing | implemented |
-| 2 | LSP client to `lake serve` or `lean --server`: document sync, diagnostics, plain goals, restart, cancellation | implemented |
-| 3 | Lean sidecar (`lean/tpt-lean-sidecar`) emitting structured declarations (name, kind, type, docstring) as versioned JSON; goals are still via LSP | implemented (declarations only) |
+| 1 | CLI integration: `lean` and `lake` version queries, `lake build` with live output, `lean <file>`, diagnostic parsing | implemented |
+| 2 | LSP client to `lake serve` or `lean --server`: document sync, diagnostics, plain goals, restart, cancellation, file progress | implemented |
+| 3 | Lean sidecar (`lean/tpt-lean-sidecar`): declarations (name, kind, type, docstring) as versioned JSON, and goals before the innermost tactic at a position (`goals FILE LINE COL`) | implemented |
+
+The test suite passes on Lean 4.35.0 and 4.36.0 (run locally). No other Lean version has been
+tested.
 
 ## What it provides
 
@@ -26,11 +29,13 @@ Early development (`0.1.0`, not yet published).
   argument vector. Examples include `lake env printenv` and `lean --version`. Build targets
   pass `validate_target` first: letters, digits, `_`, `.`, and `-` only, with no path
   separators.
-- **Process runner** (`runner`, `run`, `execute`, `ProcessOutput`, `CommandResult`): runs a
-  command with a timeout, an output size limit, cancellation, and a sanitized environment
-  (`lean_policy`, `policy_with_timeout`).
+- **Process runner** (`runner`, `run`, `run_streaming`, `execute`, `ProcessOutput`,
+  `CommandResult`): runs a command with a timeout, an output size limit, cancellation, and a
+  sanitized environment (`lean_policy`, `policy_with_timeout`). `run_streaming` passes each output
+  line to the caller as it is read; `tpt-lean build` uses it for live progress.
 - **Diagnostics** (`diagnostics`, `Diagnostic`, `Severity`): `parse_lean_output` turns Lean's
-  messages into severity, file, line, column, and message.
+  messages into severity, file, line, column, and message. Both Lake 5's
+  `error: FILE:LINE:COL: message` and the older order are read.
 - **Last-run diagnostics** (`last_diagnostics`): `save_last_diagnostics` and
   `load_last_diagnostics` keep the most recent diagnostics on disk so `tpt-lean explain
   --last-error` can read them.
@@ -38,6 +43,9 @@ Early development (`0.1.0`, not yet published).
   Lean's server. `server_command` selects `lake serve` or `lean --server`. Helpers include
   `open_document`, `path_to_uri`, `plain_goals`, `plain_term_goal`, and `goal_terms` for the
   `$/lean/plainGoal` and `$/lean/plainTermGoal` requests.
+- **Lean sidecar** (`sidecar`): runs `tpt_sidecar` for one module. It returns declarations as
+  versioned JSON, and `goals` returns the goals before the innermost tactic at a position, read
+  from Lean's info trees. The sidecar is built per toolchain version.
 - **Lemma suggestions** (`lemmas`, `suggest_lemmas`): candidate lemmas for a goal, drawn from
   the index rather than from Lean.
 - **Version parsing** (`parse_version`): reads the versions printed by `lean` and `lake`.
@@ -49,7 +57,8 @@ Early development (`0.1.0`, not yet published).
 tpt-lean-adapter = "0.1"
 ```
 
-The CLI uses this crate for `tpt-lean check`, `goals`, `explain`, and `context-pack`.
+The CLI uses this crate for `tpt-lean check`, `goals`, `explain`, `context-pack`, `build`, and
+`watch`.
 
 ## Safety properties
 
@@ -65,10 +74,10 @@ The CLI uses this crate for `tpt-lean check`, `goals`, `explain`, and `context-p
   a process can briefly overshoot. Job objects (Windows) and rlimits (POSIX) are not used, which
   keeps the crate free of `unsafe`. Killing uses `taskkill /T` on Windows and a `pgrep` walk on
   POSIX; if the runner itself is killed, its children are not.
-- Lean version compatibility is not checked. Output parsing targets the current stable Lean
-  output format; the previous stable release is planned as a test target.
-- The Lean sidecar exposes declarations of one module (name, kind, pretty-printed type,
-  docstring). It does not yet emit goals. Its output is stored by `tpt-lean index sidecar`.
+- Only Lean 4.35.0 and 4.36.0 are tested. Other versions may work, but they are not verified.
+- The sidecar works on one module at a time. Its modules must be built first (`lake build`).
+- Goals from the sidecar come from Lean's info trees. The language server's goals are a
+  separate path (`$/lean/plainGoal`).
 
 ## Dependencies
 
@@ -77,6 +86,7 @@ The CLI uses this crate for `tpt-lean check`, `goals`, `explain`, and `context-p
 | `tpt-lean-core` | policy types, errors, paths |
 | `tpt-lean-index` | symbol data for lemma suggestions |
 | `tpt-lean-search` | ranking for lemma suggestions |
+| `tpt-lean-syntax` | declarations and imports |
 | `serde`, `serde_json` | LSP messages and stored diagnostics |
 
 ## Testing
@@ -86,6 +96,7 @@ cargo test -p tpt-lean-adapter
 ```
 
 The crate has unit tests. `tests/lean_integration.rs` exercises a real `lean` and `lake` install.
+`tests/sidecar.rs`, `tests/sidecar_goals.rs` and `tests/sidecar_index.rs` exercise the sidecar.
 
 ## Related documentation
 
