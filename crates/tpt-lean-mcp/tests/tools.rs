@@ -182,9 +182,10 @@ fn profile_tool_is_denied_without_allow_profile() {
     let r = call(&server, "tpt_lean_profile_file", json!({"file": "A.lean"}));
     assert_eq!(r["isError"], true);
     assert!(text_of(&r).contains("security.allow_profile"), "{}", text_of(&r));
-    // Build tools are still allowed: the switches are independent.
+    // Build tools are still allowed: the switches are independent. Without a Lean toolchain the
+    // call fails with lean_not_found, which is fine here; the point is that it is not denied.
     let r = call(&server, "tpt_lean_check_file", json!({"file": "A.lean"}));
-    assert_ne!(r["isError"], true, "{}", text_of(&r));
+    assert!(!text_of(&r).contains("permission denied"), "{}", text_of(&r));
 }
 
 #[test]
