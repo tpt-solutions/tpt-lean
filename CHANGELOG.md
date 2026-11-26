@@ -60,6 +60,9 @@ Initial development version `0.1.0`. Nothing has been published yet.
   `build.finished`, on any transport.
 - Fixed: SSE and HTTP responses could be sent with bare line feeds where CRLF belongs; tests now check
   the line endings.
+- npm package for the WebAssembly build (`crates/tpt-lean-wasm/npm`): `npm run build` (with the matching
+  wasm-bindgen-cli 0.2.126) and `npm run example` both run here; `npm pack --dry-run` lists 7 files. The
+  package stays private. A browser example is not written.
 - Known: a full `tpt-lean build` of a 41-module project is about 2.5 times slower than `lake build`
   from the same shell: 17-20 s against about 7 s in five interleaved runs. Measured and ruled out as
   causes: Lean's thread count, environment variables, stdio handling, process creation flags, the

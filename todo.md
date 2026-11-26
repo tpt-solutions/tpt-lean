@@ -351,7 +351,7 @@ Crate: `tpt-lean-wasm`
 - [x] Search over prebuilt compact index
 - [x] Documentation search
 - [x] Restricted browser-safe API (no process spawn, no native FS)
-- [ ] npm packaging and browser/Node examples
+- [ ] npm packaging and browser/Node examples (npm package built with wasm-bindgen-cli 0.2.126 and tested with the Node example; `npm pack --dry-run` lists 7 files; still `private` (not published); no browser example yet)
 - [x] Tests (wasm-bindgen-test or equivalent)
 
 ---
