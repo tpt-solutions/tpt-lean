@@ -91,7 +91,10 @@ fn wait_until(sink: &SharedOut, what: &str, done: impl Fn(&[Value]) -> bool) -> 
         if done(&msgs) {
             return msgs;
         }
-        assert!(Instant::now() < deadline, "timed out waiting for {what}: {msgs:?}");
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for {what}: {msgs:?}"
+        );
         thread::sleep(Duration::from_millis(20));
     }
 }
@@ -117,15 +120,23 @@ fn hover_goal_and_diagnostics_through_proxy() {
     let sink = SharedOut::default();
     let mut proxy = Proxy::new(&dir, session, sink.clone());
     let server = thread::spawn(move || {
-        let input = BufReader::new(ChannelReader { rx, buf: Vec::new(), pos: 0 });
+        let input = BufReader::new(ChannelReader {
+            rx,
+            buf: Vec::new(),
+            pos: 0,
+        });
         proxy.serve(input)
     });
     let send = |m: Value| tx.send(frames(&[m])).unwrap();
     send(json!({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}));
-    send(json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
-        "textDocument": {"uri": uri, "languageId": "lean4", "version": 1, "text": text}}}));
-    send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
-        "textDocument": {"uri": uri}, "position": {"line": 1, "character": 2}}}));
+    send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+        "textDocument": {"uri": uri, "languageId": "lean4", "version": 1, "text": text}}}),
+    );
+    send(
+        json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
+        "textDocument": {"uri": uri}, "position": {"line": 1, "character": 2}}}),
+    );
 
     // Wait for the hover response and for Lean's diagnostics before the editor shuts down, so
     // the test does not depend on when Lean publishes them relative to `exit`.
@@ -135,7 +146,11 @@ fn hover_goal_and_diagnostics_through_proxy() {
                 .iter()
                 .rev()
                 .find(|m| m["method"] == "textDocument/publishDiagnostics" && m["params"]["uri"] == uri)
-                .is_some_and(|m| m["params"]["diagnostics"].as_array().is_some_and(|a| !a.is_empty()))
+                .is_some_and(|m| {
+                    m["params"]["diagnostics"]
+                        .as_array()
+                        .is_some_and(|a| !a.is_empty())
+                })
     });
     send(json!({"jsonrpc": "2.0", "id": 3, "method": "shutdown"}));
     send(json!({"jsonrpc": "2.0", "method": "exit"}));
