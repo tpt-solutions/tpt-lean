@@ -396,7 +396,12 @@ fn unix_socket_lifecycle_uses_an_owner_only_socket() {
     let st = wait_for_state(&root);
     assert_eq!(st.port, 0);
     let socket = st.socket.clone().expect("state records the socket path");
-    assert_eq!(socket, state::socket_path(&root));
+    // The server records the canonical path; on macOS `/tmp` is a symlink to `/private/tmp`,
+    // so compare canonical forms rather than the raw `/tmp/...` spelling.
+    assert_eq!(
+        std::fs::canonicalize(&socket).unwrap(),
+        std::fs::canonicalize(state::socket_path(&root)).unwrap(),
+    );
     let mode = std::fs::metadata(&socket).unwrap().permissions().mode() & 0o777;
     assert_eq!(mode, 0o600);
 
