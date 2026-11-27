@@ -238,10 +238,7 @@ fn indent_tactic_blocks(src: &str) -> String {
         let Some(start) = parse.lines.line_start(line) else {
             return false;
         };
-        parse
-            .tokens
-            .iter()
-            .any(|t| t.range.start < start && t.range.end > start)
+        strictly_inside_token(&parse.tokens, start)
     };
     let mut bump: std::collections::BTreeMap<usize, usize> = std::collections::BTreeMap::new();
     for block in parse
@@ -349,18 +346,31 @@ fn line_tail_is_by(src: &str, parse: &tpt_lean_syntax::Parse, line: usize) -> bo
         return false;
     };
     let end = parse.lines.line_start(line + 1).unwrap_or(src.len());
-    parse
-        .tokens
+    tokens_in_range(&parse.tokens, start, end)
         .iter()
-        .rfind(|t| {
-            t.range.start >= start
-                && t.range.end <= end
+        .rev()
+        .find(|t| {
+            t.range.end <= end
                 && !matches!(
                     t.kind,
                     TokenKind::Whitespace | TokenKind::Newline | TokenKind::LineComment
                 )
         })
         .is_some_and(|t| t.kind == TokenKind::Keyword && t.range.text(src) == "by")
+}
+
+/// Tokens are non-overlapping and in source order, so the tokens that start in `[start, end)`
+/// are a contiguous slice found by binary search.
+fn tokens_in_range(tokens: &[Token], start: usize, end: usize) -> &[Token] {
+    let lo = tokens.partition_point(|t| t.range.start < start);
+    let hi = tokens.partition_point(|t| t.range.start < end);
+    &tokens[lo..hi]
+}
+
+/// True when `offset` falls strictly inside a token, i.e. after its start and before its end.
+fn strictly_inside_token(tokens: &[Token], offset: usize) -> bool {
+    let idx = tokens.partition_point(|t| t.range.start < offset);
+    idx > 0 && tokens[idx - 1].range.end > offset
 }
 
 fn ensure_final_newline(src: &str) -> String {
